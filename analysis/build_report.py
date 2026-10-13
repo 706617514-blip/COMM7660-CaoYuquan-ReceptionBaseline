@@ -50,11 +50,11 @@ WORD_MIN, WORD_MAX = 1000, 1200
 
 ACCESS_BLOCK = [
     ("Project title", "Reception Baseline — a base-rate locator for expected Steam reception"),
-    ("Student", "____________________"),
-    ("Student identifier", "____________"),
+    ("Student", "Cao Yuquan"),
+    ("Student identifier", "26366290"),
     ("Phase", "Phase 1 — media analytics and product justification"),
-    ("Repository", "_(GitHub URL to be entered by the student)_"),
-    ("Collaborator", "fffchaobu — invited _(date)_ — status _(pending / accepted)_"),
+    ("Repository", "https://github.com/706617514-blip/COMM7660-CaoYuquan-ReceptionBaseline"),
+    ("Collaborator", "fffchaobu — invited 2026-10-13 — status pending"),
     ("Submitted release / tag", "phase1-analytics"),
     ("Full commit identifier", "_(to be entered by the student at tag time)_"),
 ]
