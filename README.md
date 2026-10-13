@@ -53,7 +53,7 @@ python3 analysis/check_report_compliance.py     # exit code 0 = compliant
 | Access block: title, name, identifier, phase, repository, collaborator `fffchaobu` + status, release/tag, commit identifier | ✅ all fields present (4 need the student's values) |
 | Decision memo ~1 page | ✅ ~0.95 page |
 | PRD 1–2 pages | ✅ ~1.9 pages |
-| Double-code 20% of titles, minimum 20 | ✅ 32 titles coded from descriptions with the outcome withheld |
+| Double-code 20% of titles, minimum 20 | ✅ 32 titles coded from descriptions with the outcome withheld; 26 of 31 codeable rows agree with the derived label, Cohen's kappa 0.566 ([agreement report](records/coding-agreement.md)) |
 | 100–200 distinct titles, title-level unit | ✅ 159 titles, one row per title |
 
 The checker reads the finished `.docx` from disk rather than trusting the builder's internal count,

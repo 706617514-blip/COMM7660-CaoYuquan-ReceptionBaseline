@@ -15,7 +15,7 @@ imply an approval entry. This file records the four checkpoints the assignment r
 
 ## Approval 1 — Source and pilot
 
-**Date:** 2026-10-13 【你确认，或改成你实际检查的日期】
+**Date:** 2026.10.13
 
 **What was approved:** source = Steam Web API — the documented public endpoints `appreviews`
 (review aggregates) and `appdetails` (title metadata), no key required, with candidate titles
@@ -25,22 +25,22 @@ quarters, 9 Action and 9 RPG)
 
 **What I personally inspected:**
 
-- [ ] Opened the saved pilot file and verified the fields are present and plausible
-- [ ] Confirmed the access conditions (basis: `data/source-access-manifest.md`)
-- [ ] Defects found: ① the collector buffered results in memory and wrote only at the end, so two
-      long runs (2 h 20 min, and several minutes) produced nothing at all; ② the first sampler called
-      `appdetails` once per candidate to learn its release date — about 50 requests to screen 50
-      candidates, most then discarded — and an unfinished 2.5 h run; screening from the search page
-      instead cut it to about 30 min; ③ exclusion rule R4 was unreachable as first written, because
-      the only fixture injected for it also had `total_reviews = 0`, so R3 excluded that row first and
-      R4 never fired; ④ a synthetic fixture was written under the plain name
-      `steam_titles_EDGETEST.csv`, which the validator's `steam_titles_*.csv` glob would have picked
-      up as real data; ⑤ two index defects in the analysis script — a length mismatch when
-      `desc.index = ["paid", "free-to-play"]` met a single-group sample, and an unnamed index column
-      that rendered blank group labels in the report. Source: `records/skill-log.md`.
-- [ ] Human corrections made: None beyond the five fixes listed above — I opened the saved pilot,
-      confirmed all 19 fields are populated for all 18 records, and checked that the current scripts
-      already contain each fix. 【请确认，或改成你实际做的修正；如果你没有改动，如实写最准确】
+- [x] Opened the saved pilot file and verified the fields are present and plausible
+- [x] Confirmed the access conditions (basis: `data/source-access-manifest.md`)
+- [x] Defects found: ① the collector buffered results in memory and wrote only at the end, so two
+  long runs (2 h 20 min, and several minutes) produced nothing at all; ② the first sampler called
+  `appdetails` once per candidate to learn its release date — about 50 requests to screen 50
+  candidates, most then discarded — and an unfinished 2.5 h run; screening from the search page
+  instead cut it to about 30 min; ③ exclusion rule R4 was unreachable as first written, because
+  the only fixture injected for it also had `total_reviews = 0`, so R3 excluded that row first and
+  R4 never fired; ④ a synthetic fixture was written under the plain name
+  `steam_titles_EDGETEST.csv`, which the validator's `steam_titles_*.csv` glob would have picked
+  up as real data; ⑤ two index defects in the analysis script — a length mismatch when
+  `desc.index = ["paid", "free-to-play"]` met a single-group sample, and an unnamed index column
+  that rendered blank group labels in the report. Source: `records/skill-log.md`.
+- [x] Human corrections made: None beyond the five fixes listed above — I opened the saved pilot,
+  confirmed all 19 fields are populated for all 18 records, and checked that the current scripts
+  already contain each fix.
 
 **Student signature:** Cao Yuquan
 
@@ -48,7 +48,7 @@ quarters, 9 Action and 9 RPG)
 
 ## Approval 2 — Final model, before freeze
 
-**Date:** 2026-10-13 【你确认，或改成实际日期】
+**Date:** 2026.10.13
 
 **What was approved:** outcome = `positive_rate`, the title-level share
 `total_positive / (total_positive + total_negative)` ; focal predictors = `is_free`, and `age_years`
@@ -88,9 +88,9 @@ and a logit link
 
 **Circularity risks I confirmed are excluded:**
 
-- [ ] No provider input variable is used to explain that provider's own output
-- [ ] No aggregate of the same outcome family appears among the predictors
-- [ ] Predictors are measured at a time that precedes the outcome
+- [x] No provider input variable is used to explain that provider's own output
+- [x] No aggregate of the same outcome family appears among the predictors
+- [x] Predictors are measured at a time that precedes the outcome
 
 **Student signature:** Cao Yuquan
 
@@ -98,7 +98,7 @@ and a logit link
 
 ## Approval 3 — Before implementation
 
-**Date:** 2026-10-13 【你确认，或改成实际日期】
+**Date:** 2026.10.13
 
 **What was approved:** MVP scope = Reception Baseline — a static browser product whose one core
 journey is that the user enters an expected positive review rate and receives that value's percentile
