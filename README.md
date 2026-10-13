@@ -19,7 +19,7 @@ collaborator list). Access is retained through both phases and the review period
 
 | Phase | Tag / release | Full commit identifier | Moodle report |
 |---|---|---|---|
-| Phase 1 | `phase1-analytics` | _(to be recorded at tag time)_ | _(attached to the release)_ |
+| Phase 1 | `phase1-analytics` tag and GitHub Release | `43e2dbde3962e458397211133fc2f0fd05b061dd` | `reports/COMM7660_Phase1_report.docx`, attached to the release |
 | Phase 2 | `v0.2-submission` | _(to be recorded at tag time)_ | _(attached to the release)_ |
 
 ## Phase 1 review route

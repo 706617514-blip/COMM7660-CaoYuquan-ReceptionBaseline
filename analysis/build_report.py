@@ -56,7 +56,7 @@ ACCESS_BLOCK = [
     ("Repository", "https://github.com/706617514-blip/COMM7660-CaoYuquan-ReceptionBaseline"),
     ("Collaborator", "fffchaobu — invited 2026-10-13 — status accepted"),
     ("Submitted release / tag", "phase1-analytics"),
-    ("Full commit identifier", "_(to be entered by the student at tag time)_"),
+    ("Full commit identifier", "43e2dbde3962e458397211133fc2f0fd05b061dd"),
 ]
 
 
