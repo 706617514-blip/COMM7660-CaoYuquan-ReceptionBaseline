@@ -12,7 +12,7 @@ analyse titles   : 159
 duplicated appid : 0
 missing values   : 71
 outcome range    : 0.3308 .. 1.0000
-outcome mean/sd  : 0.8233 / 0.1245
+outcome mean/sd  : 0.8233 / 0.1245 (sample sd, ddof=1)
 free-to-play     : 35 of 159
 quarters covered : 9
 
@@ -37,7 +37,7 @@ Model Family:                Binomial   Df Model:                            9
 Link Function:                  Logit   Scale:                          1.0000
 Method:                          IRLS   Log-Likelihood:                -53.383
 Date:                Tue, 13 Oct 2026   Deviance:                       15.390
-Time:                        09:43:29   Pearson chi2:                     15.3
+Time:                        11:10:53   Pearson chi2:                     15.3
 No. Iterations:                     5   Pseudo R-squ. (CS):           0.006992
 Covariance Type:            nonrobust                                         
 =================================================================================================
@@ -107,7 +107,7 @@ Model Family:                Binomial   Df Model:                           10
 Link Function:                  Logit   Scale:                          1.0000
 Method:                          IRLS   Log-Likelihood:                -53.005
 Date:                Tue, 13 Oct 2026   Deviance:                       14.633
-Time:                        09:43:29   Pearson chi2:                     14.6
+Time:                        11:10:53   Pearson chi2:                     14.6
 No. Iterations:                     5   Pseudo R-squ. (CS):            0.01171
 Covariance Type:            nonrobust                                         
 =================================================================================================

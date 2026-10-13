@@ -43,6 +43,14 @@ difference in reception among recently released titles.
 | Genre strata | 6 (Action, Adventure, Indie, RPG, Simulation, Strategy) |
 | Quarters represented | 9 |
 
+**Standard-deviation convention.** `SD` in this table is the sample standard deviation
+(ddof = 1), which is what `pandas.Series.std()` returns and what
+`analysis/results/model_summary.txt` and `analysis/results/table1_descriptives.csv` report
+(0.1245). `records/extraction-audit.md` reports the population standard deviation
+(ddof = 0, 0.1241), computed by `analysis/validate_data.py`. The two differ only by the
+n/(n−1) factor. Both files now name the convention at the point of use, so a reader comparing
+them does not have to guess; neither value was changed.
+
 Collection screened 577 candidates across 6 genre strata. Of the 54 (tag × quarter) cells, 49
 reached the three-title quota. Four were partial, and every one of those four is 2026-Q4 — the
 nine-day slice between 1 and 9 October that the cutoff leaves at the end of the window. One cell,

@@ -111,7 +111,8 @@ def main() -> int:
     say(f"duplicated appid : {df['appid'].duplicated().sum()}")
     say(f"missing values   : {int(df.isna().sum().sum())}")
     say(f"outcome range    : {df.positive_rate.min():.4f} .. {df.positive_rate.max():.4f}")
-    say(f"outcome mean/sd  : {df.positive_rate.mean():.4f} / {df.positive_rate.std(ddof=1):.4f}")
+    say(f"outcome mean/sd  : {df.positive_rate.mean():.4f} / "
+        f"{df.positive_rate.std(ddof=1):.4f} (sample sd, ddof=1)")
     say(f"free-to-play     : {int(df.is_free.sum())} of {len(df)}")
     say(f"quarters covered : {df.release_quarter.nunique()}")
     say()
