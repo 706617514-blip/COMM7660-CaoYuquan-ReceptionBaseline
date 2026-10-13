@@ -4,8 +4,9 @@
 **Repository:** <https://github.com/706617514-blip/COMM7660-CaoYuquan-ReceptionBaseline>
 **Media product:** Reception Baseline — a base-rate locator for expected Steam reception
 **Intended audience:** small studios and self-publishers preparing a Steam launch
-**Collaborator:** `fffchaobu` (Professor Charles Feng) — invited 2026-10-13 — status pending
-(invitation id 337417458, write permission). Access begins when the invitation is accepted.
+**Collaborator:** `fffchaobu` (Professor Charles Feng) — invited 2026-10-13 — status **accepted**
+(invitation id 337417458, write permission, confirmed on 2026-10-13 via the repository's
+collaborator list). Access is retained through both phases and the review period.
 
 ## Submission deadlines
 
