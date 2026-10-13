@@ -91,6 +91,21 @@ proportions this design produces. A linear model on the raw proportion can predi
 accompanying marginal effects are reported on the probability scale. A logit coefficient alone is
 not interpretable to a product audience.
 
+**Why the sample supports this, and why no dependence structure is modelled.** Each row is one
+title. The design has no repeated observation of the same title, no panel or time dimension, and no
+group that a title contributes to more than once, so the observations are treated as independent
+given the controls and no cluster-robust or multilevel term is needed. The sample is 159 titles
+against nine estimated coefficients, which is thin for a nine-parameter model and is the reason the
+intervals are reported and interpreted rather than the point estimates alone.
+
+The one place dependence could enter is the sampling mechanism. Titles were drawn stratum by stratum
+on (tag × quarter), so titles inside a stratum share how they were selected. `assigned_tag` enters
+as a fixed effect, which absorbs level differences between strata; it does not absorb residual
+correlation within one. Two checks bear on whether that matters here: the Pearson χ²/dof of 0.103
+shows no overdispersion against the binomial variance assumption, and no focal estimate is
+distinguishable from zero in the primary fit or in either sensitivity fit, so no conclusion in this
+analysis rests on dependence within a stratum.
+
 ## Diagnostics required
 
 - Influential titles via Cook's distance, with a 4/n threshold

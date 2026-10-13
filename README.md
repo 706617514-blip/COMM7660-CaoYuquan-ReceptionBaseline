@@ -122,12 +122,16 @@ non-`synthetic_` output path.
 | Location | Contents |
 |---|---|
 | `docs/` | Plan, model rationale, codebook, results, decision memo, PRD, and a personal GitHub operations guide (not a graded deliverable) |
-| `data/` | Permitted raw records and the derived clean dataset |
+| `data/` | Permitted raw records, the saved pilot, and the derived clean dataset |
 | `analysis/` | Executable collection, validation, and analysis code |
-| `product/`, `media/` | Product source and media assets (Phase 2) |
 | `.agents/skills/` | Reusable project skills |
-| `tests/`, `.github/workflows/` | Automated checks and CI/CD |
-| `evaluation/`, `records/` | Event dictionary, pilot records, approval and decision logs |
+| `records/` | Approval, verification, coding, skill-execution and extraction-audit logs |
+| `reports/` | The phase reports |
+| `tests/` | Automated checks |
+| `product/` | Product source. Held at the Phase 1 boundary: the reference distribution, the app, and a standalone build |
+| `media/` | Media assets (Phase 2). Git does not track empty directories, so this appears once the first asset is committed |
+| `.github/workflows/` | CI/CD workflows (Phase 2). Appears once the first workflow is committed |
+| `evaluation/` | Event dictionary and privacy-protected pilot records (Phase 2). Appears once the first record is committed |
 
 ## Data and ethics notes
 
