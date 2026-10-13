@@ -202,10 +202,13 @@ def score(args: argparse.Namespace) -> int:
     if disagree:
         lines += ["| appid | title | machine | human |", "|---|---|---|---|"]
         lines += [f"| {a} | {b} | {m} | {h} |" for a, b, m, h in disagree]
-        lines += ["", "Each row is inspected individually. Where the description supports the "
-                      "human reading, the machine label is a false negative, and that is "
-                      "reported as a limitation on the feature rather than corrected in "
-                      "silence."]
+        over = sum(1 for _, _, m, h in disagree if m == "1" and h == "0")
+        under = sum(1 for _, _, m, h in disagree if m == "0" and h == "1")
+        lines += ["", f"The machine label sits above the human reading on {over} of the "
+                      f"{len(disagree)} disagreements — it marks multiplayer where the retrieved "
+                      f"description does not carry it — and below it on {under}. Each row is "
+                      f"inspected individually and reported as a limitation on the feature rather "
+                      f"than corrected in silence."]
     else:
         lines.append("None. The two passes agree on every codeable row.")
 
