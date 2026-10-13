@@ -128,12 +128,39 @@ causal claims. Source: `docs/prd.md` lines 77–81.
 
 Copy this block once per release.
 
-> **Not completed in Phase 1, by design.** This block asks the student to attest that they ran the
-> core journey on a candidate build, inspected test results with a workflow run link, confirmed the
-> deployed version matches the release under assessment, and tested a rollback. In Phase 1 none of
-> those exist yet: there is no candidate build, no workflow run and no deployment. Complete it for
-> the `phase1-analytics` release — ticking only what is actually true of that release — and then once
-> per numbered Phase 2 release (v0.1, v0.2).
+> **Phase 1 note.** Of the five checks in this block, only the fourth has a Phase 1 counterpart. The
+> brief requires no functioning prototype and no CI/CD in Phase 1, so there is no candidate build,
+> no workflow run, no deployment and no rollback to attest to at this stage. The first instance
+> below therefore covers the fourth check; the other four are marked not applicable and stay
+> unticked until the Phase 2 releases, where they become real.
+
+### Instance 1 — `phase1-analytics` (Phase 1 analytical submission)
+
+**Release number:** `phase1-analytics` **Date:** 2026.10.13
+
+- [ ] I personally ran the core user journey on the candidate build — *not applicable in Phase 1:
+      no build exists*
+- [ ] I inspected the test results (run link: ______________) — *not applicable in Phase 1: no
+      workflow run exists*
+- [ ] The deployed version matches the release under assessment — *not applicable in Phase 1:
+      nothing is deployed*
+- [ ] I confirmed no credentials or personal data entered the repository
+- [ ] The rollback procedure was tested (evidence: ______________) — *not applicable in Phase 1:
+      there is no earlier release to restore*
+
+**Basis for the fourth check.** A scan of the repository found no credential or token pattern
+(`ghp_`, `gho_`, `github_pat_`, `sk-`, AWS keys, private-key blocks), no reviewer identifier
+(`author.steamid`, `author.personaname`, `author.profile_url`), and no participant personal data.
+`data/clean/analysis_dataset.csv` has 22 columns and none of them is a reviewer field, and
+`data/source-access-manifest.md` records that no account credentials, session cookies or tokens
+are stored in this repository.
+
+**Student signature:** ______________
+
+### Instance 2 onward — Phase 2 releases
+
+Copy the blank block below once per numbered Phase 2 release (v0.1, v0.2), where all five checks
+apply.
 
 **Release number:** v______ **Date:** ______________
 
