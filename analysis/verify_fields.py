@@ -151,12 +151,22 @@ def main() -> int:
     if not out.is_absolute():
         out = ROOT / out
 
-    if out.exists() and "**Signed by:**" in out.read_text(encoding="utf-8"):
-        signed = out.read_text(encoding="utf-8").split("**Signed by:**")[1].split("\n")[0]
-        if signed.strip() and not args.force:
-            sys.exit(f"{out.name} carries a signature ({signed.strip()}). "
-                     f"Refusing to overwrite it. Pass --force only if that signature "
-                     f"is being retracted deliberately.")
+    # Refuse to overwrite a record the student has already acted on. This file is
+    # regenerated from scratch, so a re-run would silently erase the confirmation
+    # checkboxes and the signature. The marker checked is the one this script actually
+    # writes ("Verified by"), and a ticked box counts as an answer even when the name
+    # has not been filled in yet.
+    if out.exists() and not args.force:
+        existing = out.read_text(encoding="utf-8")
+        tail = existing.split("## PM confirmation")[-1] if "## PM confirmation" in existing else ""
+        signed = (tail.split("**Verified by:**")[-1].split("\n")[0].strip()
+                  if "**Verified by:**" in tail else "")
+        answered = bool(signed) or "- [x]" in tail
+        if answered:
+            sys.exit(f"{out.name} already carries the student's confirmation"
+                     + (f" (verified by {signed})" if signed else " (boxes ticked)")
+                     + ". Refusing to overwrite it. Pass --force only if that confirmation "
+                       "is being retracted deliberately.")
 
     rows = list(csv.DictReader(src.open(encoding="utf-8")))
     n = max(MIN_SAMPLE, round(len(rows) * SAMPLE_FRACTION))
