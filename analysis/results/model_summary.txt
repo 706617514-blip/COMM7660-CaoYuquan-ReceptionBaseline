@@ -1,0 +1,130 @@
+========================================================================
+COMM7660 Phase 1 — executed analysis
+========================================================================
+input            : data/clean/analysis_dataset.csv
+input sha256     : 67eaeb6d965ae0d2109c411896f1f12a88d52459520e1f993b2369a77d0c2875
+software         : pandas 2.3.3, statsmodels 0.14.6, numpy 2.0.2
+random seed      : 20261009
+formula          : positive_rate ~ is_free + age_years + I(age_years**2) + C(assigned_tag) + log_reviews
+
+--- data quality ---
+analyse titles   : 159
+duplicated appid : 0
+missing values   : 71
+outcome range    : 0.3308 .. 1.0000
+outcome mean/sd  : 0.8233 / 0.1245
+free-to-play     : 35 of 159
+quarters covered : 9
+
+--- outcome by business model ---
+  paid           n= 124  mean=0.8251  median=0.8417  sd=0.1250
+  free-to-play   n=  35  mean=0.8166  median=0.8574  sd=0.1243
+
+--- outcome by sampling tag ---
+  Adventure      n=  25  mean=0.8437
+  RPG            n=  26  mean=0.8378
+  Indie          n=  29  mean=0.8331
+  Strategy       n=  25  mean=0.8287
+  Simulation     n=  27  mean=0.8115
+  Action         n=  27  mean=0.7865
+
+--- model fit ---
+                 Generalized Linear Model Regression Results                  
+==============================================================================
+Dep. Variable:          positive_rate   No. Observations:                  159
+Model:                            GLM   Df Residuals:                      149
+Model Family:                Binomial   Df Model:                            9
+Link Function:                  Logit   Scale:                          1.0000
+Method:                          IRLS   Log-Likelihood:                -53.383
+Date:                Tue, 13 Oct 2026   Deviance:                       15.390
+Time:                        09:43:29   Pearson chi2:                     15.3
+No. Iterations:                     5   Pseudo R-squ. (CS):           0.006992
+Covariance Type:            nonrobust                                         
+=================================================================================================
+                                    coef    std err          z      P>|z|      [0.025      0.975]
+-------------------------------------------------------------------------------------------------
+Intercept                         0.5282      1.067      0.495      0.620      -1.562       2.619
+C(assigned_tag)[T.Adventure]      0.3284      0.735      0.447      0.655      -1.112       1.769
+C(assigned_tag)[T.Indie]          0.3577      0.692      0.517      0.605      -0.999       1.714
+C(assigned_tag)[T.RPG]            0.3201      0.713      0.449      0.654      -1.078       1.718
+C(assigned_tag)[T.Simulation]     0.0858      0.690      0.124      0.901      -1.266       1.438
+C(assigned_tag)[T.Strategy]       0.1987      0.717      0.277      0.782      -1.207       1.605
+is_free                          -0.0947      0.522     -0.182      0.856      -1.117       0.928
+age_years                         0.4340      1.318      0.329      0.742      -2.149       3.017
+I(age_years ** 2)                -0.1923      0.664     -0.290      0.772      -1.494       1.109
+log_reviews                       0.1186      0.163      0.728      0.467      -0.201       0.438
+=================================================================================================
+
+--- diagnostics ---
+influential titles (Cook's D > 4/n) : 0
+Pearson chi2 / dof (dispersion)     : 0.103
+    -> no strong evidence of overdispersion
+sparse categories (<10 titles)      : 0
+
+--- coefficients (logit scale, with odds ratios) ---
+  C(assigned_tag)[T.Adventure]       b=   0.3284  se=0.7350  p=0.6551  OR=1.389
+  C(assigned_tag)[T.Indie]           b=   0.3577  se=0.6920  p=0.6052  OR=1.430
+  C(assigned_tag)[T.RPG]             b=   0.3201  se=0.7135  p=0.6536  OR=1.377
+  C(assigned_tag)[T.Simulation]      b=   0.0858  se=0.6899  p=0.9010  OR=1.090
+  C(assigned_tag)[T.Strategy]        b=   0.1987  se=0.7173  p=0.7818  OR=1.220
+  is_free                            b=  -0.0947  se=0.5216  p=0.8559  OR=0.910
+  age_years                          b=   0.4340  se=1.3179  p=0.7420  OR=1.543
+  I(age_years ** 2)                  b=  -0.1923  se=0.6640  p=0.7720  OR=0.825
+  log_reviews                        b=   0.1186  se=0.1630  p=0.4669  OR=1.126
+
+--- marginal effects (probability scale) ---
+                                  dy/dx  Std. Err.         z  Pr(>|z|)  Conf. Int. Low  Cont. Int. Hi.
+C(assigned_tag)[T.Adventure]   0.047442   0.106107  0.447119  0.654789       -0.160523        0.255407
+C(assigned_tag)[T.Indie]       0.051688   0.099858  0.517619  0.604724       -0.144029        0.247405
+C(assigned_tag)[T.RPG]         0.046253   0.102987  0.449113  0.653350       -0.155599        0.248105
+C(assigned_tag)[T.Simulation]  0.012399   0.099674  0.124400  0.900998       -0.182958        0.207757
+C(assigned_tag)[T.Strategy]    0.028703   0.103601  0.277056  0.781737       -0.174351        0.231758
+is_free                       -0.013688   0.075353 -0.181655  0.855853       -0.161377        0.134000
+age_years                      0.062701   0.190342  0.329412  0.741845       -0.310362        0.435764
+I(age_years ** 2)             -0.027791   0.095900 -0.289795  0.771973       -0.215752        0.160170
+log_reviews                    0.017132   0.023506  0.728824  0.466109       -0.028939        0.063203
+
+--- sensitivity analysis 1: unweighted vs review-weighted ---
+  is_free      unweighted b=-0.0947   weighted b=-0.4387
+  age_years    unweighted b=+0.4340   weighted b=-0.2751
+
+--- sensitivity analysis 2: excluding titles under 6 months old ---
+  titles retained: 110 of 159
+  is_free      full b=-0.0947   settled b=-0.3319
+  age_years    full b=+0.4340   settled b=-0.2684
+
+--- model 2: gameplay feature ---
+formula          : positive_rate ~ is_free + age_years + I(age_years**2) + C(assigned_tag) + log_reviews + multiplayer_emphasis
+  multi-player / co-op emphasis : 28 of 159 titles (17.6%)
+    single-player-led    n= 131  mean=0.8349  median=0.8599
+    multiplayer-led      n=  28  mean=0.7688  median=0.7948
+
+                 Generalized Linear Model Regression Results                  
+==============================================================================
+Dep. Variable:          positive_rate   No. Observations:                  159
+Model:                            GLM   Df Residuals:                      148
+Model Family:                Binomial   Df Model:                           10
+Link Function:                  Logit   Scale:                          1.0000
+Method:                          IRLS   Log-Likelihood:                -53.005
+Date:                Tue, 13 Oct 2026   Deviance:                       14.633
+Time:                        09:43:29   Pearson chi2:                     14.6
+No. Iterations:                     5   Pseudo R-squ. (CS):            0.01171
+Covariance Type:            nonrobust                                         
+=================================================================================================
+                                    coef    std err          z      P>|z|      [0.025      0.975]
+-------------------------------------------------------------------------------------------------
+Intercept                         0.5407      1.050      0.515      0.607      -1.517       2.599
+C(assigned_tag)[T.Adventure]      0.2744      0.740      0.371      0.711      -1.177       1.725
+C(assigned_tag)[T.Indie]          0.2373      0.709      0.335      0.738      -1.152       1.627
+C(assigned_tag)[T.RPG]            0.2466      0.722      0.341      0.733      -1.169       1.662
+C(assigned_tag)[T.Simulation]     0.0740      0.695      0.107      0.915      -1.287       1.435
+C(assigned_tag)[T.Strategy]       0.1794      0.722      0.249      0.804      -1.235       1.594
+is_free                           0.0085      0.536      0.016      0.987      -1.042       1.059
+age_years                         0.4852      1.331      0.364      0.716      -2.124       3.095
+I(age_years ** 2)                -0.2353      0.672     -0.350      0.726      -1.552       1.082
+log_reviews                       0.1386      0.163      0.852      0.394      -0.180       0.457
+multiplayer_emphasis             -0.4863      0.549     -0.886      0.376      -1.562       0.589
+=================================================================================================
+  focal move is_free      model1 b=-0.0947   model2 b=+0.0085
+  focal move age_years    model1 b=+0.4340   model2 b=+0.4852
+  multiplayer_emphasis     b=-0.4863  se=0.5488  p=0.3756

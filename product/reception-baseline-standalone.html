@@ -1,0 +1,513 @@
+<!-- 分发副本（standalone）：由 analysis/build_standalone_html.py 生成，数据已内联。生成时间 2026-10-12 13:56 UTC。产品本体是 product/index.html。 -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reception Baseline — 你的预期好评率处于什么位置</title>
+<style>
+  :root{
+    --ink:#14181f; --ink-2:#4a5361; --ink-3:#7a8494;
+    --line:#e2e6ec; --bg:#fbfcfd; --card:#ffffff;
+    --accent:#2f5d8a; --accent-soft:#dce8f4;
+    --warn:#8a3b2f; --warn-bg:#fdf0ed;
+    --bar:#b9c6d6; --bar-hi:#2f5d8a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--ink);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",
+         "Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:940px;margin:0 auto;padding:28px 24px 40px}
+
+  header{border-bottom:1px solid var(--line);padding-bottom:16px;margin-bottom:22px}
+  h1{font-size:23px;line-height:1.3;margin:0 0 6px;letter-spacing:-.01em}
+  .lede{margin:0;color:var(--ink-2);font-size:15px}
+
+  /* 非条件化披露：必须在首屏、无需滚动即可见 */
+  .disclosure{
+    margin:14px 0 0;padding:11px 14px;border-radius:8px;
+    background:var(--accent-soft);border:1px solid #c7d9ea;
+    font-size:13.5px;line-height:1.55;color:#22405f;
+  }
+  .disclosure strong{color:#16324f}
+
+  .grid{display:grid;grid-template-columns:1fr;gap:20px}
+  @media(min-width:820px){ .grid{grid-template-columns:300px 1fr;gap:26px;align-items:start} }
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px}
+  .card h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;
+           color:var(--ink-3);margin:0 0 12px;font-weight:600}
+
+  label{display:block;font-size:14px;font-weight:600;margin-bottom:8px}
+  .hint{font-size:12.5px;color:var(--ink-3);margin:0 0 12px}
+
+  .slider{width:100%;margin:2px 0 14px;accent-color:var(--accent);height:22px}
+  .numrow{display:flex;align-items:center;gap:8px}
+  input[type=number]{
+    width:88px;padding:7px 9px;font:inherit;font-size:16px;font-variant-numeric:tabular-nums;
+    border:1px solid #c6cdd8;border-radius:7px;background:#fff;color:var(--ink)
+  }
+  input[type=number]:focus-visible,.slider:focus-visible,button:focus-visible{
+    outline:2px solid var(--accent);outline-offset:2px
+  }
+  .unit{color:var(--ink-3);font-size:14px}
+  .rate-asof{margin-top:8px;font-size:13px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+
+  button{
+    font:inherit;font-size:14px;padding:7px 14px;border-radius:7px;
+    border:1px solid #c6cdd8;background:#fff;color:var(--ink-2);cursor:pointer
+  }
+  button:hover{background:#f4f6f9}
+
+  .err{
+    display:none;margin:12px 0 0;padding:9px 12px;border-radius:7px;
+    background:var(--warn-bg);border:1px solid #f0cdc5;color:var(--warn);font-size:13.5px
+  }
+  .err.on{display:block}
+
+  .pct{font-size:44px;line-height:1.05;font-weight:700;letter-spacing:-.02em;
+       font-variant-numeric:tabular-nums}
+  .pct small{font-size:17px;font-weight:600;color:var(--ink-3);margin-left:6px;letter-spacing:0}
+  .verdict{margin:8px 0 0;font-size:16px;color:var(--ink-2)}
+  .verdict b{color:var(--ink)}
+  .countline{margin:10px 0 0;font-size:13.5px;color:var(--ink-3);
+             font-variant-numeric:tabular-nums}
+
+  .chartbox{margin-top:18px}
+  svg{display:block;width:100%;height:auto}
+  .axis{font-size:11px;fill:var(--ink-3)}
+  .marker-label{font-size:11.5px;fill:var(--accent);font-weight:600}
+
+  .stats{display:grid;grid-template-columns:repeat(2,1fr);gap:8px 18px;margin-top:16px;
+         padding-top:14px;border-top:1px solid var(--line);font-size:13.5px}
+  .stats div{display:flex;justify-content:space-between;gap:10px}
+  .stats span:last-child{font-variant-numeric:tabular-nums;color:var(--ink)}
+  .stats span:first-child{color:var(--ink-3)}
+
+  /* 媒体发现面板 */
+  .cmp-card{margin-top:20px}
+  .cmp-list{list-style:none;margin:0;padding:0}
+  .cmp-list li{display:flex;align-items:baseline;gap:10px;
+               padding:9px 0;border-top:1px solid var(--line)}
+  .cmp-list li:first-child{border-top:none}
+  .cmp-list a{color:var(--accent);text-decoration:none;font-weight:600;
+              overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+  .cmp-list a:hover{text-decoration:underline}
+  .cmp-meta{font-size:12.5px;color:var(--ink-3);font-variant-numeric:tabular-nums;
+            white-space:nowrap}
+  .cmp-rate{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;
+            white-space:nowrap;min-width:52px;text-align:right}
+  .cmp-foot{margin:12px 0 0;padding-top:12px;border-top:1px solid var(--line);
+            font-size:12.5px;line-height:1.6;color:var(--ink-3)}
+
+  footer{margin-top:26px;padding-top:14px;border-top:1px solid var(--line);
+         font-size:12.5px;line-height:1.7;color:var(--ink-3)}
+  footer code{font-size:12px;background:#eef1f5;padding:1px 5px;border-radius:4px;
+              font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .nolist{margin:10px 0 0;padding-left:18px;font-size:13.5px;color:var(--ink-2)}
+  .nolist li{margin:3px 0}
+
+  /* 列表视图选项 */
+  .viewopts{display:flex;gap:14px;margin-top:16px;padding-top:14px;
+            border-top:1px solid var(--line)}
+  .opt{flex:1}
+  .opt label{font-size:12.5px;font-weight:600;color:var(--ink-2);margin-bottom:5px}
+  .opt select{width:100%;font:inherit;font-size:13.5px;padding:6px 8px;border-radius:7px;
+              border:1px solid #c6cdd8;background:#fff;color:var(--ink)}
+  .opt select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .optnote{margin:9px 0 0;font-size:12px;line-height:1.5;color:var(--ink-3)}
+
+  /* 过滤偏移提示：把选择效应摆在明面上，而不是藏起来 */
+  .shift{margin:12px 0 0;padding:10px 12px;border-radius:8px;font-size:13px;line-height:1.55;
+         background:#fdf6e7;border:1px solid #f0e0bd;color:#6b5320}
+  .shift b{color:#4d3a12}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>Reception Baseline</h1>
+    <p class="lede">你的预期好评率，在近期 Steam 作品里处于什么位置。</p>
+
+    <p class="disclosure" id="disclosure">
+      <strong>本工具不按品类或付费模式分类。</strong>
+      我们对品类、商业模式、上线时长、评论量都做过检验，它们合计只能解释不到 1% 的好评率差异
+      （伪 R² = 0.007），没有任何一项显著。因此这里<strong>只有一个输入</strong>——
+      而不是让你选一堆选项、拿回一个其实不变的答案。
+    </p>
+  </header>
+
+  <div class="grid">
+
+    <!-- 输入 -->
+    <section class="card" aria-labelledby="in-h">
+      <h2 id="in-h">你的预期</h2>
+      <label for="num">预期好评率</label>
+      <p class="hint">拖拽滑杆，或直接输入数字（0–100）。</p>
+
+      <input class="slider" type="range" id="rng" min="0" max="100" step="1"
+             value="75" aria-describedby="num">
+      <div class="numrow">
+        <input type="number" id="num" min="0" max="100" step="1" value="75"
+               inputmode="decimal" aria-label="预期好评率，百分比">
+        <span class="unit">%</span>
+        <button type="button" id="reset" style="margin-left:auto">重置</button>
+      </div>
+      <p class="rate-asof">= 好评率 <span id="asRate">0.75</span></p>
+
+      <p class="err" id="err" role="alert"></p>
+
+      <div class="viewopts">
+        <div class="opt">
+          <label for="count">显示数量</label>
+          <select id="count">
+            <option value="5">5 条</option>
+            <option value="10" selected>10 条</option>
+            <option value="20">20 条</option>
+          </select>
+        </div>
+        <div class="opt">
+          <label for="minrev">评论数下界</label>
+          <select id="minrev">
+            <option value="50" selected>不限（≥50）</option>
+            <option value="200">≥200</option>
+            <option value="500">≥500</option>
+            <option value="1000">≥1000</option>
+          </select>
+        </div>
+      </div>
+      <p class="optnote">这两项<strong>只影响下面的作品列表</strong>，不影响上面的百分位。</p>
+    </section>
+
+    <!-- 结果 -->
+    <section class="card" aria-labelledby="out-h">
+      <h2 id="out-h">在这个市场上的位置</h2>
+
+      <div id="result" aria-live="polite">
+        <div class="pct"><span id="pctNum">—</span><small id="pctSuffix"></small></div>
+        <p class="verdict" id="verdict"></p>
+        <p class="countline" id="countline"></p>
+
+        <div class="chartbox">
+          <svg id="chart" viewBox="0 0 640 190" role="img"
+               aria-labelledby="chartTitle chartDesc">
+            <title id="chartTitle">近期 Steam 作品好评率分布</title>
+            <desc id="chartDesc">直方图，并标出你输入的预期值所在位置。</desc>
+          </svg>
+        </div>
+
+        <div class="stats" id="stats"></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- 媒体发现：把你带到真实作品面前，而不只是给你一个数字 -->
+  <section class="card cmp-card" aria-labelledby="cmp-h">
+    <h2 id="cmp-h">处在同一位置的真实作品</h2>
+    <p class="hint" id="cmp-hint"></p>
+    <div class="shift" id="cmp-shift" style="display:none" role="note"></div>
+    <ul class="cmp-list" id="cmp-list"></ul>
+    <p class="cmp-foot">点标题会直接打开 Steam 商店页——去看它们的评测和商店描述，
+       比看一个百分位更有用。这是本工具与“仪表盘”的区别：它的终点是内容，不是数字。</p>
+  </section>
+
+  <footer>
+    <p><strong>参照集</strong>：<span id="refdesc"></span>。</p>
+    <p><strong>读法</strong>：百分位回答的是“市场上多少作品比你这个预期更差”，
+       它描述市场，不描述你这款游戏。这是关联性基准，不是预测。</p>
+    <p><strong>百分位定义</strong>：把 159 款作品按好评率升序排列，将你的输入值线性插值到
+       排序位置上，再换算为 0–100。该定义在整个输入区间上严格单调递增——
+       输入变大，结果一定变大。</p>
+    <p><strong>本工具刻意不做的事</strong></p>
+    <ul class="nolist">
+      <li>不预测你这款游戏的好评率——这些属性解释不了口碑差异。</li>
+      <li>不问品类、付费模式或上线时长——界面里没有这些输入，数据里也没有这些列。</li>
+      <li>不声称因果——设计上无法识别因果效应。</li>
+    </ul>
+    <p>数据来源：<code id="srcpath"></code> · 数据集 SHA-256 <code id="srchash"></code>
+       · 生成于 <span id="gen"></span></p>
+  </footer>
+</div>
+
+<script>
+// 由 analysis/build_product_data.py 生成，请勿手工编辑。
+// 来源：data/clean/analysis_dataset.csv  sha256=67eaeb6d965ae0d2109c411896f1f12a88d52459520e1f993b2369a77d0c2875
+window.REFERENCE_DATA = {"product":"Reception Baseline","generated_at_utc":"20261012T134554Z","source":{"dataset":"data/clean/analysis_dataset.csv","sha256":"67eaeb6d965ae0d2109c411896f1f12a88d52459520e1f993b2369a77d0c2875","cutoff":"2026-10-09","min_reviews":50},"reference_set_description":"Steam 作品 159 款，发行于 2024-10-09 至 2026-10-09，评论数至少 50 条","n":159,"rates_sorted":[0.330827,0.421687,0.465347,0.469697,0.489426,0.5,0.534091,0.562249,0.626866,0.627119,0.627803,0.631579,0.647059,0.656863,0.65876,0.66129,0.666667,0.677778,0.681818,0.6875,0.695122,0.696629,0.70922,0.711089,0.720994,0.724719,0.727664,0.728916,0.731518,0.734752,0.736462,0.740113,0.746479,0.74662,0.746988,0.748792,0.75,0.752033,0.754545,0.755319,0.758065,0.758772,0.759398,0.764706,0.765038,0.765766,0.767296,0.767987,0.768559,0.770241,0.771023,0.771429,0.772455,0.772727,0.785714,0.786667,0.796053,0.80303,0.80303,0.806794,0.809172,0.8109,0.814815,0.818004,0.819149,0.82,0.821339,0.823529,0.825,0.825397,0.826389,0.826999,0.830349,0.831776,0.837456,0.837838,0.838621,0.84,0.843305,0.845433,0.848485,0.848901,0.85,0.850467,0.857143,0.857402,0.859903,0.861111,0.862595,0.863636,0.864122,0.865169,0.866197,0.866953,0.868984,0.87132,0.872838,0.873786,0.875,0.878261,0.879316,0.88,0.88326,0.884615,0.891821,0.8981,0.898649,0.901961,0.903522,0.903846,0.904014,0.909091,0.910448,0.91062,0.910798,0.910866,0.911243,0.917821,0.920086,0.920476,0.923729,0.924524,0.924528,0.924829,0.926237,0.928287,0.933702,0.936145,0.938272,0.940476,0.941176,0.941176,0.942308,0.946978,0.947183,0.947368,0.949677,0.951613,0.951965,0.953846,0.956291,0.956989,0.957447,0.957857,0.959184,0.962185,0.963107,0.965217,0.968153,0.971061,0.976039,0.976378,0.976471,0.982456,0.982759,0.984496,0.984752,0.986681,1.0],"summary":{"mean":0.823252,"median":0.845433,"q1":0.755319,"q3":0.920476,"min":0.330827,"max":1.0},"percentile_definition":{"method":"empirical_cdf_interpolated","description":"按好评率升序排列的 159 款作品，将输入值线性插值到排序位置上，再换算为 0-100 的百分位。该定义在整个输入区间上严格单调递增。","notes":["输入等于最小好评率时返回 0，等于最大时返回 100。","相同好评率之间的区间用较低一侧的位置，避免除零。"]},"titles":[{"appid":"1389900","name":"大鹏 - The Roc","release_date":"2024-11-14","total_reviews":181,"positive_rate":0.933702},{"appid":"2191770","name":"Gregory Horror Show: Soul of Roses","release_date":"2024-11-14","total_reviews":129,"positive_rate":0.984496},{"appid":"2351890","name":"BloodDome99","release_date":"2024-11-15","total_reviews":98,"positive_rate":0.959184},{"appid":"3096270","name":"NETHER DUNGEONS","release_date":"2024-11-15","total_reviews":432,"positive_rate":0.826389},{"appid":"3121600","name":"Habilis","release_date":"2024-11-15","total_reviews":51,"positive_rate":0.901961},{"appid":"2742840","name":"Saturn","release_date":"2024-11-15","total_reviews":1237,"positive_rate":0.767987},{"appid":"3235040","name":"Rubbish","release_date":"2024-11-15","total_reviews":101,"positive_rate":0.465347},{"appid":"3158500","name":"Project Shoreline","release_date":"2024-11-15","total_reviews":372,"positive_rate":0.956989},{"appid":"2180700","name":"ABI-DOS","release_date":"2024-11-15","total_reviews":439,"positive_rate":0.924829},{"appid":"2840190","name":"Great God Grove","release_date":"2024-11-15","total_reviews":1574,"positive_rate":0.984752},{"appid":"3015350","name":"Echoes of Dread","release_date":"2024-11-15","total_reviews":100,"positive_rate":0.85},{"appid":"3217600","name":"Idle Sphere","release_date":"2024-11-17","total_reviews":331,"positive_rate":0.489426},{"appid":"2935400","name":"Pro Basketball Manager 2025","release_date":"2024-11-18","total_reviews":178,"positive_rate":0.696629},{"appid":"2516980","name":"Heroes & Redemption","release_date":"2024-11-18","total_reviews":88,"positive_rate":0.863636},{"appid":"2600720","name":"Cloudy Valley","release_date":"2024-11-18","total_reviews":66,"positive_rate":0.772727},{"appid":"2219450","name":"Seer's Gambit","release_date":"2024-11-18","total_reviews":532,"positive_rate":0.765038},{"appid":"3259470","name":"Papa's Pizzeria Deluxe","release_date":"2024-11-19","total_reviews":3754,"positive_rate":0.986681},{"appid":"2190400","name":"Toads of the Bayou","release_date":"2024-11-19","total_reviews":166,"positive_rate":0.728916},{"appid":"2858370","name":"Voxel Project VR","release_date":"2025-02-14","total_reviews":351,"positive_rate":0.843305},{"appid":"3440410","name":"HorrorCore: Maze and Pools of Horror","release_date":"2025-02-14","total_reviews":88,"positive_rate":0.534091},{"appid":"2525380","name":"Tomb Raider IV-VI Remastered","release_date":"2025-02-14","total_reviews":1834,"positive_rate":0.87132},{"appid":"2186690","name":"BRXKEN INSIDE","release_date":"2025-02-14","total_reviews":100,"positive_rate":0.82},{"appid":"3061070","name":"Valet Simulator: Parking & Business","release_date":"2025-02-14","total_reviews":94,"positive_rate":0.819149},{"appid":"1599780","name":"Afterlove EP","release_date":"2025-02-14","total_reviews":213,"positive_rate":0.910798},{"appid":"2668430","name":"The Legend of Heroes: Trails through Daybreak II","release_date":"2025-02-14","total_reviews":725,"positive_rate":0.838621},{"appid":"3471350","name":"Alpha League HD","release_date":"2025-02-14","total_reviews":908,"positive_rate":0.88326},{"appid":"3476800","name":"Anturi","release_date":"2025-02-14","total_reviews":66,"positive_rate":0.848485},{"appid":"3469850","name":"Cradle of Nightmare : Flowers to you","release_date":"2025-02-14","total_reviews":753,"positive_rate":0.928287},{"appid":"2665040","name":"The OG Cake Factory","release_date":"2025-02-16","total_reviews":62,"positive_rate":0.758065},{"appid":"3167550","name":"Tiny Pasture","release_date":"2025-02-17","total_reviews":8665,"positive_rate":0.924524},{"appid":"2943150","name":"SNØ: Ultimate Freeriding","release_date":"2025-02-17","total_reviews":952,"positive_rate":0.962185},{"appid":"3451290","name":"Pale Abyss - Prototype","release_date":"2025-02-17","total_reviews":374,"positive_rate":0.868984},{"appid":"2750000","name":"Microtopia","release_date":"2025-02-18","total_reviews":983,"positive_rate":0.872838},{"appid":"3174070","name":"Texas Hold'em Poker: Pokerist","release_date":"2025-02-18","total_reviews":3499,"positive_rate":0.65876},{"appid":"3506630","name":"Thin Threads","release_date":"2025-02-18","total_reviews":57,"positive_rate":0.631579},{"appid":"2838100","name":"Viking Frontiers: Prologue","release_date":"2025-02-19","total_reviews":501,"positive_rate":0.772455},{"appid":"3507680","name":"Stone 4 Souls","release_date":"2025-05-16","total_reviews":51,"positive_rate":0.823529},{"appid":"3649130","name":"GRIMWAR","release_date":"2025-05-16","total_reviews":67,"positive_rate":0.910448},{"appid":"2137760","name":"Crafty Survivors","release_date":"2025-05-16","total_reviews":763,"positive_rate":0.826999},{"appid":"3181470","name":"Cat & Farm Pals","release_date":"2025-05-16","total_reviews":284,"positive_rate":0.947183},{"appid":"3092980","name":"MALL MANAGER SIMULATOR","release_date":"2025-05-16","total_reviews":152,"positive_rate":0.5},{"appid":"3158290","name":"Rebecca and the Sword of Nasty Curses","release_date":"2025-05-16","total_reviews":94,"positive_rate":0.755319},{"appid":"3411020","name":"Villages & Dungeons","release_date":"2025-05-19","total_reviews":1178,"positive_rate":0.910866},{"appid":"2599770","name":"Tactical Warfare","release_date":"2025-05-19","total_reviews":62,"positive_rate":0.66129},{"appid":"2781190","name":"DragonLoop: Prologue","release_date":"2025-05-20","total_reviews":84,"positive_rate":0.940476},{"appid":"3418690","name":"消失的航班，还有她她她！Lost in the secret!","release_date":"2025-05-20","total_reviews":653,"positive_rate":0.903522},{"appid":"2138570","name":"Mutants: Genesis","release_date":"2025-05-20","total_reviews":458,"positive_rate":0.768559},{"appid":"2104890","name":"RoadCraft","release_date":"2025-05-20","total_reviews":16493,"positive_rate":0.74662},{"appid":"3365470","name":"Synthwave Driver","release_date":"2025-05-20","total_reviews":108,"positive_rate":0.861111},{"appid":"2811100","name":"The Mosquito Gang","release_date":"2025-05-20","total_reviews":207,"positive_rate":0.748792},{"appid":"3712020","name":"意识分裂开篇季","release_date":"2025-05-20","total_reviews":100,"positive_rate":0.88},{"appid":"653060","name":"The Siege and the Sandfox","release_date":"2025-05-20","total_reviews":223,"positive_rate":0.627803},{"appid":"1466390","name":"Kathy Rain 2: Soothsayer","release_date":"2025-05-20","total_reviews":1400,"positive_rate":0.957857},{"appid":"2993780","name":"FANTASY LIFE i: The Girl Who Steals Time","release_date":"2025-05-21","total_reviews":13616,"positive_rate":0.91062},{"appid":"3867950","name":"造梦西游：无双","release_date":"2025-08-14","total_reviews":3734,"positive_rate":0.771023},{"appid":"3876470","name":"Deep Line","release_date":"2025-08-14","total_reviews":50,"positive_rate":0.84},{"appid":"3817090","name":"Vigil","release_date":"2025-08-15","total_reviews":2209,"positive_rate":0.857402},{"appid":"1869290","name":"Supraworld","release_date":"2025-08-15","total_reviews":1597,"positive_rate":0.920476},{"appid":"3648450","name":"White Room Protocol","release_date":"2025-08-15","total_reviews":56,"positive_rate":0.785714},{"appid":"2776450","name":"Multiverse Loot Hunter","release_date":"2025-08-15","total_reviews":2704,"positive_rate":0.809172},{"appid":"3894730","name":"QPet Zoo","release_date":"2025-08-17","total_reviews":89,"positive_rate":0.865169},{"appid":"3876530","name":"The Man in the Park 2: The Second Man in the Park","release_date":"2025-08-17","total_reviews":104,"positive_rate":0.903846},{"appid":"3898040","name":"Nations","release_date":"2025-08-17","total_reviews":148,"positive_rate":0.898649},{"appid":"3918190","name":"Click Me Harder","release_date":"2025-08-18","total_reviews":68,"positive_rate":0.647059},{"appid":"3456800","name":"Rock Crusher","release_date":"2025-08-18","total_reviews":364,"positive_rate":0.848901},{"appid":"3475110","name":"Draggin'","release_date":"2025-08-18","total_reviews":57,"positive_rate":0.982456},{"appid":"3815990","name":"Spreadsheets and Nothing More","release_date":"2025-08-19","total_reviews":62,"positive_rate":1.0},{"appid":"1425980","name":"Stone Simulator – Just Be a Rock","release_date":"2025-08-19","total_reviews":1754,"positive_rate":0.946978},{"appid":"3656400","name":"Dragon's Chronicles~暗黒大魔王と北斗の剣(つるぎ)~","release_date":"2025-08-19","total_reviews":131,"positive_rate":0.862595},{"appid":"3821790","name":"Ys X: Proud Nordics","release_date":"2025-08-20","total_reviews":457,"positive_rate":0.770241},{"appid":"3429740","name":"灵童","release_date":"2025-08-20","total_reviews":83,"positive_rate":0.746988},{"appid":"3614720","name":"鬼灵的冒险GUILING's Adventure","release_date":"2025-08-20","total_reviews":62,"positive_rate":0.951613},{"appid":"1848440","name":"Foolish Mortals","release_date":"2025-11-05","total_reviews":775,"positive_rate":0.949677},{"appid":"3553650","name":"Dream Slayers","release_date":"2025-11-14","total_reviews":59,"positive_rate":0.627119},{"appid":"3564740","name":"Where Winds Meet","release_date":"2025-11-14","total_reviews":115758,"positive_rate":0.864122},{"appid":"2201910","name":"Winds Of Arcana: Ruination","release_date":"2025-11-14","total_reviews":133,"positive_rate":0.759398},{"appid":"3868630","name":"Serra de Deus","release_date":"2025-11-14","total_reviews":102,"positive_rate":0.941176},{"appid":"2871820","name":"祟り坂 | TATARI Curse road","release_date":"2025-11-15","total_reviews":52,"positive_rate":0.884615},{"appid":"3931170","name":"MONUMENTUM","release_date":"2025-11-15","total_reviews":65,"positive_rate":0.953846},{"appid":"3880190","name":"Coconut Simulator 2","release_date":"2025-11-15","total_reviews":755,"positive_rate":0.956291},{"appid":"1141550","name":"CUCKOLD SIMULATOR: Life as a Beta Male Cuck","release_date":"2025-11-16","total_reviews":2142,"positive_rate":0.926237},{"appid":"3987810","name":"Pleasure Cruise","release_date":"2025-11-17","total_reviews":283,"positive_rate":0.837456},{"appid":"3541750","name":"古咒迷途 (lost curse)","release_date":"2025-11-17","total_reviews":76,"positive_rate":0.947368},{"appid":"2269540","name":"ANIWARS: Call of the Void","release_date":"2025-11-17","total_reviews":204,"positive_rate":0.941176},{"appid":"3437350","name":"Little Aviary","release_date":"2025-11-17","total_reviews":264,"positive_rate":0.875},{"appid":"3092110","name":"Dungeons & Kingdoms","release_date":"2025-11-17","total_reviews":83,"positive_rate":0.421687},{"appid":"3571710","name":"Leaf Blower Co.","release_date":"2025-11-17","total_reviews":228,"positive_rate":0.758772},{"appid":"1900250","name":"Demonschool","release_date":"2025-11-19","total_reviews":1083,"positive_rate":0.917821},{"appid":"2212790","name":"Asbury Pines","release_date":"2025-11-19","total_reviews":573,"positive_rate":0.904014},{"appid":"4038990","name":"Crusaders Quest : Mini","release_date":"2025-11-19","total_reviews":511,"positive_rate":0.818004},{"appid":"3691760","name":"回忆忘却之看板娘","release_date":"2026-02-13","total_reviews":55,"positive_rate":0.909091},{"appid":"2814790","name":"The Darkness Below","release_date":"2026-02-13","total_reviews":81,"positive_rate":0.814815},{"appid":"4355950","name":"Clicker Kids","release_date":"2026-02-13","total_reviews":90,"positive_rate":0.677778},{"appid":"3209930","name":"Song's Fantasy","release_date":"2026-02-13","total_reviews":249,"positive_rate":0.562249},{"appid":"3841010","name":"Niramare Quest: Saving a World That Loves Hating Me","release_date":"2026-02-13","total_reviews":233,"positive_rate":0.866953},{"appid":"3848180","name":"机械皇朝","release_date":"2026-02-14","total_reviews":207,"positive_rate":0.859903},{"appid":"2480100","name":"Dino Ramen Express","release_date":"2026-02-14","total_reviews":177,"positive_rate":0.740113},{"appid":"2076290","name":"迷鹿：Terreno di caccia","release_date":"2026-02-14","total_reviews":379,"positive_rate":0.891821},{"appid":"4028160","name":"Nice City","release_date":"2026-02-14","total_reviews":132,"positive_rate":0.681818},{"appid":"2720920","name":"ASTROBOTANICA","release_date":"2026-02-16","total_reviews":102,"positive_rate":0.656863},{"appid":"1892090","name":"The Last Citadel","release_date":"2026-02-16","total_reviews":74,"positive_rate":0.837838},{"appid":"3372460","name":"Screaming Head","release_date":"2026-02-16","total_reviews":53,"positive_rate":0.924528},{"appid":"2116610","name":"Seclusa","release_date":"2026-02-16","total_reviews":157,"positive_rate":0.968153},{"appid":"2140310","name":"Wish Me Well","release_date":"2026-02-16","total_reviews":63,"positive_rate":0.825397},{"appid":"4039080","name":"Table Battle Simulator","release_date":"2026-02-16","total_reviews":110,"positive_rate":0.754545},{"appid":"2622820","name":"Dobbel Dungeon","release_date":"2026-02-16","total_reviews":463,"positive_rate":0.920086},{"appid":"3470020","name":"Eutolant Saga","release_date":"2026-02-17","total_reviews":118,"positive_rate":0.923729},{"appid":"1822450","name":"The Slaverian Trucker","release_date":"2026-02-17","total_reviews":854,"positive_rate":0.845433},{"appid":"3932140","name":"魔哆魔哆 Modo Modo","release_date":"2026-02-17","total_reviews":115,"positive_rate":0.965217},{"appid":"3723530","name":"Paperwork","release_date":"2026-02-17","total_reviews":94,"positive_rate":0.957447},{"appid":"3441280","name":"The Greenening","release_date":"2026-05-07","total_reviews":515,"positive_rate":0.963107},{"appid":"2654490","name":"Relic Arena","release_date":"2026-05-07","total_reviews":1061,"positive_rate":0.830349},{"appid":"4187140","name":"Don't Panic! It is Just Turbulence","release_date":"2026-05-11","total_reviews":514,"positive_rate":0.731518},{"appid":"3432650","name":"追曙","release_date":"2026-05-11","total_reviews":142,"positive_rate":0.866197},{"appid":"3657180","name":"Skigill","release_date":"2026-05-15","total_reviews":159,"positive_rate":0.767296},{"appid":"4539950","name":"Unanswered","release_date":"2026-05-15","total_reviews":104,"positive_rate":0.942308},{"appid":"3133650","name":"Gold Gold Adventure Gold","release_date":"2026-05-15","total_reviews":983,"positive_rate":0.711089},{"appid":"4372240","name":"MONOPHOBIA","release_date":"2026-05-16","total_reviews":127,"positive_rate":0.976378},{"appid":"3332830","name":"Mr Right Simulator","release_date":"2026-05-16","total_reviews":830,"positive_rate":0.936145},{"appid":"4119360","name":"It Reaches","release_date":"2026-05-17","total_reviews":152,"positive_rate":0.796053},{"appid":"2955720","name":"Panthalassa","release_date":"2026-05-17","total_reviews":116,"positive_rate":0.982759},{"appid":"4165620","name":"R-Type Dimensions III","release_date":"2026-05-18","total_reviews":66,"positive_rate":0.469697},{"appid":"2397510","name":"Corsairs - Battle of the Caribbean","release_date":"2026-05-18","total_reviews":133,"positive_rate":0.330827},{"appid":"3421660","name":"Re:Blade","release_date":"2026-05-18","total_reviews":178,"positive_rate":0.724719},{"appid":"2393580","name":"The Dead Await","release_date":"2026-05-18","total_reviews":160,"positive_rate":0.6875},{"appid":"4507620","name":"Crazy Oddballs: Idle RPG","release_date":"2026-05-18","total_reviews":362,"positive_rate":0.720994},{"appid":"2483190","name":"Forza Horizon 6","release_date":"2026-05-18","total_reviews":101741,"positive_rate":0.806794},{"appid":"3693650","name":"Thrifty Business","release_date":"2026-05-18","total_reviews":1419,"positive_rate":0.976039},{"appid":"4078200","name":"Dwarf Eats Mountain","release_date":"2026-05-18","total_reviews":1211,"positive_rate":0.8109},{"appid":"4611990","name":"日本事故物件監視協会3 -Japan Stigmatized Property-","release_date":"2026-08-06","total_reviews":132,"positive_rate":0.80303},{"appid":"4914830","name":"Toy Shop Tidy Up","release_date":"2026-08-07","total_reviews":246,"positive_rate":0.695122},{"appid":"3417140","name":"IGS Classic Arcade Collection","release_date":"2026-08-12","total_reviews":144,"positive_rate":0.666667},{"appid":"3816000","name":"Flowers and Deities","release_date":"2026-08-14","total_reviews":338,"positive_rate":0.911243},{"appid":"2566840","name":"Sands of Skullcreek","release_date":"2026-08-14","total_reviews":85,"positive_rate":0.976471},{"appid":"4240150","name":"Sister Other Paranoia","release_date":"2026-08-14","total_reviews":705,"positive_rate":0.734752},{"appid":"2498780","name":"3D Printer Manager","release_date":"2026-08-15","total_reviews":105,"positive_rate":0.771429},{"appid":"4787190","name":"The Legend of Mala Tokmachka","release_date":"2026-08-15","total_reviews":277,"positive_rate":0.736462},{"appid":"4881490","name":"FinSim","release_date":"2026-08-16","total_reviews":68,"positive_rate":0.75},{"appid":"4977680","name":"末日战姬：废土觉醒","release_date":"2026-08-16","total_reviews":75,"positive_rate":0.786667},{"appid":"4677280","name":"GUTTED: Infested Crypts","release_date":"2026-08-17","total_reviews":115,"positive_rate":0.878261},{"appid":"3667050","name":"RHYTHMKILL","release_date":"2026-08-17","total_reviews":51,"positive_rate":0.764706},{"appid":"4509630","name":"The Eternal Woods","release_date":"2026-08-17","total_reviews":81,"positive_rate":0.938272},{"appid":"4579940","name":"Crownhold","release_date":"2026-08-17","total_reviews":535,"positive_rate":0.850467},{"appid":"4264950","name":"Farewells clicker","release_date":"2026-08-17","total_reviews":67,"positive_rate":0.626866},{"appid":"4415740","name":"The Pale Mimic","release_date":"2026-08-17","total_reviews":412,"positive_rate":0.873786},{"appid":"3849000","name":"The Lantern of the Laughless Saint","release_date":"2026-08-17","total_reviews":1737,"positive_rate":0.8981},{"appid":"2495730","name":"Provoron","release_date":"2026-08-17","total_reviews":98,"positive_rate":0.857143},{"appid":"2825860","name":"The Sinking City 2","release_date":"2026-08-18","total_reviews":1987,"positive_rate":0.821339},{"appid":"3749320","name":"Hua Manlou","release_date":"2026-08-20","total_reviews":1555,"positive_rate":0.971061},{"appid":"2836990","name":"Drunken Rogue","release_date":"2026-08-20","total_reviews":229,"positive_rate":0.951965},{"appid":"4243330","name":"全网有点怪","release_date":"2026-08-20","total_reviews":141,"positive_rate":0.70922},{"appid":"3231480","name":"Dreamspring","release_date":"2026-10-02","total_reviews":80,"positive_rate":0.825},{"appid":"4285110","name":"Tunnel Escape Fates Entwined","release_date":"2026-10-02","total_reviews":132,"positive_rate":0.80303},{"appid":"4610080","name":"Bering Tonnage","release_date":"2026-10-05","total_reviews":71,"positive_rate":0.746479},{"appid":"4341400","name":"TUNG","release_date":"2026-10-06","total_reviews":3041,"positive_rate":0.879316},{"appid":"3358360","name":"Motorcycle Night Ride","release_date":"2026-10-09","total_reviews":246,"positive_rate":0.752033},{"appid":"2010030","name":"Denizen","release_date":"2026-10-09","total_reviews":929,"positive_rate":0.727664},{"appid":"4190960","name":"LOST & FOUND","release_date":"2026-10-09","total_reviews":107,"positive_rate":0.831776},{"appid":"3090810","name":"Truckful","release_date":"2026-10-09","total_reviews":111,"positive_rate":0.765766}],"excluded_from_product_data":["assigned_tag","categories","coded_early_access","developers","genres","is_free","multiplayer_emphasis","price_initial","publishers","review_score_desc","short_description"],"excluded_reason":"产品承诺不按品类或商业模式分类（两者经检验均不显著）。从产品数据中移除这些列，使条件筛选在结构上无法发生。完整数据集见 data/clean/analysis_dataset.csv。"};
+</script>
+<script>
+(function () {
+  "use strict";
+
+  var D = window.REFERENCE_DATA;
+  if (!D) { document.body.innerHTML = "<p style='padding:24px'>数据文件未加载。" +
+            "请确认 reference-data.js 与 index.html 在同一目录。</p>"; return; }
+
+  var RATES = D.rates_sorted.slice();     // 升序
+  var N = RATES.length;
+  var DEFAULT_PCT = 75;
+  var DEFAULT_COUNT = 10;
+  var DEFAULT_MINREV = 50;
+  var currentRate = DEFAULT_PCT / 100;    // 供视图选项重绘列表时复用
+
+  var $ = function (id) { return document.getElementById(id); };
+  var rng = $("rng"), num = $("num"), err = $("err"), reset = $("reset");
+
+  /* 百分位：把输入值线性插值到排序位置上，再换算为 0–100。
+     该定义在整个输入区间上严格单调递增——输入变大，百分位一定变大。 */
+  function percentileOf(v) {
+    if (N === 1) return 50;
+    if (v <= RATES[0]) return 0;
+    if (v >= RATES[N - 1]) return 100;
+    var lo = 0, hi = N - 1;
+    while (hi - lo > 1) {
+      var mid = (lo + hi) >> 1;
+      if (RATES[mid] <= v) lo = mid; else hi = mid;
+    }
+    var span = RATES[hi] - RATES[lo];
+    var frac = span > 0 ? (v - RATES[lo]) / span : 0;
+    return ((lo + frac) / (N - 1)) * 100;
+  }
+
+  function countBelow(v) {
+    var c = 0;
+    for (var i = 0; i < N; i++) { if (RATES[i] < v) c++; else break; }
+    return c;
+  }
+
+  function verdictFor(p) {
+    if (p < 10)  return ["远低于市场", "绝大多数近期作品都比这个预期表现更好。"];
+    if (p < 25)  return ["低于市场多数作品", "约有四分之三的近期作品表现好于这个预期。"];
+    if (p < 45)  return ["略低于市场中位数", "处在大致正常、但偏下的一半。"];
+    if (p <= 55) return ["大致处于市场中位数附近", "这就是市场上最典型的水平。"];
+    if (p < 75)  return ["高于市场中位数", "表现好于多数近期作品。"];
+    if (p < 90)  return ["明显高于市场", "只有少数近期作品达到这个水平。"];
+    return ["处于市场顶端", "这是近期作品里最好的那一档。"];
+  }
+
+  function fmt(x, d) { return Number(x).toFixed(d === undefined ? 3 : d); }
+
+  /* ---------- 直方图 ---------- */
+  var BINS = 20;                    // 每档 0.05
+  var W = 640, H = 190;
+  var PAD = { l: 8, r: 8, t: 16, b: 26 };
+  var plotW = W - PAD.l - PAD.r;
+  var plotH = H - PAD.t - PAD.b;
+
+  function renderChart(value) {
+    var counts = new Array(BINS).fill(0), i, b;
+    for (i = 0; i < N; i++) {
+      b = Math.min(BINS - 1, Math.floor(RATES[i] * BINS));
+      counts[b]++;
+    }
+    var maxC = Math.max.apply(null, counts) || 1;
+    var bw = plotW / BINS;
+    var out = [];
+
+    // 轴
+    out.push('<line x1="' + PAD.l + '" y1="' + (PAD.t + plotH) + '" x2="' +
+             (PAD.l + plotW) + '" y2="' + (PAD.t + plotH) + '" stroke="#e2e6ec"/>');
+
+    // 柱
+    for (i = 0; i < BINS; i++) {
+      if (!counts[i]) continue;
+      var h = (counts[i] / maxC) * plotH;
+      var x = PAD.l + i * bw;
+      var inBin = (value >= i / BINS) && (value < (i + 1) / BINS);
+      out.push('<rect x="' + (x + 1) + '" y="' + (PAD.t + plotH - h) +
+               '" width="' + (bw - 2) + '" height="' + h + '" rx="1.5" fill="' +
+               (inBin ? "var(--bar-hi)" : "var(--bar)") + '"/>');
+    }
+
+    // 用户位置
+    var mx = PAD.l + Math.max(0, Math.min(1, value)) * plotW;
+    out.push('<line x1="' + mx + '" y1="' + (PAD.t - 4) + '" x2="' + mx + '" y2="' +
+             (PAD.t + plotH) + '" stroke="var(--accent)" stroke-width="2" stroke-dasharray="4 3"/>');
+    out.push('<circle cx="' + mx + '" cy="' + (PAD.t - 4) + '" r="3.5" fill="var(--accent)"/>');
+    var anchor = mx > W - 70 ? "end" : (mx < 70 ? "start" : "middle");
+    var dx = anchor === "end" ? -6 : (anchor === "start" ? 6 : 0);
+    out.push('<text class="marker-label" x="' + (mx + dx) + '" y="' + (PAD.t + 8) +
+             '" text-anchor="' + anchor + '">你 ' + fmt(value, 2) + '</text>');
+
+    // x 轴刻度
+    [0, 0.25, 0.5, 0.75, 1].forEach(function (t) {
+      var tx = PAD.l + t * plotW;
+      out.push('<text class="axis" x="' + tx + '" y="' + (H - 8) +
+               '" text-anchor="middle">' + t.toFixed(2) + '</text>');
+    });
+
+    $("chart").innerHTML = out.join("");
+  }
+
+  /* ---------- 主渲染 ---------- */
+  function showError(msg) {
+    err.textContent = msg;
+    err.classList.add("on");
+    $("result").style.opacity = ".35";
+    $("pctNum").textContent = "—";
+    $("pctSuffix").textContent = "";
+    $("verdict").textContent = "";
+    $("countline").textContent = "";
+    $("stats").innerHTML = "";
+    $("chart").innerHTML = "";
+  }
+
+  function render(pctInput) {
+    var raw = String(num.value).trim();
+    if (raw === "") { showError("请输入一个 0 到 100 之间的数字。"); return; }
+    var v = Number(raw);
+    if (!isFinite(v)) { showError("“" + raw + "”不是有效数字。请输入 0 到 100 之间的数字。"); return; }
+    if (v < 0 || v > 100) {
+      showError("超出范围：" + v + "。请输入 0 到 100 之间的数字（好评率百分比）。");
+      return;
+    }
+
+    err.classList.remove("on");
+    err.textContent = "";
+    $("result").style.opacity = "1";
+
+    var rate = v / 100;
+    currentRate = rate;
+    var p = percentileOf(rate);
+    var below = countBelow(rate);
+    var ties = 0, i;
+    for (i = 0; i < N; i++) { if (Math.abs(RATES[i] - rate) < 1e-9) ties++; }
+    var above = N - below - ties;
+
+    $("asRate").textContent = fmt(rate, 3);
+    $("pctNum").textContent = p.toFixed(1);
+    $("pctSuffix").textContent = "百分位";
+    var vd = verdictFor(p);
+    $("verdict").innerHTML = "<b>" + vd[0] + "</b> —— " + vd[1];
+
+    $("countline").textContent = "参照集的 " + N + " 款作品中，" + below +
+      " 款低于你的预期" + (ties ? "，" + ties + " 款相同" : "") +
+      "，" + above + " 款更高。";
+
+    renderChart(rate);
+    renderComparables(rate);
+
+    var s = D.summary;
+    $("stats").innerHTML =
+      row("市场均值", fmt(s.mean, 3)) +
+      row("市场中位数", fmt(s.median, 3)) +
+      row("市场四分位区间", fmt(s.q1, 3) + " – " + fmt(s.q3, 3)) +
+      row("市场最低 / 最高", fmt(s.min, 3) + " / " + fmt(s.max, 3));
+  }
+
+  /* ---------- 媒体发现：把用户带到真实作品面前 ----------
+     产品不止输出一个数字。它列出处在同一位置的真实作品，并链到各自的商店页，
+     让用户能去看内容本身——这正是 media app 与"仪表盘"的区别。
+
+     两个视图选项（条数、评论数下界）只作用于这份列表，不动上面的百分位。
+     评论数下界会引入选择效应——评论多的作品口碑也更好——所以这里把偏移量
+     算出来直接显示，而不是让用户以为过滤是中性的。 */
+  var listCount = function () { return parseInt($("count").value, 10) || 10; };
+  var minReviews = function () { return parseInt($("minrev").value, 10) || 50; };
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function meanOf(rows) {
+    if (!rows.length) return 0;
+    var s = 0, i;
+    for (i = 0; i < rows.length; i++) s += rows[i].positive_rate;
+    return s / rows.length;
+  }
+
+  function renderComparables(rate) {
+    var want = listCount();
+    var floor = minReviews();
+
+    // 匹配集合：应用评论数下界。这就是"视图"，不是"答案"。
+    var pool = D.titles.filter(function (t) { return t.total_reviews >= floor; });
+
+    var sorted = pool.slice().sort(function (a, b) {
+      return Math.abs(a.positive_rate - rate) - Math.abs(b.positive_rate - rate);
+    });
+    var near = sorted.slice(0, want);
+
+    var poolMean = meanOf(pool);
+    var marketMean = D.summary.mean;
+
+    $("cmp-hint").textContent =
+      "下面 " + near.length + " 款作品的好评率离你的预期最近，按接近程度排列" +
+      (near.length < want
+        ? "（该下界下只有 " + pool.length + " 款可选，不足 " + want + " 款）"
+        : "") + "。";
+
+    // 过滤偏移提示：只在真的过滤了、且偏移可见时才显示
+    var shiftPts = (poolMean - marketMean) * 100;
+    if (floor > 50) {
+      $("cmp-shift").className = "shift";
+      $("cmp-shift").innerHTML =
+        "评论数下界 <b>&ge;" + floor + "</b> 把可选作品收窄到 <b>" + pool.length + " 款</b>，" +
+        "但这<b>不是中性的筛选</b>：这批作品的好评率均值是 <b>" + poolMean.toFixed(3) +
+        "</b>，比完整参照集的 " + marketMean.toFixed(3) + " <b>高 " +
+        shiftPts.toFixed(1) + " 个百分点</b>。口碑好的作品评论也更多。" +
+        "所以这个列表代表\u201c评论充分的作品\u201d，不代表整个市场——" +
+        "上面的百分位仍然按完整 " + N + " 款计算，两者不可混读。";
+    } else {
+      $("cmp-shift").className = "shift";
+      $("cmp-shift").style.display = "none";
+      $("cmp-shift").innerHTML = "";
+    }
+
+    $("cmp-list").innerHTML = near.map(function (t) {
+      var url = "https://store.steampowered.com/app/" + encodeURIComponent(t.appid) + "/";
+      var delta = t.positive_rate - rate;
+      var sign = delta > 0 ? "+" : (delta < 0 ? "\u2212" : "\u00b1");
+      return "<li>" +
+        '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' +
+        esc(t.name) + "</a>" +
+        '<span class="cmp-meta">' + esc(t.release_date) + " · " +
+        t.total_reviews.toLocaleString("en-US") + " 条评论</span>" +
+        '<span class="cmp-rate">' + t.positive_rate.toFixed(3) +
+        ' <span style="color:var(--ink-3);font-weight:400">(' + sign +
+        Math.abs(delta).toFixed(3) + ")</span></span>" +
+        "</li>";
+    }).join("");
+  }
+
+  function row(k, v) {
+    return "<div><span>" + k + "</span><span>" + v + "</span></div>";
+  }
+
+  /* ---------- 事件 ---------- */
+  rng.addEventListener("input", function () { num.value = rng.value; render(); });
+  num.addEventListener("input", function () {
+    var v = Number(num.value);
+    if (isFinite(v) && v >= 0 && v <= 100) rng.value = String(Math.round(v));
+    render();
+  });
+  // 视图选项只重绘列表，不动百分位——所以它们不会改变"答案"。
+  $("count").addEventListener("change", function () { renderComparables(currentRate); });
+  $("minrev").addEventListener("change", function () { renderComparables(currentRate); });
+  reset.addEventListener("click", function () {
+    rng.value = String(DEFAULT_PCT);
+    num.value = String(DEFAULT_PCT);
+    $("count").value = String(DEFAULT_COUNT);
+    $("minrev").value = String(DEFAULT_MINREV);
+    render();
+    num.focus();
+  });
+
+  /* ---------- 页脚元信息 ---------- */
+  $("refdesc").textContent = D.reference_set_description;
+  $("srcpath").textContent = D.source.dataset;
+  $("srchash").textContent = D.source.sha256.slice(0, 12) + "…";
+  $("gen").textContent = D.generated_at_utc;
+
+  /* 打开即渲染默认值。不写入 localStorage —— 刷新必须回到初始状态。 */
+  render();
+})();
+</script>
+</body>
+</html>

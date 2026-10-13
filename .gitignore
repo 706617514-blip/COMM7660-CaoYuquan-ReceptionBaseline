@@ -1,0 +1,14 @@
+# Collection checkpoint — intermediate, never a deliverable
+data/raw/checkpoint.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# OS
+.DS_Store
+
+# Local scratch
+*.log
