@@ -57,6 +57,11 @@ python analysis/analyze_and_report.py
 # Feature-coding sheet: 20% subsample with the outcome column withheld
 python analysis/make_coding_sheet.py
 
+# Field-level verification: a random 10% of titles (minimum 20), re-read from the same
+# documented endpoints and compared field by field. Writes records/field-verification.md
+# and refuses to overwrite a signed record without --force. Costs two requests per title.
+python analysis/verify_fields.py
+
 # Phase 2 product: regenerate the frozen reference distribution from the dataset
 python analysis/build_product_data.py
 

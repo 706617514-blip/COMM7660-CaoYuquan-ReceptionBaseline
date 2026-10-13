@@ -55,6 +55,7 @@ python3 analysis/check_report_compliance.py     # exit code 0 = compliant
 | Decision memo ~1 page | ✅ ~0.95 page |
 | PRD 1–2 pages | ✅ ~1.9 pages |
 | Double-code 20% of titles, minimum 20 | ✅ 32 titles coded from descriptions with the outcome withheld; 26 of 31 codeable rows agree with the derived label, Cohen's kappa 0.566 ([agreement report](records/coding-agreement.md)) |
+| Verify key fields in a random 10%, minimum 20 | ✅ 20 titles re-read from the same documented endpoints, 11 fields each, 206 of 220 values identical and 0 mismatches ([field verification](records/field-verification.md)) |
 | 100–200 distinct titles, title-level unit | ✅ 159 titles, one row per title |
 
 The checker reads the finished `.docx` from disk rather than trusting the builder's internal count,
