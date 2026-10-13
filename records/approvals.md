@@ -144,7 +144,7 @@ Copy this block once per release.
       workflow run exists*
 - [ ] The deployed version matches the release under assessment — *not applicable in Phase 1:
       nothing is deployed*
-- [ ] I confirmed no credentials or personal data entered the repository
+- [x] I confirmed no credentials or personal data entered the repository
 - [ ] The rollback procedure was tested (evidence: ______________) — *not applicable in Phase 1:
       there is no earlier release to restore*
 
