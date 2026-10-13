@@ -120,7 +120,7 @@ non-`synthetic_` output path.
 
 | Location | Contents |
 |---|---|
-| `docs/` | Plan, model rationale, codebook, results, decision memo, PRD |
+| `docs/` | Plan, model rationale, codebook, results, decision memo, PRD, and a personal GitHub operations guide (not a graded deliverable) |
 | `data/` | Permitted raw records and the derived clean dataset |
 | `analysis/` | Executable collection, validation, and analysis code |
 | `product/`, `media/` | Product source and media assets (Phase 2) |
