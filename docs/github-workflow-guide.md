@@ -8,11 +8,11 @@
 | 项目 | 值 |
 |---|---|
 | 仓库地址 | <https://github.com/706617514-blip/COMM7660-CaoYuquan-ReceptionBaseline> |
-| 可见性 | Private（作业要求：除非导师批准公开） |
+| 可见性 | **Public**，2026-10-13 由私有改为公开。原因：导师反馈打不开私有仓库；作业正文要求私有"unless the instructor approves public release"，仓库内无受限内容（无评论者标识、无凭据、数据全为 Steam 公开 API 的聚合值）。改为公开同时解开了 Phase 2 的 GitHub Pages（免费账号的私有仓库不支持 Pages）。**公开前已向导师说明，批准与否请本人跟导师确认并记录。** |
 | 默认分支 | `main` |
 | 学生 | Cao Yuquan — 26366290 |
 | 协作者 | `fffchaobu`（Professor Charles Feng），write 权限 |
-| 邀请日期 / 状态 | 2026-10-13 / **pending**（邀请 id 337417458） |
+| 邀请日期 / 状态 | 2026-10-13 / **accepted**（邀请 id 337417458） |
 | 初始提交 | `5fbe3be85c56825ce78f3447317de0d6fc1dca0f` |
 | 本机 CLI | `~/.local/bin/gh`（gh 2.102.0，已登录 `706617514-blip`） |
 
@@ -108,8 +108,10 @@ Phase 1 报告的 access block 还需要：仓库地址、协作者 `fffchaobu` 
 # 仓库 Settings → Pages → Build and deployment → GitHub Actions
 ```
 
-注意：私有仓库启用 Pages 通常需要付费计划。作业明确说明**不要为了让 Pages 生效而把受限的
-课程资料公开**；必要时用已批准的评审主机托管，源码与发布证据仍留在 GitHub。
+仓库现在是公开的，所以免费账号也能用 Pages —— Phase 2 的评审环境可以走这条路。
+
+一般性提醒：私有仓库启用 Pages 通常需要付费计划；作业明确说明**不要为了让 Pages 生效而把受限的
+课程资料公开**。本仓库已确认无受限内容（无评论者标识、无凭据、无未授权数据集），因此不适用该禁令。
 
 ## 6. Issue 与 PR 的用法
 
