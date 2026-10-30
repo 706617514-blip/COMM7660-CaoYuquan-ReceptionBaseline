@@ -12,3 +12,6 @@ venv/
 
 # Local scratch
 *.log
+
+# 由 analysis/export_docs_to_docx.py 生成，可用一条命令重建
+exports/
