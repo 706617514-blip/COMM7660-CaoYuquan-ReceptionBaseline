@@ -1,0 +1,180 @@
+name: CI
+
+# Runs on every push and every pull request.
+#
+# What this checks, and why each check exists rather than being a smoke test:
+#
+#   data        the exclusion rules still fire, and the committed analysis dataset is
+#               byte-identical to the one the Phase 1 report cites. If the cleaning code
+#               or the raw file drifts, this fails instead of silently changing the
+#               evidence under a frozen tag.
+#   analysis    the model still reproduces and the focal coefficient still matches the
+#               committed coefficients.csv. Catches an unpinned dependency silently
+#               changing the estimates.
+#   product     the reference distribution regenerates and the page's logic passes its
+#               functional tests (DOM shim, no browser needed).
+#   compliance  the produced .docx still satisfies the brief's word/table/access-block
+#               and APA formatting rules.
+#
+# The deliberately-failing demonstration used for the "blocked defect" evidence is
+# described in docs/blocked-defect-demo.md. It is a separate branch, not part of this
+# file, because a permanently-red job would make CI useless.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  data:
+    name: Data rules and dataset fingerprint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Exclusion rules fire for every declared rule
+        run: python analysis/test_validate_rules.py
+
+      - name: Regenerate the clean dataset
+        run: python analysis/validate_data.py
+
+      - name: Dataset must be byte-identical to the cited fingerprint
+        # The Phase 1 report and records/extraction-audit.md both cite this digest.
+        # Re-deriving it here is the reproducibility check: same inputs, same bytes.
+        run: |
+          expected="67eaeb6d965ae0d2109c411896f1f12a88d52459520e1f993b2369a77d0c2875"
+          actual="$(sha256sum data/clean/analysis_dataset.csv | cut -d' ' -f1)"
+          echo "expected: $expected"
+          echo "actual:   $actual"
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::Analysis dataset digest changed. The cleaning code or the raw file drifted."
+            exit 1
+          fi
+
+  analysis:
+    name: Model reproduces and estimates match
+    runs-on: ubuntu-latest
+    needs: data
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Rebuild the clean dataset and run the analysis
+        run: |
+          python analysis/validate_data.py
+          python analysis/analyze_and_report.py
+
+      - name: Focal coefficient must match the committed value
+        # Guards against an unpinned dependency quietly changing the estimates the
+        # report quotes. Tolerance is 1e-4: tighter than any substantive movement,
+        # looser than last-digit float noise.
+        run: |
+          python - <<'PY'
+          import csv, sys
+          committed = {}
+          with open("analysis/results/coefficients.csv") as fh:
+              for row in csv.DictReader(fh):
+                  committed[row["term"]] = float(row["logit_coef"])
+          # values as committed in the frozen Phase 1 evidence
+          expected = {"is_free": -0.094738, "age_years": 0.433961}
+          bad = []
+          for term, want in expected.items():
+              got = committed.get(term)
+              if got is None:
+                  bad.append(f"{term}: missing from coefficients.csv")
+              elif abs(got - want) > 1e-4:
+                  bad.append(f"{term}: committed {got:+.6f} vs expected {want:+.6f}")
+          for b in bad:
+              print(f"::error::{b}")
+          sys.exit(1 if bad else 0)
+          PY
+
+  product:
+    name: Product data and page logic
+    runs-on: ubuntu-latest
+    needs: data
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Regenerate the frozen reference distribution
+        run: python analysis/build_product_data.py
+
+      - name: The product data must not carry conditioning columns
+        # build_product_data.py asserts this too; repeating it here means a future edit
+        # to that script cannot quietly weaken the guarantee.
+        run: |
+          python - <<'PY'
+          import json, sys
+          d = json.load(open("product/reference-distribution.json"))
+          forbidden = {"genres", "categories", "is_free", "assigned_tag",
+                       "multiplayer_emphasis", "price_initial"}
+          keys = set(d["titles"][0])
+          leak = keys & forbidden
+          if leak:
+              print(f"::error::product data leaks conditioning columns: {sorted(leak)}")
+              sys.exit(1)
+          print(f"ok: {len(d['titles'])} titles, columns {sorted(keys)}")
+          PY
+
+      - name: Functional test of the page
+        run: node tests/test_product_app.js
+
+      - name: Rebuild the single-file distributable
+        run: python analysis/build_standalone_html.py
+
+  compliance:
+    name: Report complies with the brief
+    runs-on: ubuntu-latest
+    needs: analysis
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check the produced .docx files
+        run: python analysis/check_report_compliance.py
+
+      - name: Keep the report artefacts available for inspection
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase1-report
+          path: |
+            reports/*.docx
+            analysis/results/*.png
+            analysis/results/coefficients.csv
+          if-no-files-found: warn

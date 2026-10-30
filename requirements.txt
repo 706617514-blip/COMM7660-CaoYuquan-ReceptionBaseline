@@ -1,4 +1,20 @@
-pandas>=2.0
-numpy>=1.24
-statsmodels>=0.14
-matplotlib>=3.7
+# Pinned to the exact versions recorded in the Phase 1 report
+# (reports/COMM7660_Phase1_report.docx, Appendix B / access block area).
+#
+# Why pinned rather than ranges: CI must reproduce the same estimates the report
+# quotes. A floating `statsmodels>=0.14` resolves to a newer release whose IRLS
+# convergence and standard errors can differ in the last digits, which would make
+# the committed coefficients and the CI output disagree for no substantive reason.
+#
+# Changing any version here means the "software" line in the report is no longer
+# accurate. Re-run analysis/analyze_and_report.py afterwards and update the report
+# if any reported figure moves.
+
+pandas==2.3.3
+numpy==2.0.2
+statsmodels==0.14.6
+matplotlib==3.9.4
+
+# Used only by analysis/build_report.py, analysis/build_report_zh.py and
+# analysis/check_report_compliance.py. The analysis itself does not need it.
+python-docx==1.2.0

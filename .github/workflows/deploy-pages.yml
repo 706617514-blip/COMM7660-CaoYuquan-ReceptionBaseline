@@ -1,0 +1,83 @@
+name: Deploy product to GitHub Pages
+
+# Publishes the product as a live URL the instructor and pilot participants can open
+# without cloning anything.
+#
+# Why a workflow rather than "Settings → Pages → deploy from branch":
+# the site lives in product/, not in the repository root or /docs. Uploading that
+# directory as a Pages artifact keeps product/ where it is, so the relative
+# <script src="reference-data.js"> keeps resolving. Serving the repo root instead would
+# put the site at a different path and expose data/, analysis/ and reports/ as browsable
+# files, which is not wanted.
+#
+# Deployment is a Phase 2 requirement ("Executed checks and deployment"), so this must
+# actually run at least once before the Phase 2 deadline. A green workflow with no
+# successful deployment step in the Actions log is not evidence.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "product/**"
+      - "analysis/build_product_data.py"
+      - "analysis/build_standalone_html.py"
+      - "data/clean/analysis_dataset.csv"
+      - ".github/workflows/deploy-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; do not cancel a run that is already publishing.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build the site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Regenerate the reference distribution from the frozen dataset
+        # Deploying a stale copy of the data would publish numbers that do not match the
+        # analysis. Regenerating here makes the deployed site a product of the dataset.
+        run: python analysis/build_product_data.py
+
+      - name: Rebuild the single-file distributable
+        run: python analysis/build_standalone_html.py
+
+      - name: Verify the page logic before publishing
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - run: node tests/test_product_app.js
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: product
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
