@@ -110,6 +110,13 @@
   .nolist{margin:10px 0 0;padding-left:18px;font-size:13.5px;color:var(--ink-2)}
   .nolist li{margin:3px 0}
 
+  /* 数据时效标牌：把"这是快照、不是实时"直接摆在首屏 */
+  .asof{display:inline-flex;align-items:center;gap:7px;margin:10px 0 0;
+        padding:5px 11px;border-radius:999px;font-size:12.5px;line-height:1;
+        background:#eef2f6;border:1px solid #d5dde6;color:#3c4a5a}
+  .asof b{font-variant-numeric:tabular-nums;color:#1f3b57}
+  .asof .dot{width:7px;height:7px;border-radius:50%;background:#b0821f;flex:0 0 7px}
+
   /* 列表视图选项 */
   .viewopts{display:flex;gap:14px;margin-top:16px;padding-top:14px;
             border-top:1px solid var(--line)}
@@ -132,6 +139,11 @@
   <header>
     <h1>Reception Baseline</h1>
     <p class="lede">你的预期好评率，在近期 Steam 作品里处于什么位置。</p>
+
+    <p class="asof" id="asof" role="note">
+      <span class="dot" aria-hidden="true"></span>
+      <span id="asofText">数据加载中…</span>
+    </p>
 
     <p class="disclosure" id="disclosure">
       <strong>本工具不按品类或付费模式分类。</strong>
@@ -494,7 +506,25 @@
     num.focus();
   });
 
+  /* ---------- 数据时效 ----------
+     页面不是实时的：数据是采集截止日的一次静态快照，编译进 reference-data.js。
+     不写死天数，而是每次打开都按截止日与当前日期重新计算，所以它会随时间自然变旧。
+     一个永远显示"21 天前"的标牌本身就是谎话。 */
+  function renderAsOf() {
+    var cutoff = (D.source && D.source.cutoff) || "";
+    var el = $("asofText");
+    if (!cutoff) {
+      el.textContent = "静态数据快照（未记录采集截止日）";
+      return;
+    }
+    var then = Date.parse(cutoff + "T00:00:00Z");
+    var days = Math.floor((Date.now() - then) / 86400000);
+    var age = days <= 0 ? "今日" : (days === 1 ? "1 天前" : days + " 天前");
+    el.innerHTML = "静态快照，<b>非实时</b> · 采集截止 <b>" + cutoff + "</b>（" + age + "）";
+  }
+
   /* ---------- 页脚元信息 ---------- */
+  renderAsOf();
   $("refdesc").textContent = D.reference_set_description;
   $("srcpath").textContent = D.source.dataset;
   $("srchash").textContent = D.source.sha256.slice(0, 12) + "…";

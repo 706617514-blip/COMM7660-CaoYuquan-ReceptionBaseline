@@ -385,6 +385,30 @@ ok(els["count"].value === "10" && els["minrev"].value === "50",
 ok(!/<script/i.test(listHtml) && !/onerror=/i.test(listHtml),
    "列表内容经 HTML 转义（无注入）");
 
+/* ------------------------------------------ 11. 数据时效必须明示 */
+
+console.log("\n=== 11. 静态快照的时效披露 ===");
+const asof = els["asofText"].textContent;
+console.log("  实际渲染: " + asof);
+ok(asof.length > 0 && asof.indexOf("数据加载中") === -1,
+   "时效标牌已渲染，不再是占位文案", asof);
+ok(/非实时/.test(asof), "明确写出「非实时」");
+const cutoff = globalThis.REFERENCE_DATA.source.cutoff;
+ok(asof.indexOf(cutoff) >= 0, "显示采集截止日 " + cutoff, asof);
+ok(/\d+\s*天前|今日/.test(asof), "显示数据年龄（随当前日期计算，非写死）", asof);
+
+// 年龄必须是按截止日算出来的，不是硬编码：用同一公式独立复算
+const expectDays = Math.floor((Date.now() - Date.parse(cutoff + "T00:00:00Z")) / 86400000);
+ok(expectDays >= 0, "截止日不在未来（否则摘要是错的）", String(expectDays));
+const shownDays = (asof.match(/(\d+)\s*天前/) || [])[1];
+ok(String(expectDays) === String(shownDays) || (expectDays === 0 && /今日/.test(asof)),
+   "显示的天数与独立复算一致", "页面 " + shownDays + " vs 复算 " + expectDays);
+
+// 时效标牌必须在输入控件之前（首屏可见）
+const aa = bodyNoScript.indexOf("asofText");
+const ff = bodyNoScript.search(/<input\b/i);
+ok(aa >= 0 && aa < ff, "时效标牌位于任何输入控件之前");
+
 /* ------------------------------------------------------------- 汇总 */
 
 console.log("\n" + "=".repeat(48));

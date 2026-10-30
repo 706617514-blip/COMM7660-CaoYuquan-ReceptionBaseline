@@ -34,6 +34,10 @@ the rollback section below for how restoration is tested.
   review-count floor (≥50 / ≥200 / ≥500 / ≥1000). The floor is disclosed as
   non-neutral: the interface states the filtered set's mean and its gap from the full
   reference set.
+- A **data-freshness badge** on the opening screen: the collection cutoff date and the age
+  of the snapshot in days, computed at render time so it ages as real time passes rather
+  than asserting a fixed age. The page makes no network request at runtime, so without
+  this line a user has nothing telling them the figures are a snapshot rather than live.
 - Static deployment at the Pages URL above.
 - CI on every push and pull request: exclusion rules, dataset fingerprint, model
   reproduction, product logic, and report compliance.
@@ -43,7 +47,11 @@ the rollback section below for how restoration is tested.
 - The comparable list is ordered by **distance in positive rate**, not by similarity of
   the games. A developer sees titles that scored the same, not titles that resemble
   theirs. This is the main candidate for revision.
-- Single reference snapshot (cutoff 2026-10-09). Reception drift is unobserved.
+- Single reference snapshot (cutoff 2026-10-09). Reception drift is unobserved, and the
+  reference distribution is therefore **not live** — the freshness badge states the cutoff
+  and the age rather than leaving that to inference. Re-running
+  `analysis/collect_titles.py` then `analysis/build_product_data.py` is the only way the
+  figures move; deployment alone does not refresh them from Steam.
 - No participant data yet. Nothing about usability is known at this point.
 
 ### Rollback target
