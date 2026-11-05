@@ -1,0 +1,15 @@
+{
+  "recorded_at_utc": "20261105T131934Z",
+  "note": "各 tag 下的 Steam 作品总数，来自 search/results 的 total_count",
+  "totals": {
+    "Action": 93153,
+    "Indie": 123538,
+    "RPG": 49626,
+    "Strategy": 55080,
+    "Simulation": 56247,
+    "Adventure": 86122,
+    "Racing": 8629,
+    "Sports": 10456,
+    "Casual": 94726
+  }
+}

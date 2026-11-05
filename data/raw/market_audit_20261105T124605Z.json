@@ -1,0 +1,38 @@
+{
+  "collected_at_utc": "20261105T124605Z",
+  "cutoff": "2026-11-05",
+  "window_start": "2024-11-05",
+  "per_quarter": 6,
+  "min_reviews": 0,
+  "tags": [
+    "Action",
+    "Indie",
+    "RPG",
+    "Strategy",
+    "Simulation",
+    "Adventure",
+    "Racing",
+    "Sports",
+    "Casual"
+  ],
+  "accepted": 486,
+  "rejections": {
+    "not_a_game": 411
+  },
+  "by_tag": {
+    "Action": 54,
+    "Adventure": 54,
+    "Casual": 54,
+    "Indie": 54,
+    "RPG": 54,
+    "Racing": 54,
+    "Simulation": 54,
+    "Sports": 54,
+    "Strategy": 54
+  },
+  "review_data_source": "search result tooltip (all-time count + positive %)",
+  "zero_review_titles": 286,
+  "tooltip_absent_candidates": 612,
+  "tooltip_parse_mismatch": 0,
+  "outfile": "/Users/f1gment/Documents/7660/data/raw/market_titles_20261105T124605Z.csv"
+}
