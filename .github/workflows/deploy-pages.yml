@@ -3,12 +3,12 @@ name: Deploy product to GitHub Pages
 # Publishes the product as a live URL the instructor and pilot participants can open
 # without cloning anything.
 #
-# Why a workflow rather than "Settings → Pages → deploy from branch":
-# the site lives in product/, not in the repository root or /docs. Uploading that
-# directory as a Pages artifact keeps product/ where it is, so the relative
-# <script src="reference-data.js"> keeps resolving. Serving the repo root instead would
-# put the site at a different path and expose data/, analysis/ and reports/ as browsable
-# files, which is not wanted.
+# The Phase 2 product is the game, so game/ becomes the site root. The Phase 1 analysis
+# tool is staged at /phase1/ beside it: the Phase 2 report has to argue that the product
+# follows from the Phase 1 analysis, and a reader can then open the tool that produced it
+# in one click. Staging copies files verbatim into a build directory rather than moving
+# anything in the repository, so both products keep their own relative paths and neither
+# the frozen Phase 1 tag nor the analysis pipeline is disturbed.
 #
 # Deployment is a Phase 2 requirement ("Executed checks and deployment"), so this must
 # actually run at least once before the Phase 2 deadline. A green workflow with no
@@ -65,11 +65,26 @@ jobs:
 
       - run: node tests/test_product_app.js
 
+      - name: Stage the site (game at root, Phase 1 tool under /phase1/)
+        run: |
+          set -eu
+          rm -rf site
+          mkdir -p site/phase1
+          cp game/index.html game/config.js game/logic.js game/render.js site/
+          cp product/index.html site/phase1/index.html
+          cp product/reference-data.js site/phase1/reference-data.js
+          # 部署产物必须是自洽的：缺任何一个文件都会让页面白屏
+          for f in site/index.html site/config.js site/logic.js site/render.js \
+                   site/phase1/index.html site/phase1/reference-data.js; do
+            [ -s "$f" ] || { echo "::error::missing or empty: $f"; exit 1; }
+          done
+          echo "staged:"; find site -type f | sort
+
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: product
+          path: site
 
   deploy:
     name: Deploy

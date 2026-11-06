@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>熔野耕作 · Emberfield</title>
+<style>
+  :root{
+    --bg:#141a22; --panel:#1c2531; --panel2:#232f3e; --line:#33465c;
+    --ink:#e8eef5; --dim:#93a5b8; --gold:#e8b04b; --green:#7ba05b;
+    --red:#e8574a; --blue:#6fb1e0;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+  #wrap{max-width:980px;margin:0 auto;padding:14px 16px 40px}
+  h1{font-size:19px;margin:0 0 2px;letter-spacing:.5px}
+  h1 small{font-weight:400;color:var(--dim);font-size:12px;margin-left:8px;letter-spacing:0}
+  .sub{color:var(--dim);font-size:12.5px;margin:0 0 12px}
+
+  #stage{position:relative;width:100%;aspect-ratio:960/600;background:#0d1117;
+    border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  canvas{display:block;width:100%;height:100%}
+
+  /* 覆盖式界面 */
+  .screen{position:absolute;inset:0;display:none;flex-direction:column;
+    padding:16px;overflow:auto;background:rgba(12,17,23,.93);backdrop-filter:blur(3px)}
+  .screen.on{display:flex}
+  .screen h2{margin:0 0 4px;font-size:17px}
+  .screen .hint{color:var(--dim);font-size:12px;margin:0 0 12px;line-height:1.6}
+
+  .stats{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:12px;font-size:13px}
+  .stats b{color:var(--gold);font-variant-numeric:tabular-nums}
+  .stats .s{color:var(--dim)}
+
+  .section-title{font-size:12px;letter-spacing:1.2px;color:var(--dim);
+    text-transform:uppercase;margin:10px 0 7px;padding-bottom:4px;
+    border-bottom:1px solid var(--line)}
+
+  /* 农田 */
+  .farmgrid{display:grid;grid-template-columns:repeat(3,74px);gap:8px;margin-bottom:6px}
+  .plot{width:74px;height:64px;border-radius:8px;border:1px solid var(--line);
+    background:#232b1f;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;cursor:pointer;font-size:11px;color:var(--dim);
+    transition:transform .08s,border-color .15s;user-select:none}
+  .plot:hover{transform:translateY(-2px);border-color:#5c7a9a}
+  .plot.empty{background:#2a2f26;border-style:dashed}
+  .plot.growing{background:#2d3a24;border-color:#5b7a3f;color:#b6d18f}
+  .plot.mature{background:#3a3520;border-color:var(--gold);color:var(--gold)}
+  .plot .ico{font-size:19px;line-height:1}
+  .plot .lbl{font-size:10px;margin-top:3px}
+
+  /* 按钮 */
+  .btn{appearance:none;border:1px solid var(--line);background:var(--panel2);
+    color:var(--ink);padding:8px 14px;border-radius:8px;font-size:13px;cursor:pointer;
+    font-family:inherit;transition:background .15s,border-color .15s}
+  .btn:hover:not(:disabled){background:#2c3a4c;border-color:#4f6b8a}
+  .btn:disabled{opacity:.42;cursor:not-allowed}
+  .btn.primary{background:#2f5f3a;border-color:#417c4e}
+  .btn.primary:hover:not(:disabled){background:#39714a}
+  .btn.diff{display:block;width:100%;text-align:left;margin-bottom:6px;padding:9px 12px}
+  .btn.diff .dn{font-weight:600}
+  .btn.diff .dd{font-size:11px;color:var(--dim);display:block;margin-top:2px}
+  .btn.diff.sel{border-color:var(--gold);background:#3a3520}
+  .btn.diff.sel .dd{color:#d8c391}
+
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .grow{flex:1}
+  .col2{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
+
+  .up{display:flex;align-items:center;gap:9px;margin-bottom:7px;font-size:12.5px}
+  .up .un{width:46px;color:var(--ink)}
+  .up .ul{color:var(--dim);font-size:11px}
+  .up .ub{margin-left:auto}
+
+  /* HUD */
+  #hud{position:absolute;top:10px;left:12px;right:12px;display:none;
+    justify-content:space-between;align-items:flex-start;pointer-events:none;
+    font-size:12px;text-shadow:0 1px 3px rgba(0,0,0,.9)}
+  #hud.on{display:flex}
+  .hpwrap{width:190px}
+  .hpbar{height:11px;background:rgba(0,0,0,.55);border:1px solid #4a5b6e;
+    border-radius:6px;overflow:hidden}
+  .hpfill{height:100%;background:linear-gradient(90deg,#4f8a3f,#7fc45c);
+    transition:width .12s}
+  .hplabel{color:#cfdae6;margin-bottom:3px;font-size:11px}
+  .wave{background:rgba(0,0,0,.5);padding:5px 11px;border-radius:14px;
+    border:1px solid #3d4f63;color:#dbe6f0}
+  .loot{background:rgba(0,0,0,.5);padding:5px 11px;border-radius:14px;
+    border:1px solid #3d4f63;color:var(--gold);font-variant-numeric:tabular-nums}
+
+  .keys{color:var(--dim);font-size:11.5px;line-height:1.8;margin-top:10px}
+  kbd{background:#2a3542;border:1px solid #46586d;
+    border-bottom-width:2px;border-radius:4px;padding:1px 6px;font-size:11px;
+    font-family:ui-monospace,Menlo,monospace;color:#dfe8f0}
+  .note{font-size:11.5px;color:var(--dim);line-height:1.65;margin-top:10px;
+    border-left:2px solid var(--line);padding-left:10px}
+  .result-big{font-size:27px;font-weight:700;margin:2px 0 10px}
+  .win{color:#8fd06a}.lose{color:var(--red)}
+  .delta{font-size:13px;line-height:1.9}
+  .delta span{color:var(--gold);font-variant-numeric:tabular-nums}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <h1>熔野耕作 <small>Emberfield — 2.5D 横版肉鸽 × 农庄经营</small></h1>
+  <p class="sub">一个核心循环：下地打怪 → 收种子铜币 → 种田变强 → 再下地。</p>
+
+  <div id="stage">
+    <canvas id="cv" width="960" height="600"></canvas>
+
+    <!-- ================= 农庄 ================= -->
+    <div class="screen on" id="scr-farm">
+      <h2>农庄</h2>
+      <p class="hint">
+        种子种下后 <b>2 局</b>成熟，成熟后<b>每局</b>被动产出铜币，永久生效。
+        打输也算一局，所以失败也在推进农庄。
+      </p>
+
+      <div class="stats">
+        <div><span class="s">铜币</span> <b id="st-coins">0</b></div>
+        <div><span class="s">种子</span> <b id="st-seeds">0</b></div>
+        <div><span class="s">成熟田</span> <b id="st-mature">0</b> / 9</div>
+        <div><span class="s">每局被动收入</span> <b id="st-passive">0</b></div>
+        <div><span class="s">已下地</span> <b id="st-runs">0</b> 局</div>
+      </div>
+
+      <div class="col2">
+        <div>
+          <div class="section-title">田地（点空田播种）</div>
+          <div class="farmgrid" id="farmgrid"></div>
+          <div class="note" id="farmhint">种子不够时先去打一局。</div>
+        </div>
+
+        <div>
+          <div class="section-title">强化</div>
+          <div id="upgrades"></div>
+
+          <div class="section-title" style="margin-top:14px">选择难度并下地</div>
+          <div id="difflist"></div>
+          <button class="btn primary" id="btn-start" style="width:100%;margin-top:4px">
+            下地
+          </button>
+        </div>
+      </div>
+
+      <div class="keys">
+        <kbd>A</kbd><kbd>D</kbd> 左右移动　<kbd>W</kbd><kbd>S</kbd> 前后走位（景深）　
+        <kbd>空格</kbd> 跳跃　<kbd>J</kbd> 攻击
+        <br>攻击只打中<b>朝向前方、且前后位置接近</b>的目标——用 <kbd>W</kbd><kbd>S</kbd> 对齐高度再出手。
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn" id="btn-reset">清空存档重来</button>
+        <span style="color:var(--dim);font-size:11.5px" id="saveinfo"></span>
+      </div>
+    </div>
+
+    <!-- ================= 结果 ================= -->
+    <div class="screen" id="scr-result">
+      <h2>这一局结束了</h2>
+      <div class="result-big" id="rs-title">—</div>
+      <div class="delta" id="rs-delta"></div>
+      <div class="note" id="rs-note"></div>
+      <div class="row" style="margin-top:16px">
+        <button class="btn primary" id="btn-back">回农庄</button>
+      </div>
+    </div>
+
+    <!-- ================= HUD ================= -->
+    <div id="hud">
+      <div class="hpwrap">
+        <div class="hplabel">生命 <span id="hp-num">100</span></div>
+        <div class="hpbar"><div class="hpfill" id="hp-fill" style="width:100%"></div></div>
+      </div>
+      <div class="wave" id="wave-label">第 1 / 3 波</div>
+      <div class="loot">铜币 <span id="loot-coins">0</span> · 种子 <span id="loot-seeds">0</span></div>
+    </div>
+  </div>
+
+  <p class="note" style="margin-top:12px">
+    数据来源：本作的品类取舍依据 <code>analysis/market/</code> 下的 Steam 样本分析
+    （486 款 9 品类 + 108 款定向标签样本）。数值全部在 <code>game/config.js</code> 里，
+    逻辑与渲染不写死任何数字。
+  </p>
+  <p class="note" style="margin-top:8px">
+    Phase 1 的分析工具（Steam 口碑基准）
+    <a href="phase1/" style="color:#e8b04b">在这里</a>。
+    它是本作选题的决策依据；本作是那个决策的结果。
+  </p>
+</div>
+
+<script src="config.js"></script>
+<script src="logic.js"></script>
+<script src="render.js"></script>
+<script>
+(function () {
+  'use strict';
+  const C = window.GameConfig, L = window.GameLogic, R = window.GameRender;
+  const SAVE_KEY = 'emberfield_save_v2';
+
+  const $ = (id) => document.getElementById(id);
+  const cv = $('cv');
+  const ctx = cv.getContext('2d');
+
+  let state = load() || L.createState(Date.now() % 1e9);
+  let selectedDiff = state._selDiff || 'wood';
+  let running = false;
+  let lastT = 0, acc = 0, worldT = 0;
+
+  // ---------------------------------------------------------------- 存档
+  function save() {
+    try {
+      state._selDiff = selectedDiff;
+      localStorage.setItem(SAVE_KEY, L.serialize(state));
+      $('saveinfo').textContent = '已自动存档';
+    } catch (e) { $('saveinfo').textContent = '存档失败（浏览器可能禁用了本地存储）'; }
+  }
+  function load() {
+    try {
+      const raw = localStorage.getItem(SAVE_KEY);
+      if (!raw) return null;
+      const s = L.deserialize(raw);
+      selectedDiff = s._selDiff || 'wood';
+      return s;
+    } catch (e) { return null; }
+  }
+
+  // ---------------------------------------------------------------- 输入
+  const keys = Object.create(null);
+  const KEYMAP = {
+    KeyA: 'left', ArrowLeft: 'left',
+    KeyD: 'right', ArrowRight: 'right',
+    KeyW: 'up', ArrowUp: 'up',
+    KeyS: 'down', ArrowDown: 'down',
+    Space: 'jump', KeyJ: 'attack',
+  };
+  window.addEventListener('keydown', (e) => {
+    const k = KEYMAP[e.code];
+    if (!k) return;
+    e.preventDefault();
+    keys[k] = true;
+  });
+  window.addEventListener('keyup', (e) => {
+    const k = KEYMAP[e.code];
+    if (k) { e.preventDefault(); keys[k] = false; }
+  });
+  window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
+
+  // ---------------------------------------------------------------- 农庄界面
+  function renderFarm() {
+    $('st-coins').textContent = state.meta.coins;
+    $('st-seeds').textContent = state.meta.seeds;
+    $('st-mature').textContent = L.maturePlots(state);
+    $('st-passive').textContent = L.passiveIncome(state);
+    $('st-runs').textContent = state.meta.runsCompleted;
+
+    // 田地
+    const grid = $('farmgrid');
+    grid.innerHTML = '';
+    state.farm.plots.forEach((plot, i) => {
+      const d = document.createElement('div');
+      d.className = 'plot ' + plot.state;
+      if (plot.state === 'empty') {
+        d.innerHTML = '<div class="ico">＋</div><div class="lbl">空田</div>';
+      } else if (plot.state === 'growing') {
+        const left = C.FARM.runsToMature - plot.growth;
+        d.innerHTML = '<div class="ico">🌱</div><div class="lbl">再 ' + left + ' 局</div>';
+      } else {
+        d.innerHTML = '<div class="ico">🌾</div><div class="lbl">+'
+          + C.FARM.yieldPerPlot + '/局</div>';
+      }
+      d.title = plot.state === 'empty'
+        ? '点击播种（消耗 ' + C.FARM.seedCost + ' 种子）'
+        : (plot.state === 'growing' ? '生长中 ' + plot.growth + '/' + C.FARM.runsToMature : '已成熟');
+      d.addEventListener('click', () => {
+        if (plot.state !== 'empty') return;
+        const r = L.plant(state, i);
+        if (!r.ok) { $('farmhint').textContent = r.reason; return; }
+        $('farmhint').textContent = '已播种。';
+        save(); renderFarm();
+      });
+      grid.appendChild(d);
+    });
+
+    const emptyCount = state.farm.plots.filter(p => p.state === 'empty').length;
+    $('farmhint').textContent = state.meta.seeds > 0 && emptyCount > 0
+      ? '你有 ' + state.meta.seeds + ' 颗种子，可以播种。'
+      : (emptyCount === 0 ? '田都种满了，等成熟。' : '种子不够，先下去打一局。');
+
+    // 强化
+    const up = $('upgrades');
+    up.innerHTML = '';
+    Object.keys(C.UPGRADES).forEach((key) => {
+      const def = C.UPGRADES[key];
+      const lvl = state.meta.upgrades[key];
+      const cost = L.upgradeCost(state, key);
+      const row = document.createElement('div');
+      row.className = 'up';
+      const canBuy = cost !== null && state.meta.coins >= cost;
+      row.innerHTML = '<span class="un">' + def.name + '</span>' +
+        '<span class="ul">Lv.' + lvl + '/' + def.maxLevel + ' · ' + def.desc + '</span>' +
+        '<span class="ub"></span>';
+      const b = document.createElement('button');
+      b.className = 'btn';
+      b.style.padding = '4px 10px';
+      b.style.fontSize = '12px';
+      b.textContent = cost === null ? '满级' : cost + ' 铜币';
+      b.disabled = !canBuy;
+      b.addEventListener('click', () => {
+        const r = L.buyUpgrade(state, key);
+        if (r.ok) { save(); renderFarm(); }
+      });
+      row.querySelector('.ub').appendChild(b);
+      up.appendChild(row);
+    });
+
+    // 难度
+    const list = $('difflist');
+    list.innerHTML = '';
+    C.DIFFICULTIES.forEach((d) => {
+      const b = document.createElement('button');
+      b.className = 'btn diff' + (selectedDiff === d.id ? ' sel' : '');
+      b.innerHTML = '<span class="dn">' + d.name + ' · 战利品 ×' + d.lootMul + '</span>' +
+        '<span class="dd">' + d.desc + ' · ' + d.waves + ' 波</span>';
+      b.addEventListener('click', () => { selectedDiff = d.id; save(); renderFarm(); });
+      list.appendChild(b);
+    });
+  }
+
+  // ---------------------------------------------------------------- 屏幕切换
+  function showScreen(name) {
+    ['scr-farm', 'scr-result'].forEach((id) => $(id).classList.remove('on'));
+    $('hud').classList.remove('on');
+    if (name === 'farm') { $('scr-farm').classList.add('on'); renderFarm(); }
+    if (name === 'result') $('scr-result').classList.add('on');
+    if (name === 'run') $('hud').classList.add('on');
+  }
+
+  function renderResult() {
+    const r = state.lastResult;
+    if (!r) { showScreen('farm'); return; }
+    const diff = C.difficultyById(r.difficultyId);
+    $('rs-title').textContent = r.won ? '清空林场' : '倒下了';
+    $('rs-title').className = 'result-big ' + (r.won ? 'win' : 'lose');
+    let html = '';
+    html += '难度 <span>' + diff.name + '</span>　清掉 <span>' + r.wavesCleared + '</span> / '
+      + diff.waves + ' 波　用时 <span>' + r.elapsed + '</span> 秒<br>';
+    html += '带回铜币 <span>' + r.coins + '</span>　种子 <span>' + r.seeds + '</span>';
+    if (!r.won) html += '（倒下只保留一半）';
+    html += '<br>';
+    if (r.matured > 0) html += '农庄有 <span>' + r.matured + '</span> 块田成熟了';
+    else if (r.passive > 0) html += '成熟田产出 <span>' + r.passive + '</span> 铜币';
+    else html += '农庄暂时没有产出';
+    $('rs-delta').innerHTML = html;
+    $('rs-note').textContent = r.won
+      ? '清完所有波次。难度越高战利品倍率越高，所以推高难度是加速农庄的唯一办法。'
+      : '种子和铜币只保留一半。想稳一点可以降一档难度，先攒被动收入。';
+    showScreen('result'); save();
+  }
+
+  // ---------------------------------------------------------------- 循环
+  function beginRun() {
+    L.startRun(state, selectedDiff);
+    worldT = 0; acc = 0; lastT = 0;
+    running = true;
+    showScreen('run');
+  }
+
+  function frame(ts) {
+    requestAnimationFrame(frame);
+
+    if (running && state.phase === 'run') {
+      if (!lastT) lastT = ts;
+      let dt = (ts - lastT) / 1000;
+      lastT = ts;
+      if (dt > 0.25) dt = 0.25;          // 切标签页回来时不要一次补太多
+      worldT += dt;
+      acc += dt;
+      const FIXED = 1 / 60;
+      let guard = 0;
+      while (acc >= FIXED && guard++ < 8) {
+        L.step(state, keys, FIXED);
+        acc -= FIXED;
+        if (state.phase !== 'run') break;
+      }
+      updateHud();
+
+      if (state.phase === 'result') {
+        running = false;
+        renderResult();
+      }
+    } else {
+      lastT = 0;
+    }
+
+    // 战斗中画世界；农庄/结果界面画一张静态背景当底
+    if (state.phase === 'run' && state.run) {
+      R.drawScene(ctx, state, worldT);
+    } else {
+      R.drawWorld(ctx, worldT);
+    }
+  }
+
+  function updateHud() {
+    const run = state.run;
+    if (!run) return;
+    const p = run.player;
+    const pct = Math.max(0, Math.min(100, (p.hp / p.maxHp) * 100));
+    $('hp-fill').style.width = pct + '%';
+    $('hp-fill').style.background = pct > 50
+      ? 'linear-gradient(90deg,#4f8a3f,#7fc45c)'
+      : (pct > 25 ? 'linear-gradient(90deg,#b08a2f,#e0b54b)'
+                  : 'linear-gradient(90deg,#8e2f28,#e8574a)');
+    $('hp-num').textContent = Math.max(0, Math.round(p.hp));
+    $('wave-label').textContent = '第 ' + (run.waveIndex + 1) + ' / ' + run.diff.waves + ' 波';
+    $('loot-coins').textContent = run.loot.coins;
+    $('loot-seeds').textContent = run.loot.seeds;
+  }
+
+  // ---------------------------------------------------------------- 绑定
+  $('btn-start').addEventListener('click', beginRun);
+  $('btn-back').addEventListener('click', () => {
+    L.returnToFarm(state);
+    showScreen('farm');
+    save();
+  });
+  $('btn-reset').addEventListener('click', () => {
+    if (!confirm('确定清空存档？农庄与强化都会重置。')) return;
+    localStorage.removeItem(SAVE_KEY);
+    state = L.createState(Date.now() % 1e9);
+    selectedDiff = 'wood';
+    showScreen('farm');
+    save();
+  });
+
+  // 启动
+  if (state.phase === 'result') renderResult();
+  else { state.phase = state.phase === 'run' ? 'farm' : state.phase; showScreen('farm'); }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

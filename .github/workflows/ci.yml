@@ -150,6 +150,60 @@ jobs:
       - name: Rebuild the single-file distributable
         run: python analysis/build_standalone_html.py
 
+  game:
+    name: Game logic and page wiring
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Simulation rules
+        # 深度轴命中判定、战利品结算、作物成熟、存档往返、难度梯度
+        run: node tests/test_game_logic.js
+
+      - name: Page wiring under a DOM shim
+        # 逻辑测试抓不到接线错误：id 拼错、事件没绑、渲染抛异常。
+        # 这一层会执行 index.html 里真实的 inline 脚本。
+        run: node tests/test_game_page.js
+
+      - name: Balance values must be DEFINED in config.js only
+        # 注意只查「定义/赋值」，不查引用：`diff.lootMul` 是正确读取配置，
+        # 应当放行；`lootMul: 2.5` 或 `hpMul = 1.5` 才是把数值写死在逻辑里。
+        run: |
+          bad=0
+          for f in game/logic.js game/render.js; do
+            if grep -qE "(lootMul|hpMul|dmgMul|perLevel|yieldPerPlot)[[:space:]]*[:=]" "$f"; then
+              echo "::error::$f 里定义了平衡数值，应移到 game/config.js"
+              grep -nE "(lootMul|hpMul|dmgMul|perLevel|yieldPerPlot)[[:space:]]*[:=]" "$f"
+              bad=1
+            fi
+          done
+          if [ "$bad" -eq 0 ]; then echo "ok: 平衡数值只在 game/config.js 定义"; fi
+          exit $bad
+
+      - name: Every difficulty must be playable
+        run: |
+          node - <<'JS'
+          const C = require('./game/config.js'), L = require('./game/logic.js');
+          let bad = 0;
+          for (const d of C.DIFFICULTIES) {
+            const s = L.createState(4242);
+            L.startRun(s, d.id);
+            if (s.run.enemies.length === 0 && s.run.spawnQueue.length === 0) {
+              console.error(`::error::${d.name} 开局没有任何小怪排队`); bad = 1;
+            }
+            for (let i = 0; i < 600; i++) L.step(s, {}, 1/60);
+            if (!isFinite(s.run ? s.run.player.hp : 1)) {
+              console.error(`::error::${d.name} 出现非有限血量`); bad = 1;
+            }
+          }
+          if (!bad) console.log('ok: 四个难度都能开局并推进');
+          process.exit(bad);
+          JS
+
   compliance:
     name: Report complies with the brief
     runs-on: ubuntu-latest
