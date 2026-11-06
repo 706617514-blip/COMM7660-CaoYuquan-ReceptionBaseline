@@ -41,7 +41,8 @@
   ];
 
   function ensureHub(state) {
-    if (!state.hub) state.hub = { x: 400, z: HUB_D / 2, facing: 1 };
+    // 起点放在设施之间（不在任何区域内），避免一进基地就正好压在铁砧上
+    if (!state.hub) state.hub = { x: 285, z: HUB_D / 2, facing: 1 };
     return state.hub;
   }
 

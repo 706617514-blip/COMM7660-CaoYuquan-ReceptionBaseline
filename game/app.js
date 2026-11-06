@@ -26,6 +26,8 @@
   const GROUND_Y = C.GROUND_Y;
   const Z_TO_Y = 0.60;
   const Z_SCALE = 0.18;
+  const HERO_SCALE = 1.18;   // 角色在 960x600 里偏小，整体放大一点
+  const ENEMY_SCALE = 1.18;
 
   // 当前对局状态。用模块级变量而不是 registry：
   // Phaser 会在 new Game() 之后立刻启动首个场景，registry 可能还没被赋值，
@@ -100,7 +102,8 @@
     g.fillStyle(0x2a2f3a, 1); g.fillRect(4, 10, 12, 76);
     g.fillRect(60, 10, 12, 76);
     g.fillStyle(0x2a2f3a, 1); g.fillRect(4, 4, 68, 12);
-    g.fillStyle(0xff7a3c, 0.22); g.fillRect(16, 14, 44, 72);
+    g.fillStyle(0xff8a4c, 0.55); g.fillRect(16, 14, 44, 72);
+    g.fillStyle(0xffd0a0, 0.35); g.fillRect(22, 20, 32, 60);
     g.generateTexture('gate', 76, 88);
 
     // 田地：一块土
@@ -166,12 +169,33 @@
         .setOrigin(0.5, 1).setScale(1.15).setAlpha(0.28).setDepth(-900);
     }
 
-    // 景深带
+    // 景深带：必须一直铺到画布底部。
+    // 早期只铺到 GROUND_Y+100，结果画布下方约 1/3 是空的，看起来像画错了。
     const zFar = GROUND_Y - C.FIELD_D * Z_TO_Y;
     g.fillStyle(mode === 'hub' ? 0x2b3a2c : 0x2a2320, 1);
-    g.fillRect(0, zFar, W, GROUND_Y - zFar + 100);
+    g.fillRect(0, zFar, W, HGT - zFar);
     g.fillStyle(mode === 'hub' ? 0x35472f : 0x3a2f28, 1);
-    g.fillRect(0, zFar + 46, W, GROUND_Y - zFar - 46 + 100);
+    g.fillRect(0, zFar + 46, W, HGT - zFar - 46);
+
+    // 前景压暗，把视线收在景深带里
+    // 底部只做很轻的压暗：早期用了 0.35 的纯黑，整条看起来像"没画完的空白"
+    const fg = scene.add.graphics().setDepth(5000);
+    for (let i = 0; i < 10; i++) {
+      fg.fillStyle(0x000000, 0.018 * (i + 1));
+      fg.fillRect(0, GROUND_Y + 40 + i * 8, W, 8);
+    }
+
+    // 草丛点缀（固定位置，不用随机，保证每次打开一致）
+    const tuft = scene.add.graphics().setDepth(-800);
+    for (let i = 0; i < 46; i++) {
+      const tx = 14 + (i * 137) % (W - 20);
+      const tz = (i * 61) % C.FIELD_D;
+      const ty = GROUND_Y - tz * Z_TO_Y + 6;
+      tuft.fillStyle(mode === 'hub' ? 0x466b3c : 0x4a3b2e, 0.75);
+      tuft.fillRect(tx, ty, 2, 5);
+      tuft.fillRect(tx + 3, ty - 2, 2, 7);
+      tuft.fillRect(tx - 3, ty - 1, 2, 6);
+    }
 
     g.lineStyle(2, 0xffffff, 0.16);
     g.beginPath(); g.moveTo(0, zFar); g.lineTo(W, zFar); g.strokePath();
@@ -233,6 +257,9 @@
 
       this.cameras.main.setBackgroundColor('#141a22');
       this.events.on('wake', () => { this.panelOpen = false; this.refreshPlots(); });
+      // 调试钩子：无头探针需要能驱动场景（见 /tmp/probe.js）
+      global.EmberfieldApp.__scene = this;
+      global.EmberfieldApp.__state = this.state;
     }
 
     refreshPlots() {
@@ -294,7 +321,7 @@
       const s = toScreen(hub.x, hub.z, 0);
       this.hero.setPosition(s.sx, s.sy).setDepth(1000 - hub.z);
       this.hero.setFlipX(hub.facing < 0);
-      this.hero.setScale(s.sc);
+      this.hero.setScale(s.sc * HERO_SCALE);
       this.shadow.setPosition(s.sx, s.sy + 2).setDepth(1000 - hub.z - 1);
 
       const zone = H.zoneAt(this.state);
@@ -331,6 +358,8 @@
 
       this.events.on('wake', () => { this.state = CURRENT_STATE; });
       global.EmberfieldUI.showHud(true, this.state);
+      global.EmberfieldApp.__scene = this;
+      global.EmberfieldApp.__state = this.state;
     }
 
     getEnemySprite(i, kind) {
@@ -350,12 +379,17 @@
       const input = this.keyboardApi.read();
       L.step(this.state, input, dt);
 
+      // 必须每帧清空：Phaser 的 Graphics 会累积绘制命令，
+      // 不清的话前一帧的血条、特效、范围圈会全部叠加残留，
+      // 屏幕上会出现莫名其妙的色块和长条（真实踩过这个坑）。
+      this.effectGfx.clear();
+
       // 相机轻微跟随，让走位有纵深
       this.cameras.main.scrollX = (run.player.x - W / 2) * 0.04;
 
       const p = run.player;
       const ps = toScreen(p.x, p.z, p.h);
-      this.hero.setPosition(ps.sx, ps.sy).setScale(ps.sc);
+      this.hero.setPosition(ps.sx, ps.sy).setScale(ps.sc * HERO_SCALE);
       this.hero.setFlipX(p.facing < 0);
       this.hero.setDepth(1000 - p.z);
       this.hero.setAlpha(p.invuln > 0 && Math.floor(time / 60) % 2 === 0 ? 0.55 : 1);
@@ -375,7 +409,7 @@
       run.enemies.forEach((e, i) => {
         const sp = this.getEnemySprite(i, e.kind);
         const es = toScreen(e.x, e.z, e.h);
-        sp.img.setVisible(true).setPosition(es.sx, es.sy).setScale(es.sc);
+        sp.img.setVisible(true).setPosition(es.sx, es.sy).setScale(es.sc * ENEMY_SCALE);
         sp.img.setDepth(1000 - e.z);
         sp.img.setTint(e.hitFlash > 0 ? 0xffffff : 0xffffff);
         sp.shadow.setVisible(true).setPosition(es.sx, toScreen(e.x, e.z, 0).sy + 2)
@@ -398,7 +432,6 @@
       }
 
       // 技能特效
-      this.effectGfx.fillStyle(0x000000, 0);   // 重置 alpha 不影响已画内容
       run.effects.forEach((ef) => {
         const k = ef.timer / ef.maxTimer;
         const s2 = toScreen(ef.x, ef.z, 0);
