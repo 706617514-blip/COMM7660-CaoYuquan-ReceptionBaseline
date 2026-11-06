@@ -289,7 +289,35 @@ section('10. 存档往返');
 
   let threw = false;
   try { L.deserialize('{"version":999}'); } catch (e) { threw = true; }
-  ok(threw, '版本不匹配的存档会被拒绝');
+  ok(threw, '更新版本的存档会被拒绝（不能降级读取）');
+
+  // ---- 旧存档迁移：不能因为加了个字段就丢掉玩家全部进度 ----
+  const v2 = JSON.stringify({
+    version: 2, seed: 1, rngState: 1, phase: 'farm',
+    meta: { coins: 999, seeds: 4, upgrades: { damage: 5, maxHp: 5, speed: 3 },
+            runsCompleted: 42, runsWon: 30, bestWave: 4 },
+    farm: { plots: Array.from({ length: 9 }, (_, i) => ({
+      state: i < 3 ? 'mature' : 'empty', growth: i < 3 ? 2 : 0 })) },
+    run: null, lastResult: null,
+  });
+  const migrated = L.deserialize(v2);
+  eq(migrated.version, L.STATE_VERSION, 'v2 存档被迁移到当前版本');
+  eq(migrated.meta.coins, 999, '迁移后铜币保留');
+  eq(migrated.meta.upgrades.damage, 5, '迁移后强化等级保留');
+  eq(L.maturePlots(migrated), 3, '迁移后农田状态保留');
+  ok(migrated.meta.skills && migrated.meta.skills.whirl === 1,
+     '迁移后补上了缺失的技能字段');
+  // 迁移完必须还能直接开局
+  L.startRun(migrated, 'wood');
+  eq(migrated.phase, 'run', '迁移后的存档可以正常开局');
+
+  // 字段残缺的当前版本存档也要补齐，而不是崩溃
+  const bare = L.deserialize(JSON.stringify({
+    version: L.STATE_VERSION, seed: 5, rngState: 5, phase: 'farm',
+    meta: { coins: 1, seeds: 1 },
+  }));
+  ok(bare.meta.skills && bare.meta.upgrades, '残缺存档补齐了 skills 与 upgrades');
+  eq(bare.farm.plots.length, 9, '残缺存档补齐了农田');
 }
 
 // ---------------------------------------------------------------- 11. 边界

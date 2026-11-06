@@ -723,9 +723,35 @@
     return JSON.stringify(state);
   }
 
+  /**
+   * 旧存档迁移。
+   *
+   * 早期版本直接 throw，页面那边 catch 之后用新档顶替 ——
+   * 玩家更新一次就丢掉整个农场和强化，而且屏幕上没有任何提示。
+   * v2 → v3 只是新增了 meta.skills，属于可以无损补齐的改动，没必要销毁。
+   */
+  function migrate(s) {
+    if (s.version === 2) {
+      if (!s.meta) s.meta = {};
+      if (!s.meta.skills) s.meta.skills = { whirl: 1, blink: 1, slam: 1, cry: 1, nova: 1 };
+      if (s.hub === undefined) s.hub = null;      // ensureHub 会补
+      s.version = 3;
+    }
+    return s;
+  }
+
   function deserialize(json) {
-    const s = JSON.parse(json);
-    if (s.version !== STATE_VERSION) throw new Error('存档版本不匹配: ' + s.version);
+    const s = migrate(JSON.parse(json));
+    if (s.version !== STATE_VERSION) {
+      throw new Error('存档版本不匹配: ' + s.version + '（当前 ' + STATE_VERSION + '）');
+    }
+    // 兜底：补齐后来新增的字段，保证老档读出来也能直接玩
+    if (!s.meta.skills) s.meta.skills = { whirl: 1, blink: 1, slam: 1, cry: 1, nova: 1 };
+    if (!s.meta.upgrades) s.meta.upgrades = { damage: 0, maxHp: 0, speed: 0 };
+    if (!s.farm || !s.farm.plots) {
+      s.farm = { plots: new Array(C.FARM.cols * C.FARM.rows).fill(null)
+        .map(function () { return { state: 'empty', growth: 0 }; }) };
+    }
     return s;
   }
 
