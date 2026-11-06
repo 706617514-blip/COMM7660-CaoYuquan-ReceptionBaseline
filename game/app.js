@@ -830,6 +830,10 @@
       paintBackdrop(this, 'farm');
       this.cameras.main.fadeIn(420, 0, 0, 0);
 
+      // 与 Hub/Run 一致的调试钩子（无头探针与排障要用）
+      global.EmberfieldApp.__scene = this;
+      global.EmberfieldApp.__state = this.state;
+
       const CX = W / 2;
       // 近排在第 452，三排向上 96 一档 —— 整块田占住画面主体，
       // 之前放在 GROUND_Y+34 又被前景灌木盖住，几乎看不见
