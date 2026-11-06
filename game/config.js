@@ -20,7 +20,9 @@
 
   const FIELD_W = 960;          // 场地宽度（像素）
   const FIELD_D = 210;          // 景深带厚度：可用 W/S 走动的范围
-  const GROUND_Y = 430;         // z=0 时的地面基线（屏幕 y）
+  const GROUND_Y = 515;         // z=0 时的地面基线（屏幕 y）
+                              // 抬高是为了让景深带在 600 高的画布里占够比例，
+                              // 否则整条可走区域挤在中间，下方留出大片空白
   const PLAYER_W = 34;
   const PLAYER_H = 54;          // 站立高度，用于跳跃与绘制
   const PLAYER_SPEED = 250;     // 水平速度 px/s
@@ -105,7 +107,7 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
       key: 'U', name: '旋风斩', short: '旋风',
       desc: '原地横扫一圈，命中周围所有目标',
       cooldown: 6.0, maxLevel: 5, baseCost: 40, costGrowth: 1.5,
-      radius: 108, damage: 20, damagePerLevel: 7,
+      radius: 108, damage: 20, damagePerLevel: 7, stunTime: 0.18,
       // 冷却随等级小幅缩短，让升级有手感而不只是数字
       cdPerLevel: 0.25, fxTime: 0.45, fxColor: 0x9ad7ff,
     },
@@ -118,10 +120,13 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
     },
     slam: {
       key: 'O', name: '震地', short: '震地',
-      desc: '砸向地面，范围击退并造成伤害',
+      desc: '砸向地面，把周围小怪强力掀飞（伤害较低，靠位移解围）',
       cooldown: 8.0, maxLevel: 5, baseCost: 48, costGrowth: 1.5,
-      radius: 132, damage: 26, damagePerLevel: 9,
-      knockback: 520, cdPerLevel: 0.30, fxTime: 0.40, fxColor: 0xffb066,
+      radius: 132,
+      // 按需求调整：伤害下调，击退显著加强 —— 定位从"输出技能"变成"解围技能"
+      damage: 16, damagePerLevel: 6,
+      knockback: 1050, stunTime: 0.60,
+      cdPerLevel: 0.30, fxTime: 0.40, fxColor: 0xffb066,
     },
     cry: {
       key: 'K', name: '战吼', short: '战吼',

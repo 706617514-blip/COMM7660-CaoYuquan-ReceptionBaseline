@@ -24,7 +24,10 @@
 
   const W = 960, HGT = 600;
   const GROUND_Y = C.GROUND_Y;
-  const Z_TO_Y = 0.60;
+  // 每单位 z 对应的屏幕竖直位移。
+  // 0.60 时 210 单位的景深带只有 126px 高，画面下方空掉一大块；
+  // 调到 1.02 后带宽约 214px，前后走动在屏幕上明显得多。
+  const Z_TO_Y = 1.02;
   const Z_SCALE = 0.18;
   const HERO_SCALE = 1.18;   // 角色在 960x600 里偏小，整体放大一点
   const ENEMY_SCALE = 1.18;
@@ -74,12 +77,57 @@
     g.fillStyle(0x000000, 1); g.fillEllipse(24, 8, 48, 16);
     g.generateTexture('shadow', 48, 16);
 
-    // 树木（基地背景用）
+    // ---- 树木 A：三层针叶，带明暗，看起来有体积 ----
     g.clear();
-    g.fillStyle(0x1d2a20, 1); g.fillTriangle(30, 0, 60, 60, 0, 60);
-    g.fillTriangle(30, 18, 64, 84, -4, 84);
-    g.fillStyle(0x243528, 1); g.fillRect(26, 60, 8, 34);
-    g.generateTexture('tree', 60, 96);
+    g.fillStyle(0x141d17, 1); g.fillRect(27, 62, 7, 36);
+    g.fillStyle(0x18241b, 1); g.fillTriangle(30, 4, 12, 44, 48, 44);
+    g.fillStyle(0x1e2e22, 1); g.fillTriangle(30, 20, 8, 64, 52, 64);
+    g.fillStyle(0x263a2a, 1); g.fillTriangle(30, 38, 4, 86, 56, 86);
+    g.fillStyle(0x2f4633, 1); g.fillTriangle(30, 10, 20, 36, 40, 36);
+    g.generateTexture('treeA', 60, 98);
+
+    // ---- 树木 B：枯树，配"熔野"的调子 ----
+    g.clear();
+    g.fillStyle(0x211a16, 1); g.fillRect(28, 10, 5, 86);
+    g.fillStyle(0x2b211a, 1);
+    g.fillTriangle(30, 30, 6, 16, 14, 32);
+    g.fillTriangle(32, 46, 58, 28, 50, 48);
+    g.fillTriangle(30, 20, 16, 4, 24, 22);
+    g.generateTexture('treeB', 64, 98);
+
+    // ---- 围栏木桩 ----
+    g.clear();
+    g.fillStyle(0x3a2c20, 1); g.fillRect(0, 6, 7, 26);
+    g.fillStyle(0x4d3a29, 1); g.fillRect(1, 6, 4, 26);
+    g.generateTexture('post', 7, 32);
+
+    // ---- 光晕（用同心圆近似径向渐变）----
+    g.clear();
+    for (let i = 12; i >= 1; i--) {
+      g.fillStyle(0xffc06a, 0.035 * (13 - i) / 12 + 0.012);
+      g.fillCircle(48, 48, i * 4);
+    }
+    g.generateTexture('glow', 96, 96);
+
+    // ---- 前景灌木（压住画面下缘，避免下方空荡）----
+    g.clear();
+    g.fillStyle(0x0e1512, 1);
+    g.fillCircle(26, 34, 24); g.fillCircle(52, 30, 20); g.fillCircle(8, 38, 16);
+    g.fillCircle(40, 20, 15);
+    g.generateTexture('bush', 76, 58);
+
+    // ---- 火星粒子 ----
+    g.clear();
+    g.fillStyle(0xffd9a0, 1); g.fillCircle(3, 3, 2.2);
+    g.fillStyle(0xfff4e0, 1); g.fillCircle(3, 3, 1.1);
+    g.generateTexture('spark', 6, 6);
+
+    // ---- 火把 ----
+    g.clear();
+    g.fillStyle(0x3a2c20, 1); g.fillRect(4, 10, 5, 22);
+    g.fillStyle(0xff8a4c, 1); g.fillCircle(6, 9, 5);
+    g.fillStyle(0xffd9a0, 1); g.fillCircle(6, 8, 2.8);
+    g.generateTexture('torch', 13, 34);
 
     // 铁砧
     g.clear();
@@ -149,60 +197,110 @@
 
   // ================================================================ 背景
   function paintBackdrop(scene, mode) {
+    const isHub = mode === 'hub';
     const g = scene.add.graphics().setDepth(-1000);
 
-    // 天空
-    for (let i = 0; i < 40; i++) {
-      const t = i / 39;
-      const col = mode === 'hub'
-        ? Phaser.Display.Color.Interpolate.ColorWithColor(
-            new Phaser.Display.Color(24, 34, 44), new Phaser.Display.Color(52, 68, 78), 39, i)
-        : Phaser.Display.Color.Interpolate.ColorWithColor(
-            new Phaser.Display.Color(22, 18, 26), new Phaser.Display.Color(58, 40, 34), 39, i);
-      g.fillStyle(Phaser.Display.Color.GetColor(col.r, col.g, col.b), 1);
-      g.fillRect(0, t * GROUND_Y, W, GROUND_Y / 39 + 1);
+    // ---- 天空：四段渐变，比两段有明显更深的纵深 ----
+    const skyTop = isHub ? [16, 24, 33] : [26, 16, 20];
+    const skyBot = isHub ? [58, 74, 82] : [92, 52, 40];
+    for (let i = 0; i < 64; i++) {
+      const t = i / 63;
+      const r = Math.round(skyTop[0] + (skyBot[0] - skyTop[0]) * t);
+      const gg = Math.round(skyTop[1] + (skyBot[1] - skyTop[1]) * t);
+      const b = Math.round(skyTop[2] + (skyBot[2] - skyTop[2]) * t);
+      g.fillStyle(Phaser.Display.Color.GetColor(r, gg, b), 1);
+      g.fillRect(0, (t * GROUND_Y) - 1, W, GROUND_Y / 63 + 2);
     }
 
-    // 远景树
-    for (let i = 0; i < 11; i++) {
-      scene.add.image(60 + i * 88, GROUND_Y - 148, 'tree')
-        .setOrigin(0.5, 1).setScale(1.15).setAlpha(0.28).setDepth(-900);
-    }
-
-    // 景深带：必须一直铺到画布底部。
-    // 早期只铺到 GROUND_Y+100，结果画布下方约 1/3 是空的，看起来像画错了。
+    // ---- 三层远景山脊：越远越淡，制造空气透视 ----
     const zFar = GROUND_Y - C.FIELD_D * Z_TO_Y;
-    g.fillStyle(mode === 'hub' ? 0x2b3a2c : 0x2a2320, 1);
+    const ridges = [
+      { base: 250, amp: 34, col: isHub ? 0x1b2b32 : 0x2a1e22, alpha: 0.85 },
+      { base: 286, amp: 26, col: isHub ? 0x22343a : 0x33241f, alpha: 0.9 },
+      { base: 318, amp: 18, col: isHub ? 0x2a3d3c : 0x3d2b22, alpha: 1 },
+    ];
+    ridges.forEach((rg, li) => {
+      g.fillStyle(rg.col, rg.alpha);
+      g.beginPath();
+      g.moveTo(0, GROUND_Y);
+      for (let x = 0; x <= W; x += 24) {
+        const y = rg.base + Math.sin((x + li * 130) * 0.011) * rg.amp
+                  + Math.sin((x + li * 60) * 0.027) * rg.amp * 0.45;
+        g.lineTo(x, y);
+      }
+      g.lineTo(W, GROUND_Y);
+      g.closePath();
+      g.fillPath();
+    });
+
+    // ---- 树木：两种交替，远近不同缩放与透明度 ----
+    for (let i = 0; i < 16; i++) {
+      const key = i % 3 === 1 ? 'treeB' : 'treeA';
+      const depthT = (i % 4) / 3;                     // 0..1
+      const sc = 0.62 + depthT * 0.5;
+      const y = zFar + 6 + depthT * 26;
+      scene.add.image(30 + i * 62 + (i % 3) * 9, y, key)
+        .setOrigin(0.5, 1).setScale(sc).setAlpha(0.32 + depthT * 0.42)
+        .setDepth(-900 + i);
+    }
+
+    // ---- 地面：景深带 + 横向分道，让"能前后走"看得见 ----
+    g.fillStyle(isHub ? 0x2b3a2c : 0x2a2320, 1);
     g.fillRect(0, zFar, W, HGT - zFar);
-    g.fillStyle(mode === 'hub' ? 0x35472f : 0x3a2f28, 1);
-    g.fillRect(0, zFar + 46, W, HGT - zFar - 46);
+    g.fillStyle(isHub ? 0x33452f : 0x352a24, 1);
+    g.fillRect(0, zFar + 22, W, HGT - zFar - 22);
 
-    // 前景压暗，把视线收在景深带里
-    // 底部只做很轻的压暗：早期用了 0.35 的纯黑，整条看起来像"没画完的空白"
-    const fg = scene.add.graphics().setDepth(5000);
-    for (let i = 0; i < 10; i++) {
-      fg.fillStyle(0x000000, 0.018 * (i + 1));
-      fg.fillRect(0, GROUND_Y + 40 + i * 8, W, 8);
+    // 分道：越近越宽，暗示透视
+    for (let i = 1; i <= 5; i++) {
+      const y = zFar + (GROUND_Y - zFar) * (i / 6);
+      g.fillStyle(0x000000, 0.10 + i * 0.012);
+      g.fillRect(0, y, W, 1.5 + i * 0.6);
     }
-
-    // 草丛点缀（固定位置，不用随机，保证每次打开一致）
-    const tuft = scene.add.graphics().setDepth(-800);
-    for (let i = 0; i < 46; i++) {
-      const tx = 14 + (i * 137) % (W - 20);
-      const tz = (i * 61) % C.FIELD_D;
-      const ty = GROUND_Y - tz * Z_TO_Y + 6;
-      tuft.fillStyle(mode === 'hub' ? 0x466b3c : 0x4a3b2e, 0.75);
-      tuft.fillRect(tx, ty, 2, 5);
-      tuft.fillRect(tx + 3, ty - 2, 2, 7);
-      tuft.fillRect(tx - 3, ty - 1, 2, 6);
-    }
-
-    g.lineStyle(2, 0xffffff, 0.16);
+    g.lineStyle(2, 0xffffff, 0.14);
     g.beginPath(); g.moveTo(0, zFar); g.lineTo(W, zFar); g.strokePath();
-    g.lineStyle(1, 0xffffff, 0.07);
-    for (let i = 1; i <= 4; i++) {
-      const y = zFar + (GROUND_Y - zFar) * (i / 5);
-      g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.strokePath();
+
+    // ---- 土路：横贯场景，给玩家一条视觉动线 ----
+    g.fillStyle(isHub ? 0x4a4030 : 0x4a3a2c, 0.38);
+    const roadY = GROUND_Y - 46;
+    for (let x = 0; x < W; x += 60) {
+      g.fillRoundedRect(x, roadY + Math.sin(x * 0.02) * 3, 62, 26, 8);
+    }
+
+    // ---- 围栏：沿景深带后缘一排木桩 ----
+    for (let x = 8; x < W; x += 26) {
+      scene.add.image(x, zFar + 4, 'post').setOrigin(0.5, 1)
+        .setScale(0.9).setAlpha(0.55).setDepth(-700);
+    }
+
+    // ---- 前景剪影：贴在画布下缘，让画面有"近处"这一层 ----
+    for (let i = 0; i < 7; i++) {
+      const bx = -20 + i * 165 + (i % 2) * 40;
+      scene.add.image(bx, HGT + 6, 'bush')
+        .setOrigin(0.5, 1).setScale(1.5 + (i % 3) * 0.45)
+        .setAlpha(0.9).setDepth(4800 + i);
+    }
+
+    // ---- 底部柔化（不是黑色板子，是渐变）----
+    const fg = scene.add.graphics().setDepth(5000);
+    for (let i = 0; i < 14; i++) {
+      fg.fillStyle(0x000000, 0.014 * (i + 1));
+      fg.fillRect(0, GROUND_Y + 30 + i * 7, W, 7);
+    }
+
+    // ---- 空中火星：价格极低、对"质感"的提升却最大 ----
+    if (scene.add.particles) {
+      const em = scene.add.particles(0, 0, 'spark', {
+        x: { min: 0, max: W },
+        y: { min: zFar - 20, max: GROUND_Y + 40 },
+        lifespan: { min: 2600, max: 5200 },
+        speedY: { min: -22, max: -6 },
+        speedX: { min: -10, max: 16 },
+        scale: { start: 0.85, end: 0 },
+        alpha: { start: 0.55, end: 0 },
+        frequency: 130,
+        blendMode: 'ADD',
+      });
+      em.setDepth(4000);
     }
     return g;
   }
@@ -218,30 +316,67 @@
 
       paintBackdrop(this, 'hub');
 
-      // 区域美术
+      // 区域美术：每个设施加一圈地面灯光，把视线聚过去；细节各自补足
       this.zoneArt = {};
       H.ZONES.forEach((z) => {
         const y = GROUND_Y - (H.HUB_D / 2) * Z_TO_Y;
+
+        // 地面光池（ADD 混合，成本极低但质感提升明显）
+        const pool = this.add.image(z.x, y + 8, 'glow')
+          .setScale(z.art === 'field' ? 3.4 : 2.4)
+          .setAlpha(0.42)
+          .setBlendMode(Phaser.BlendModes.ADD)
+          .setDepth(2);
+
         let img;
         if (z.art === 'field') {
+          // 田地：一排栅栏 + 两排翻好的土
           img = this.add.container(z.x, y);
+          for (let i = 0; i < 5; i++) {
+            img.add(this.add.image(-58 + i * 29, -30, 'post').setOrigin(0.5, 1).setScale(0.8));
+          }
           for (let i = 0; i < 3; i++) {
             for (let j = 0; j < 2; j++) {
-              img.add(this.add.image(-46 + i * 46, -j * 26, 'soil').setScale(0.92));
+              img.add(this.add.image(-46 + i * 46, -j * 24, 'soil')
+                .setScale(0.96).setOrigin(0.5, 1));
             }
           }
         } else if (z.art === 'anvil') {
-          img = this.add.image(z.x, y, 'anvil');
+          img = this.add.container(z.x, y);
+          // 石砌基座 + 铁砧 + 火星
+          img.add(this.add.rectangle(0, -2, 54, 10, 0x2a2f36).setOrigin(0.5, 1));
+          img.add(this.add.rectangle(0, -10, 44, 9, 0x353b44).setOrigin(0.5, 1));
+          img.add(this.add.image(0, -18, 'anvil').setOrigin(0.5, 1).setScale(1.15));
         } else if (z.art === 'altar') {
-          img = this.add.image(z.x, y, 'altar');
+          img = this.add.container(z.x, y);
+          img.add(this.add.image(0, 0, 'altar').setOrigin(0.5, 1).setScale(1.2));
+          // 环绕符文的两个光圈
+          const r1 = this.add.ellipse(0, -16, 62, 20).setStrokeStyle(1.5, 0xc9a6ff, 0.55);
+          const r2 = this.add.ellipse(0, -16, 84, 26).setStrokeStyle(1, 0xc9a6ff, 0.28);
+          img.add(r1); img.add(r2);
+          this.tweens.add({ targets: [r1, r2], scaleX: 1.1, scaleY: 1.1,
+            duration: 1600, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
         } else {
-          img = this.add.image(z.x, y, 'gate');
+          img = this.add.container(z.x, y);
+          img.add(this.add.image(0, 0, 'gate').setOrigin(0.5, 1).setScale(1.18));
+          img.add(this.add.image(-34, -30, 'torch').setOrigin(0.5, 1).setScale(1.1));
+          img.add(this.add.image(34, -30, 'torch').setOrigin(0.5, 1).setScale(1.1));
+          // 门内的火光脉动
+          const inner = this.add.ellipse(0, -46, 44, 62, 0xff8a4c, 0.28)
+            .setBlendMode(Phaser.BlendModes.ADD);
+          img.add(inner);
+          this.tweens.add({ targets: inner, scaleX: 1.12, scaleY: 1.06, alpha: 0.44,
+            duration: 1200, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
         }
         img.setDepth(10);
         this.zoneArt[z.id] = img;
-        this.add.text(z.x, y + 16, z.name, {
-          fontSize: '13px', color: '#cfdae6', fontFamily: 'sans-serif',
-        }).setOrigin(0.5, 0).setDepth(20);
+
+        // 标签做成胶囊，比裸文字清楚
+        const label = this.add.text(z.x, y + 14, z.name, {
+          fontSize: '12px', color: '#e6eef6', fontFamily: 'sans-serif',
+          backgroundColor: '#0b1117cc', padding: { x: 9, y: 4 },
+        }).setOrigin(0.5, 0).setDepth(20).setAlpha(0.92);
+        label.setStroke('#00000088', 2);
       });
 
       // 场景里同步显示农田状态
@@ -396,13 +531,46 @@
       this.shadow.setPosition(ps.sx, toScreen(p.x, p.z, 0).sy + 2)
         .setDepth(1000 - p.z - 1).setScale(ps.sc * 0.8);
 
-      // 挥击弧线
+      // 挥击：画成月牙刀光，而不是一个糊住的椭圆。
+      // 旧版是一个米黄色 fillEllipse，既不像刀光，也和真实判定框对不上，
+      // 玩家看不出"到底打哪里"。
       this.heroSwing.clear();
       if (p.attackTimer > 0) {
-        const t = p.attackTimer / C.ATTACK_DURATION;
-        this.heroSwing.fillStyle(0xffe07a, 0.16 + t * 0.18);
-        this.heroSwing.fillEllipse(ps.sx + p.facing * 34 * ps.sc,
-          ps.sy - 22 * ps.sc, 76 * ps.sc * (1.1 - t * 0.3), 34 * ps.sc);
+        const t = 1 - p.attackTimer / C.ATTACK_DURATION;   // 0 → 1 推进
+        const cx = ps.sx, cy = ps.sy - 26 * ps.sc;
+        const face = p.facing;
+        // 由实际判定框反推：水平 ATTACK_RANGE，深度 ±ATTACK_DEPTH（屏幕上按 Z_TO_Y 压缩）
+        const rOutX = C.ATTACK_RANGE * 1.08 * ps.sc;
+        const rOutY = C.ATTACK_DEPTH * Z_TO_Y * 0.92 * ps.sc;
+        const rInX = rOutX * 0.42, rInY = rOutY * 0.42;
+        const a0 = -0.95 + t * 0.55, a1 = 0.95 + t * 0.55;  // 挥动扫过
+
+        const arcPts = (rx, ry) => {
+          const pts = [];
+          for (let i = 0; i <= 14; i++) {
+            const a = a0 + (a1 - a0) * (i / 14);
+            pts.push([cx + Math.cos(a) * rx * face, cy + Math.sin(a) * ry]);
+          }
+          return pts;
+        };
+        const outer = arcPts(rOutX, rOutY);
+        const inner = arcPts(rInX, rInY).reverse();
+        const poly = outer.concat(inner);
+
+        // 主体：淡金色半透明
+        this.heroSwing.fillStyle(0xffd166, 0.42 * (1 - t * 0.5));
+        this.heroSwing.beginPath();
+        this.heroSwing.moveTo(poly[0][0], poly[0][1]);
+        for (let i = 1; i < poly.length; i++) this.heroSwing.lineTo(poly[i][0], poly[i][1]);
+        this.heroSwing.closePath();
+        this.heroSwing.fillPath();
+
+        // 外缘亮线：让刀光有"边"，不是一团糊
+        this.heroSwing.lineStyle(2.5 * ps.sc, 0xfff2c0, 0.95 * (1 - t * 0.55));
+        this.heroSwing.beginPath();
+        this.heroSwing.moveTo(outer[0][0], outer[0][1]);
+        for (let i = 1; i < outer.length; i++) this.heroSwing.lineTo(outer[i][0], outer[i][1]);
+        this.heroSwing.strokePath();
       }
 
       // 小怪
@@ -417,13 +585,15 @@
         if (e.kind === 'runner' && e.state === 'windup') {
           sp.img.setTint(0xff8a6a);
         }
-        // 血条
+        // 血条：贴在头顶一点，带深色描边，避免看起来像杂散色块
         if (e.hp < e.maxHp) {
           const frac = Math.max(0, e.hp / e.maxHp);
-          this.effectGfx.fillStyle(0x000000, 0.5)
-            .fillRect(es.sx - 17, es.sy - 46 * es.sc, 34, 4);
-          this.effectGfx.fillStyle(0xe8574a, 1)
-            .fillRect(es.sx - 17, es.sy - 46 * es.sc, 34 * frac, 4);
+          const bw = 30 * es.sc, bh = 3.5;
+          const bx = es.sx - bw / 2, by = es.sy - 34 * es.sc;
+          this.effectGfx.fillStyle(0x000000, 0.62);
+          this.effectGfx.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
+          this.effectGfx.fillStyle(0xe8574a, 1);
+          this.effectGfx.fillRect(bx, by, bw * frac, bh);
         }
       });
       for (let i = run.enemies.length; i < this.enemyPool.length; i++) {

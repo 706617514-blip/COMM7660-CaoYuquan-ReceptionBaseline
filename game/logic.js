@@ -215,6 +215,7 @@
       attackCd: 0,
       facing: fromLeft ? 1 : -1,
       hitFlash: 0,
+      stun: 0,
       vx: 0,
       vz: 0,
     };
@@ -346,6 +347,7 @@
           const d = Math.hypot(dx, dz) || 1;
           e.vx = (dx / d) * knockback;
           e.vz = (dz / d) * knockback;
+          if (def.stunTime) e.stun = Math.max(e.stun || 0, def.stunTime);
         }
       });
     };
@@ -429,8 +431,16 @@
       e.attackCd = Math.max(0, e.attackCd - dt);
 
       const def = C.ENEMIES[e.kind];
-      if (def.behavior === 'lunge') stepLunge(state, run, e, def, dt);
-      else stepChase(state, run, e, dt);
+      // 僵直：被击退期间不走位。
+      // 没有这个，即使冲量很大，小怪每帧朝玩家移动也会把位移吃掉
+      // —— 实测击退 1050 的震地只把怪推开 19px，手感完全不"掀飞"。
+      if (e.stun > 0) {
+        e.stun = Math.max(0, e.stun - dt);
+      } else if (def.behavior === 'lunge') {
+        stepLunge(state, run, e, def, dt);
+      } else {
+        stepChase(state, run, e, dt);
+      }
 
       // 击退衰减：必须按时间指数衰减。
       // 之前的 `e.vx *= 0.86` 是每帧衰减，配 dt 使用时 60fps 下不到 5 帧就归零，
