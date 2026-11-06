@@ -72,6 +72,22 @@
     g.fillStyle(0xffd9a0, 1); g.fillCircle(17, 26, 3); g.fillCircle(27, 26, 3);
     g.generateTexture('runner', 44, 42);
 
+    // 吐酸虫：矮胖，带一张吐酸的嘴
+    g.clear();
+    g.fillStyle(0x2f2a44, 1); g.fillEllipse(24, 32, 46, 32);
+    g.fillStyle(0x5a4d80, 1); g.fillEllipse(24, 28, 42, 28);
+    g.fillStyle(0x9ad06a, 1); g.fillEllipse(24, 36, 15, 9);      // 酸囊
+    g.fillStyle(0x1a1626, 1); g.fillCircle(16, 24, 3.6); g.fillCircle(32, 24, 3.6);
+    g.fillStyle(0xd6a6ff, 1); g.fillCircle(16, 23, 1.4); g.fillCircle(32, 23, 1.4);
+    g.generateTexture('spitter', 48, 48);
+
+    // 酸弹
+    g.clear();
+    g.fillStyle(0x9ad06a, 0.35); g.fillCircle(9, 9, 9);
+    g.fillStyle(0xbfe88a, 0.9); g.fillCircle(9, 9, 5.5);
+    g.fillStyle(0xf0ffd8, 1); g.fillCircle(8, 8, 2.4);
+    g.generateTexture('acid', 18, 18);
+
     // 影子
     g.clear();
     g.fillStyle(0x000000, 1); g.fillEllipse(24, 8, 48, 16);
@@ -491,6 +507,11 @@
       this.hero = this.add.image(0, 0, 'hero').setDepth(100);
       this.heroSwing = this.add.graphics().setDepth(101);
 
+      this.projPool = [];
+      this.dmgPool = [];
+      this.lastEnemyHp = {};
+      this.lastShake = 0;
+
       this.events.on('wake', () => { this.state = CURRENT_STATE; });
       global.EmberfieldUI.showHud(true, this.state);
       global.EmberfieldApp.__scene = this;
@@ -501,9 +522,16 @@
       if (!this.enemyPool[i]) {
         const sh = this.add.image(0, 0, 'shadow').setScale(0.62);
         const img = this.add.image(0, 0, kind);
-        this.enemyPool[i] = { img: img, shadow: sh };
+        this.enemyPool[i] = { img: img, shadow: sh, kind: kind };
       }
-      return this.enemyPool[i];
+      const sp = this.enemyPool[i];
+      // 池是按索引复用的。如果这个槽位上一帧是爬虫、这一帧是吐酸虫，
+      // 纹理不会自动换 —— 结果吐酸虫会画成爬虫的样子（实际踩到过）。
+      if (sp.kind !== kind) {
+        sp.img.setTexture(kind);
+        sp.kind = kind;
+      }
+      return sp;
     }
 
     update(time, delta) {
@@ -558,7 +586,7 @@
         const poly = outer.concat(inner);
 
         // 主体：淡金色半透明
-        this.heroSwing.fillStyle(0xffd166, 0.42 * (1 - t * 0.5));
+        this.heroSwing.fillStyle(0xfffdf2, 0.30 * (1 - t * 0.5));
         this.heroSwing.beginPath();
         this.heroSwing.moveTo(poly[0][0], poly[0][1]);
         for (let i = 1; i < poly.length; i++) this.heroSwing.lineTo(poly[i][0], poly[i][1]);
@@ -566,7 +594,7 @@
         this.heroSwing.fillPath();
 
         // 外缘亮线：让刀光有"边"，不是一团糊
-        this.heroSwing.lineStyle(2.5 * ps.sc, 0xfff2c0, 0.95 * (1 - t * 0.55));
+        this.heroSwing.lineStyle(2.5 * ps.sc, 0xffe9a8, 0.95 * (1 - t * 0.55));
         this.heroSwing.beginPath();
         this.heroSwing.moveTo(outer[0][0], outer[0][1]);
         for (let i = 1; i < outer.length; i++) this.heroSwing.lineTo(outer[i][0], outer[i][1]);
@@ -600,6 +628,16 @@
         this.enemyPool[i].img.setVisible(false);
         this.enemyPool[i].shadow.setVisible(false);
       }
+      // 死亡的敌人短暂保留：淡出并缩小，比"瞬间消失"有交代
+      run.enemies.forEach((e) => {
+        if (e.state !== 'dead') return;
+        const idx = run.enemies.indexOf(e);
+        const sp = this.enemyPool[idx];
+        if (!sp) return;
+        sp.img.setAlpha(Math.min(1, e.hitFlash / 0.12));
+        sp.img.setScale(sp.img.scaleX * 0.985);
+        sp.shadow.setAlpha(0.18);
+      });
 
       // 技能特效
       run.effects.forEach((ef) => {
@@ -613,6 +651,57 @@
           this.effectGfx.fillRect(0, 0, W, GROUND_Y);
         }
       });
+
+      // ---- 弹道 ----
+      run.projectiles.forEach((pr, i) => {
+        let sp = this.projPool[i];
+        if (!sp) { sp = this.add.image(0, 0, 'acid'); this.projPool[i] = sp; }
+        const pss = toScreen(pr.x, pr.z, pr.h);
+        sp.setVisible(true).setPosition(pss.sx, pss.sy)
+          .setScale(pss.sc * (0.9 + Math.sin(pr.spin) * 0.12))
+          .setDepth(1000 - pr.z + 5);
+      });
+      for (let i = run.projectiles.length; i < this.projPool.length; i++) {
+        this.projPool[i].setVisible(false);
+      }
+
+      // ---- 伤害数字：靠每帧比对血量差值得出，不需要逻辑层配合 ----
+      run.enemies.forEach((e) => {
+        const prev = this.lastEnemyHp[e.id];
+        if (prev !== undefined && e.hp < prev) {
+          const dmg = Math.round(prev - e.hp);
+          const es = toScreen(e.x, e.z, e.h);
+          let tb = this.dmgPool.pop();
+          if (!tb) tb = this.add.text(0, 0, '', {
+            fontSize: '15px', fontFamily: 'sans-serif', color: '#fff2c0',
+          }).setOrigin(0.5, 1).setDepth(3000);
+          tb.setText(String(dmg)).setVisible(true).setPosition(es.sx, es.sy - 30 * es.sc)
+            .setAlpha(1).setScale(1);
+          tb.setStroke('#3a1d10', 3);
+          this.tweens.add({
+            targets: tb, y: tb.y - 34, alpha: 0, scale: 1.25,
+            duration: 620, ease: 'Cubic.out',
+            onComplete: () => { tb.setVisible(false); this.dmgPool.push(tb); },
+          });
+        }
+        this.lastEnemyHp[e.id] = e.hp;
+      });
+      // 清理已消失敌人的记录，避免 Map 无限增长
+      const aliveIds = {};
+      run.enemies.forEach((e) => { aliveIds[e.id] = 1; });
+      Object.keys(this.lastEnemyHp).forEach((id) => {
+        if (!aliveIds[id]) delete this.lastEnemyHp[id];
+      });
+
+      // ---- 震屏：震地与大招各一次，强度不同 ----
+      const cast = p.casting;
+      if (cast && cast.key !== this.lastShake && cast.timer > 0) {
+        if (cast.key === 'slam') this.cameras.main.shake(160, 0.010);
+        if (cast.key === 'nova') this.cameras.main.shake(280, 0.016);
+        if (cast.key === 'whirl') this.cameras.main.shake(90, 0.004);
+        this.lastShake = cast.key;
+      }
+      if (!cast) this.lastShake = null;
 
       global.EmberfieldUI.updateHud(this.state);
 

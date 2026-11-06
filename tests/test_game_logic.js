@@ -352,13 +352,35 @@ section('14. 核心循环可以真的被打通（自动操作通关最低难度�
       const p = s.run.player;
       const live = s.run.enemies.filter(e => e.state !== 'dead');
       const input = Object.assign({}, INPUT);
+      // 先躲弹道：往深度方向侧移，拉开 |dz| 就躲开
+      const projs = (s.run && s.run.projectiles) || [];
+      let dodging = false;
+      for (let q = 0; q < projs.length; q++) {
+        const pr = projs[q];
+        if (Math.abs(pr.x - p.x) < 150 && Math.abs(pr.z - p.z) < 45) {
+          if (pr.z >= p.z) input.down = true; else input.up = true;
+          dodging = true;
+        }
+      }
+      // 会放技能：只躲不打的 bot 打不过远程怪，那不代表"循环不可完成"。
+      const cd = p.cooldowns || {};
+      const hpF = p.hp / p.maxHp;
+      const near = live.filter(e => Math.hypot(e.x - p.x, e.z - p.z) < 130).length;
+      if (hpF < 0.45 && cd.cry === 0) input.cry = true;
+      if (hpF < 0.30 && cd.blink === 0) input.blink = true;
+      if (near >= 2 && cd.whirl === 0) input.whirl = true;
+      if (near >= 3 && cd.slam === 0) input.slam = true;
+      if (live.length >= 4 && cd.nova === 0) input.nova = true;
+
       if (live.length) {
         const t = live.reduce((a, b) =>
           Math.hypot(a.x - p.x, a.z - p.z) <= Math.hypot(b.x - p.x, b.z - p.z) ? a : b);
         if (t.x < p.x - 6) input.left = true;
         if (t.x > p.x + 6) input.right = true;
-        if (t.z < p.z - 6) input.up = true;
-        if (t.z > p.z + 6) input.down = true;
+        if (!dodging) {
+          if (t.z < p.z - 6) input.up = true;
+          if (t.z > p.z + 6) input.down = true;
+        }
         input.attack = true;
       }
       L.step(s, input, DT);
@@ -393,6 +415,17 @@ section('15. 难度梯度与经济门控（回归：防止调参把曲线搞平�
     const near = live.filter(e => dist(e) < 130).length;
     const hpFrac = p.hp / p.maxHp;
 
+    // 躲弹道优先于一切：弹道只覆盖一条深度线，侧移即可躲开
+    const projs = s.run.projectiles || [];
+    let dodging = false;
+    for (let k = 0; k < projs.length; k++) {
+      const pr = projs[k];
+      if (Math.abs(pr.x - p.x) < 150 && Math.abs(pr.z - p.z) < 45) {
+        if (pr.z >= p.z) i.down = 1; else i.up = 1;
+        dodging = true;
+      }
+    }
+
     // 技能优先级：保命 → 解围 → 收尾
     if (hpFrac < 0.45 && cd.cry === 0) i.cry = 1;
     if (hpFrac < 0.30 && cd.blink === 0) i.blink = 1;
@@ -403,7 +436,7 @@ section('15. 难度梯度与经济门控（回归：防止调参把曲线搞平�
     if (!live.length) return i;
     const t = live.reduce((a, b) => dist(a) <= dist(b) ? a : b);
     const dx = t.x - p.x, dz = t.z - p.z, d = Math.abs(dx);
-    if (Math.abs(dz) > 18) { if (dz > 0) i.up = 1; else i.down = 1; }
+    if (!dodging && Math.abs(dz) > 18) { if (dz > 0) i.up = 1; else i.down = 1; }
     if (d > 52) { if (dx < 0) i.left = 1; else i.right = 1; }
     else if (d < 34) { if (dx < 0) i.right = 1; else i.left = 1; }
     if (d < 62 && Math.abs(dz) <= C.ATTACK_DEPTH * 0.85) i.attack = 1;
@@ -432,6 +465,85 @@ section('15. 难度梯度与经济门控（回归：防止调参把曲线搞平�
   ok(f0 <= 0.5, '最高难度在零强化下是真正的赌局（经济未成形时不该随便能过）', f0);
   ok(fFull > f0, '强化确实提升了最高难度的胜率（经营层对战斗有影响）', `${f0} -> ${fFull}`);
   ok(fFull >= 0.6, '全强化后最高难度可稳定通关（游戏有"打通"状态）', fFull);
+}
+
+// ---------------------------------------------------------------- 16. 远程敌人与弹道
+section('16. 远程敌人与弹道（深度轴必须能用来躲）');
+{
+  const mk = (pz) => {
+    const { s, run } = armedRun('wood', 500, pz);
+    run.projectiles = [];
+    return { s, run };
+  };
+
+  // (a) 同深度：应当命中
+  {
+    const { s, run } = mk(105);
+    const p = run.player;
+    run.projectiles.push({ x: p.x - 120, z: p.z, h: 20, vx: 275, vz: 0,
+      damage: 11, radius: 20, depth: 26, life: 3, spin: 0 });
+    const hp0 = p.hp;
+    for (let i = 0; i < 60; i++) L.stepProjectiles(s, run, 1 / 60);
+    ok(p.hp < hp0, '同深度的弹道会命中玩家', `${hp0} -> ${p.hp}`);
+  }
+
+  // (b) 错开深度：应当躲开 —— 这是 W/S 轴真正的用处
+  {
+    const { s, run } = mk(105);
+    const p = run.player;
+    run.projectiles.push({ x: p.x - 120, z: p.z + 62, h: 20, vx: 275, vz: 0,
+      damage: 11, radius: 20, depth: 26, life: 3, spin: 0 });
+    const hp0 = p.hp;
+    for (let i = 0; i < 60; i++) L.stepProjectiles(s, run, 1 / 60);
+    eq(p.hp, hp0, '深度错开 62 的弹道被躲过（W/S 能用来躲避）');
+  }
+
+  // (c) 弹道会过期，不会永远飞
+  {
+    const { s, run } = mk(105);
+    const p = run.player;
+    run.projectiles.push({ x: p.x - 400, z: p.z + 80, h: 20, vx: 275, vz: 0,
+      damage: 11, radius: 20, depth: 26, life: 0.3, spin: 0 });
+    for (let i = 0; i < 60; i++) L.stepProjectiles(s, run, 1 / 60);
+    eq(run.projectiles.length, 0, '超时弹道会被清理');
+  }
+
+  // (d) 吐酸虫会真的开火，且弹道朝玩家方向
+  {
+    const { s, run } = armedRun('wood', 500, 105);
+    run.projectiles = [];
+    const p = run.player;
+    const e = L.makeEnemy(s, 'spitter', run.diff);
+    e.x = p.x - 240; e.z = p.z;
+    run.enemies.push(e);
+    let sawProj = false;
+    for (let i = 0; i < 60 * 6 && run.projectiles.length === 0; i++) {
+      L.step(s, {}, 1 / 60);
+      if (run.projectiles.length) sawProj = true;
+    }
+    ok(sawProj, '吐酸虫在 6 秒内至少开火一次');
+    if (run.projectiles.length) {
+      const pr = run.projectiles[0];
+      ok(Math.sign(pr.vx) === Math.sign(p.x - e.x), '弹道朝向玩家',
+         `vx=${pr.vx.toFixed(0)} 目标在 ${(p.x - e.x).toFixed(0)}`);
+    }
+    ok(e.stun === 0, '吐酸虫未被误加入僵直');
+  }
+
+  // (e) 距离维持：太近了应当后退
+  {
+    const { s, run } = armedRun('wood', 500, 105);
+    run.projectiles = [];
+    const p = run.player;
+    const e = L.makeEnemy(s, 'spitter', run.diff);
+    e.x = p.x - 60; e.z = p.z;      // 明显比 keepDistance 近
+    e.fireCd = 99;                   // 先别开火，只看走位
+    run.enemies.push(e);
+    const x0 = e.x;
+    for (let i = 0; i < 90; i++) L.step(s, {}, 1 / 60);
+    ok(e.x < x0 - 10, '靠得太近时吐酸虫会后撤拉开距离',
+       `${x0.toFixed(0)} -> ${e.x.toFixed(0)}`);
+  }
 }
 
 // ---------------------------------------------------------------- 汇总

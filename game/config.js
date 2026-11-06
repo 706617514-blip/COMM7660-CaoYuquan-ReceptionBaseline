@@ -80,6 +80,25 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
       lungeWindup: 0.55, lungeSpeed: 430, lungeTime: 0.32,
       knockback: 1.4,
     },
+    /**
+     * 吐酸虫：保持距离、远程吐弹。
+     *
+     * 存在的意义不是多一种怪，而是打破"一直往后跑就安全"的解法：
+     * 它本来就在远处，且弹道只覆盖一条深度线 —— 想躲必须用 W/S 换深度。
+     * 这是深度轴从"能走动"变成"必须走位"的关键。
+     */
+    spitter: {
+      name: '吐酸虫', hp: 24, damage: 8, speed: 78, radius: 17,
+      behavior: 'ranged',
+      keepDistance: 250,        // 想维持的距离
+      fireCd: 2.3,              // 开火间隔
+      windup: 0.65,             // 抬手预警
+      projSpeed: 275,
+      projDamage: 11,
+      projRadius: 20,           // 命中宽度（x）
+      projDepth: 26,            // 命中深度容差（z）
+      projLife: 3.0,
+    },
   };
 
   /**
@@ -89,8 +108,11 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
   function waveComposition(waveIndex, diff) {
     const n = diff.baseCount + waveIndex;
     const runnerShare = Math.min(0.55, 0.15 + waveIndex * 0.12);
+    // 吐酸虫从第 2 波（waveIndex >= 1）开始出现，比例随波次上升
+    const spitterShare = waveIndex >= 1 ? Math.min(0.34, 0.14 + (waveIndex - 1) * 0.10) : 0;
     const runners = Math.round(n * runnerShare);
-    return { crawler: n - runners, runner: runners };
+    const spitters = Math.round(n * spitterShare);
+    return { crawler: Math.max(0, n - runners - spitters), runner: runners, spitter: spitters };
   }
 
   /**

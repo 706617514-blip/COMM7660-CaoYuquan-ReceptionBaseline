@@ -152,6 +152,7 @@
       enemies: [],
       loot: { coins: 0, seeds: 0 },
       effects: [],
+      projectiles: [],
       elapsed: 0,
       player: {
         x: C.FIELD_W / 2,
@@ -212,6 +213,7 @@
       radius: def.radius,
       state: 'chase',
       timer: 0,
+      fireCd: def.behavior === 'ranged' ? randRange(state, 0.9, 1.9) : 0,
       attackCd: 0,
       facing: fromLeft ? 1 : -1,
       hitFlash: 0,
@@ -242,6 +244,7 @@
     stepPlayer(state, run, input, dt);
     stepSpawning(state, run, dt);
     stepEnemies(state, run, dt);
+    stepProjectiles(state, run, dt);
     stepWave(state, run, dt);
 
     if (run.player.hp <= 0 && run.status === 'active') endRun(state, false);
@@ -438,6 +441,8 @@
         e.stun = Math.max(0, e.stun - dt);
       } else if (def.behavior === 'lunge') {
         stepLunge(state, run, e, def, dt);
+      } else if (def.behavior === 'ranged') {
+        stepRanged(state, run, e, def, dt);
       } else {
         stepChase(state, run, e, dt);
       }
@@ -501,6 +506,82 @@
       if (e.timer <= 0) { e.state = 'lunge'; e.timer = def.lungeTime; }
     } else if (e.state === 'lunge') {
       if (e.timer <= 0) { e.state = 'chase'; e.timer = 0; }
+    }
+  }
+
+  /**
+   * 吐酸虫：维持距离 → 抬手 → 吐弹。
+   * 弹道沿 (x, z) 直线飞行，只覆盖一条深度线，所以玩家换深度就能躲开。
+   */
+  function stepRanged(state, run, e, def, dt) {
+    const p = run.player;
+    const dx = p.x - e.x, dz = p.z - e.z;
+    const dist = Math.hypot(dx, dz) || 1;
+    e.facing = dx >= 0 ? 1 : -1;
+
+    if (e.state === 'windup') {
+      e.timer -= dt;
+      if (e.timer <= 0) {
+        spawnProjectile(state, run, e, def);
+        e.state = 'chase';
+        e.fireCd = def.fireCd;
+      }
+      return;
+    }
+
+    // 太近后退、太远靠近，尽量停在 keepDistance 附近
+    if (dist < def.keepDistance * 0.72) {
+      e.x -= (dx / dist) * e.speed * dt;
+      e.z -= (dz / dist) * e.speed * 0.75 * dt;
+    } else if (dist > def.keepDistance * 1.2) {
+      e.x += (dx / dist) * e.speed * dt;
+      e.z += (dz / dist) * e.speed * 0.75 * dt;
+    }
+
+    e.fireCd -= dt;
+    if (e.fireCd <= 0) {
+      e.state = 'windup';
+      e.timer = def.windup;
+    }
+  }
+
+  function spawnProjectile(state, run, e, def) {
+    const p = run.player;
+    const dx = p.x - e.x, dz = p.z - e.z;
+    const d = Math.hypot(dx, dz) || 1;
+    run.projectiles.push({
+      x: e.x, z: e.z, h: 20,
+      vx: (dx / d) * def.projSpeed,
+      vz: (dz / d) * def.projSpeed,
+      damage: Math.round(def.projDamage * run.diff.dmgMul),
+      radius: def.projRadius,
+      depth: def.projDepth,
+      life: def.projLife,
+      spin: 0,
+    });
+  }
+
+  function stepProjectiles(state, run, dt) {
+    const p = run.player;
+    for (let i = run.projectiles.length - 1; i >= 0; i--) {
+      const pr = run.projectiles[i];
+      pr.x += pr.vx * dt;
+      pr.z += pr.vz * dt;
+      pr.life -= dt;
+      pr.spin += dt * 12;
+
+      let gone = pr.life <= 0 || pr.x < -40 || pr.x > C.FIELD_W + 40
+                 || pr.z < -30 || pr.z > C.FIELD_D + 30;
+
+      // 命中判定同样要求两个轴都贴近 —— 深度差够大就能擦身而过
+      if (!gone && p.invuln === 0
+          && Math.abs(pr.x - p.x) < pr.radius
+          && Math.abs(pr.z - p.z) < pr.depth) {
+        p.hp -= pr.damage;
+        p.invuln = C.INVULN_AFTER_HIT;
+        gone = true;
+      }
+      if (gone) run.projectiles.splice(i, 1);
     }
   }
 
@@ -586,6 +667,7 @@
     createState, startRun, step, endRun, returnToFarm,
     plant, buyUpgrade, upgradeCost,
     buySkill, skillCost, skillStats, tryCastSkill, currentDamage,
+    stepProjectiles, stepRanged, spawnProjectile,
     playerStats, maturePlots, passiveIncome,
     serialize, deserialize,
     nextRandom, buildWave, makeEnemy,
