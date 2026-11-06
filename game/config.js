@@ -58,9 +58,11 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
     { id: 'wood',   name: '林地',  desc: '标准强度，战利品与风险相称',
       hpMul: 1.32, dmgMul: 1.26, speedMul: 1.02, waves: 3, baseCount: 5,
       lootMul: 1.7,  spawnGap: 1.35 },
-    { id: 'deep',   name: '密林',  desc: '多一波，小怪更硬更快',
-      hpMul: 1.60, dmgMul: 1.40, speedMul: 1.12, waves: 4, baseCount: 6,
-      lootMul: 2.5,  spawnGap: 1.20 },
+    { id: 'deep',   name: '密林',  desc: '多一波，小怪明显更硬更快',
+      // 密林原先的倍率让它在零强化下有 68% 胜率、半满即 100%，
+      // 四档退化为"除了熔炉都不难"。上调到中间的真正难点。
+      hpMul: 1.88, dmgMul: 1.56, speedMul: 1.14, waves: 4, baseCount: 6,
+      lootMul: 2.5,  spawnGap: 1.15 },
     { id: 'forge',  name: '熔炉',  desc: '高风险高回报，倒下会损失一半战利品',
       hpMul: 2.10, dmgMul: 1.75, speedMul: 1.20, waves: 4, baseCount: 7,
       lootMul: 3.5,  spawnGap: 1.05 },

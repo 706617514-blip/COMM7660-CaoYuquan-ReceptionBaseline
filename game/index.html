@@ -377,7 +377,12 @@
     back.textContent = '回基地';
     back.addEventListener('click', function () { closePanel(); onBack(); });
     body.appendChild(back);
-    panelCallback = { onClose: function () {}, onAction: function () {} };
+    // ✕ 必须和"回基地"等价。之前 onClose 是空函数：
+    // 点掉结算卡之后 HUD 已关、RunScene.update 又直接 return，
+    // 玩家会卡在一张冻结的战场上，只能刷新页面。
+    // 注意：closePanel() 内部就会调用 onClose，所以这里不能再调 closePanel()，
+    // 否则 closePanel → onClose → closePanel 无限递归（实际踩到栈溢出）。
+    panelCallback = { onClose: function () { onBack(); }, onAction: function () {} };
     $('panel').className = 'overlay on';
   }
 
@@ -428,7 +433,12 @@
     if (!s) s = L.createState((Date.now() ^ name.length) % 1e9);
     state = s;
     H.ensureHub(state);
-    if (state.phase === 'run') state.phase = 'farm';
+    if (state.phase === 'run') {
+      // 上次是在对局中断开的：作废这一局，同时把 run 清掉，
+      // 否则这个已经死掉的对局对象会被一路写回存档。
+      state.phase = 'farm';
+      state.run = null;
+    }
 
     $('profile').className = 'off';
     $('who').style.display = 'flex';
@@ -436,7 +446,16 @@
     $('hud').className = '';
 
     save(state);
-    if (!game) game = window.EmberfieldApp.boot(state, 'game');
+
+    // 切换玩家时必须重建游戏实例。
+    // 之前写的是 if (!game)，于是切到玩家 B 之后场景里仍持有 A 的 state，
+    // 而 playerName 已经是 B —— 结果是用 A 的进度在玩，并在第一次消费时
+    // 把 A 的存档写进 B 的键下，直接毁掉 B 的真实存档。
+    if (game) {
+      game.destroy(true);
+      game = null;
+    }
+    game = window.EmberfieldApp.boot(state, 'game');
   }
 
   $('btnCreate').addEventListener('click', function () {

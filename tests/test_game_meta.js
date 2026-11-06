@@ -139,10 +139,10 @@ section('6. 区域动作的可用性');
   const s = L.createState(7);
   s.meta.coins = 0; s.meta.seeds = 0;
 
-  const field = H.zoneActions(s, 'field');
-  ok(field.length >= 1, '田地有动作');
-  ok(!field[0].enabled, '没种子时不能播种');
-  eq(field[0].disabledReason, '种子不够', '禁用原因写明是种子不够');
+  // 田地不再出面板（按 J 直接进农场场景），所以这里只断言它不再列出动作，
+  // 避免留下"测试通过但成品里根本走不到"的死路径。
+  eq(H.zoneActions(s, 'field').length, 0,
+     '田地不列面板动作（改了会重新出现不可达的死路径）');
 
   const anvil = H.zoneActions(s, 'anvil');
   eq(anvil.length, 3, '铁匠铺有三条强化');
@@ -157,20 +157,35 @@ section('6. 区域动作的可用性');
   ok(gate.every((a) => a.enabled), '任何难度都可以出发');
 }
 
-section('7. 执行动作真的改变状态');
+section('7. 农场田块几何（成品里点击播种走的就是这一段）');
 {
+  const geo = H.farmLayout(960, 452);
+  eq(geo.length, 9, '三行三列共 9 块田');
+  eq(geo.map((g) => g.idx).join(','), '0,1,2,3,4,5,6,7,8', '索引连续且按行优先');
+
+  // 三行确实有透视：越远的行越窄、越靠上
+  const rowY = [geo[0].cy, geo[3].cy, geo[6].cy];
+  ok(rowY[0] > rowY[1] && rowY[1] > rowY[2], '行位置自下而上排列', rowY.join(' > '));
+  ok(geo[0].w > geo[6].w && geo[0].h > geo[6].h, '远处一行更窄更矮（透视成立）',
+     `${geo[0].w.toFixed(0)}x${geo[0].h.toFixed(0)} → ${geo[6].w.toFixed(0)}x${geo[6].h.toFixed(0)}`);
+
+  // 点击每块田的中心都必须命中自己
+  let miss = 0;
+  geo.forEach((g) => { if (H.farmHitPlot(geo, g.cx, g.cy) !== g.idx) miss += 1; });
+  eq(miss, 0, '点击任一块田的中心都命中它自己');
+
+  // 点在田外要返回 -1（不能误播种）
+  eq(H.farmHitPlot(geo, 5, 5), -1, '点画面左上角不命中任何田');
+  eq(H.farmHitPlot(geo, 480, 590), -1, '点画面底部中央不命中任何田');
+
+  // 播种仍然走 logic.plant，且真的改变状态
   const s = L.createState(8);
   s.meta.seeds = 2;
-  const field = H.zoneActions(s, 'field');
-  const r = H.perform(s, field.find((a) => a.kind === 'plant'));
-  ok(r.ok, '播种成功', r.reason);
+  const hit = H.farmHitPlot(geo, geo[4].cx, geo[4].cy);
+  ok(hit === 4, '命中第 5 块田', hit);
+  ok(L.plant(s, hit).ok, '对该田播种成功');
+  eq(s.farm.plots[4].state, 'growing', '第 5 块田进入生长');
   eq(s.meta.seeds, 1, '种子减少');
-  eq(s.farm.plots.filter((p) => p.state === 'growing').length, 1, '一块田进入生长');
-
-  const many = H.perform(s, field.find((a) => a.kind === 'plant-all'));
-  ok(many.ok, '全部种满成功');
-  eq(s.meta.seeds, 0, '种子用完');
-  eq(s.farm.plots.filter((p) => p.state === 'growing').length, 2, '两块田在生长');
 
   // 钱够时买强化
   s.meta.coins = 1000;

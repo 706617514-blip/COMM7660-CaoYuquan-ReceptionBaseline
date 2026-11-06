@@ -466,73 +466,41 @@ section('14. 核心循环可以真的被打通');
   ok(L.passiveIncome(s3) > 0, '成熟田开始产生被动收入', L.passiveIncome(s3));
 }
 
-
 // ---------------------------------------------------------------- 15. 难度梯度
-section('15. 难度梯度与经济门控（回归：防止调参把曲线搞平或搞崩）');
+section('15. 难度梯度（测量全部四个档位，并断言阶梯单调）');
 {
-  const DT2 = 1 / 60;
-  // 会走位、也会放技能的 bot。
-  // 早先的 bot 不会用技能，于是"平衡"只反映了普攻对撞——
-  // 玩家实际会旋风斩解围、战吼续命，拿不会用技能的 bot 定难度会偏难。
-  function bot(s) {
-    const p = s.run.player;
-    const i = { left: 0, right: 0, up: 0, down: 0, jump: 0, attack: 0 };
-    const live = s.run.enemies.filter(e => e.state !== 'dead');
-    const cd = p.cooldowns || {};
-    const dist = (e) => Math.hypot(e.x - p.x, e.z - p.z);
-    const near = live.filter(e => dist(e) < 130).length;
-    const hpFrac = p.hp / p.maxHp;
+  // 这一节以前只量了草丛和熔炉，n=12，密林和林地从未被测过 ——
+  // 于是密林在零强化下实际有 68% 胜率、半满即 100%，
+  // 四档退化为"除了熔炉都不难"，而测试一直是绿的。
+  // 现在改用 tests/bot.js（仓库里的代理，可复现）并逐档测量。
+  const B = require(path.join(__dirname, 'bot.js'));
+  const N = 30;
+  const rates = {};
+  C.DIFFICULTIES.forEach((d) => {
+    rates[d.id] = B.winRate(d.id, B.ZERO_UP, N).rate;
+  });
 
-    // 躲弹道优先于一切：弹道只覆盖一条深度线，侧移即可躲开
-    const projs = s.run.projectiles || [];
-    let dodging = false;
-    for (let k = 0; k < projs.length; k++) {
-      const pr = projs[k];
-      if (Math.abs(pr.x - p.x) < 150 && Math.abs(pr.z - p.z) < 45) {
-        if (pr.z >= p.z) i.down = 1; else i.up = 1;
-        dodging = true;
-      }
-    }
+  console.log('    零强化胜率: ' + C.DIFFICULTIES.map(
+    (d) => d.name + ' ' + (rates[d.id] * 100).toFixed(0) + '%').join(' · '));
 
-    // 技能优先级：保命 → 解围 → 收尾
-    if (hpFrac < 0.45 && cd.cry === 0) i.cry = 1;
-    if (hpFrac < 0.30 && cd.blink === 0) i.blink = 1;
-    if (near >= 2 && cd.whirl === 0) i.whirl = 1;
-    if (near >= 3 && cd.slam === 0) i.slam = 1;
-    if (live.length >= 4 && cd.nova === 0) i.nova = 1;
+  ok(rates.grass >= 0.90, '最低难度零强化下接近必过（不劝退）', rates.grass);
+  ok(rates.wood >= 0.75, '第二档仍然是"稳着种田"的安全选择', rates.wood);
+  ok(rates.deep >= 0.20 && rates.deep <= 0.60,
+     '第三档是真正的坎（20%~60%），不是摆设', rates.deep);
+  ok(rates.forge <= 0.20, '最高难度零强化下是赌局', rates.forge);
 
-    if (!live.length) return i;
-    const t = live.reduce((a, b) => dist(a) <= dist(b) ? a : b);
-    const dx = t.x - p.x, dz = t.z - p.z, d = Math.abs(dx);
-    if (!dodging && Math.abs(dz) > 18) { if (dz > 0) i.up = 1; else i.down = 1; }
-    if (d > 52) { if (dx < 0) i.left = 1; else i.right = 1; }
-    else if (d < 34) { if (dx < 0) i.right = 1; else i.left = 1; }
-    if (d < 62 && Math.abs(dz) <= C.ATTACK_DEPTH * 0.85) i.attack = 1;
-    return i;
-  }
-  function winRate(diffId, up, n) {
-    let w = 0;
-    for (let k = 1; k <= n; k++) {
-      const s = L.createState(k * 211);
-      s.meta.upgrades = Object.assign({}, up);
-      L.startRun(s, diffId);
-      let t = 0;
-      while (s.phase === 'run' && t < 300) { t += DT2; L.step(s, bot(s), DT2); }
-      if (s.lastResult && s.lastResult.won) w++;
-    }
-    return w / n;
-  }
-  const zero = { damage: 0, maxHp: 0, speed: 0 };
-  const full = { damage: C.UPGRADES.damage.maxLevel, maxHp: C.UPGRADES.maxHp.maxLevel,
-                 speed: C.UPGRADES.speed.maxLevel };
+  // 阶梯必须单调：档位越高胜率越低，否则难度档没有意义
+  const order = C.DIFFICULTIES.map((d) => rates[d.id]);
+  ok(order.every((v, i) => i === 0 || v <= order[i - 1] + 0.02),
+     '四档胜率随难度单调下降', order.map((v) => (v * 100).toFixed(0) + '%').join(' > '));
 
-  const g0 = winRate('grass', zero, 12), f0 = winRate('forge', zero, 12);
-  const fFull = winRate('forge', full, 12);
-
-  ok(g0 >= 0.8, '最低难度在零强化下基本可通关（不会开局就劝退）', g0);
-  ok(f0 <= 0.5, '最高难度在零强化下是真正的赌局（经济未成形时不该随便能过）', f0);
-  ok(fFull > f0, '强化确实提升了最高难度的胜率（经营层对战斗有影响）', `${f0} -> ${fFull}`);
-  ok(fFull >= 0.6, '全强化后最高难度可稳定通关（游戏有"打通"状态）', fFull);
+  // 经营层必须真的改变结果：全强化下最高难度应当能稳过
+  const forgeZero = rates.forge;
+  const forgeFull = B.winRate('forge', B.FULL_UP, N).rate;
+  ok(forgeFull > forgeZero + 0.4,
+     '强化显著提升最高难度胜率（经营层对战斗有影响）',
+     `${(forgeZero * 100).toFixed(0)}% -> ${(forgeFull * 100).toFixed(0)}%`);
+  ok(forgeFull >= 0.75, '全强化后最高难度可以稳定通关（游戏有"打通"状态）', forgeFull);
 }
 
 // ---------------------------------------------------------------- 16. 远程敌人与弹道

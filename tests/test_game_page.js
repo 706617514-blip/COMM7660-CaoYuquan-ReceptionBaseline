@@ -264,8 +264,19 @@ eq(getEl('panelTitle').textContent, '倒下了', '失败标题正确');
 ok(getEl('panelBody').innerHTML.indexOf('只保留一半') >= 0, '失败文案提示战利品减半');
 const backBtn = getEl('panelBody').children.find(c => c.className.indexOf('buy') >= 0);
 ok(!!backBtn, '结算有回基地按钮');
-backBtn.click();
-ok(backCalled, '点回基地会触发回调');
+
+// ✕ 必须和"回基地"等价。它会先让 closePanel 走一遍 onClose，
+// 所以 onClose 里不能再调 closePanel（会无限递归，实测栈溢出）。
+backCalled = false;
+getEl('panelX').click();
+ok(backCalled, '结算卡点 ✕ 也会回基地（不会卡在死界面）');
+
+// 回基地按钮本身也要work
+backCalled = false;
+sandbox.EmberfieldUI.showResult(bootedState, () => { backCalled = true; });
+const backBtn2 = getEl('panelBody').children.find(c => c.className.indexOf('buy') >= 0);
+backBtn2.click();
+ok(backCalled, '点回基地按钮会触发回调');
 
 // ---------------------------------------------------------------- 存档码
 section('6. 存档码导入');

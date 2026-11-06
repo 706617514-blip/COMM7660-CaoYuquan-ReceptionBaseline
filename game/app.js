@@ -8,7 +8,9 @@
  * 「收集输入 → 调 logic.step → 按 state 摆放图形」。
  *
  * 这样做有两个好处：
- *   1. 测试（169 项断言）验证的就是玩家实际跑的那套规则，不会出现"测的和玩的是两套"；
+ *   1. 测试（规则 108 项 + 界面 40 项 + 档案/基地 57 项）验证的是玩家实际跑的那套规则，
+ *      不会出现"测的和玩的是两套"。注意：渲染层不在 Node 测试覆盖内，
+ *      它的正确性靠无头 Electron 截图核对（见 docs/screenshots）。
  *   2. 换引擎或改画面不需要重写玩法，反之亦然。
  *
  * 美术全部在运行时用 Graphics 生成纹理，不依赖任何图片文件——
@@ -543,11 +545,13 @@
 
       paintBackdrop(this, 'run');
 
-      this.effectGfx = this.add.graphics().setDepth(900);
+      this.effectGfx = this.add.graphics().setDepth(1050);
 
       this.shadow = this.add.image(0, 0, 'shadow').setDepth(1).setScale(0.8);
       this.hero = this.add.image(0, 0, 'hero').setDepth(100);
-      this.heroSwing = this.add.graphics().setDepth(101);
+      // 主角与小怪在 1000-z（z∈[0,210] → 790~1000），
+      // 刀光若放在 101 会被画在角色和怪物背后，等于看不见
+      this.heroSwing = this.add.graphics().setDepth(1100);
 
       this.projPool = [];
       this.dmgPool = [];
@@ -649,9 +653,14 @@
         const es = toScreen(e.x, e.z, e.h);
         sp.img.setVisible(true).setPosition(es.sx, es.sy).setScale(es.sc * ENEMY_SCALE);
         sp.img.setDepth(1000 - e.z);
-        sp.img.setTint(e.hitFlash > 0 ? 0xffffff : 0xffffff);
+        sp.img.setTint(e.hitFlash > 0 ? 0xffd0d0 : 0xffffff);
+        // 精灵池按索引复用，而死亡循环会把槽位 alpha 压到接近 0。
+        // 尸体被移除后，后面的敌人会顶进这个槽位并"继承"透明 ——
+        // 结果是只有血条、看不见怪。必须在活体循环里每帧复位。
+        sp.img.setAlpha(1);
         sp.shadow.setVisible(true).setPosition(es.sx, toScreen(e.x, e.z, 0).sy + 2)
-          .setDepth(1000 - e.z - 1).setScale(es.sc * 0.62);
+          .setDepth(1000 - e.z - 1).setScale(es.sc * 0.62)
+          .setAlpha(1);
         if (e.kind === 'runner' && e.state === 'windup') {
           sp.img.setTint(0xff8a6a);
         }
@@ -740,6 +749,37 @@
       });
       for (let i = run.projectiles.length; i < this.projPool.length; i++) {
         this.projPool[i].setVisible(false);
+      }
+
+      // ---- 掉落物：金币与种子要看得见，否则"走过去捡"这个机制等于不存在 ----
+      if (!this.pickupPool) this.pickupPool = [];
+      run.pickups.forEach((it, i) => {
+        let sp = this.pickupPool[i];
+        if (!sp) {
+          sp = this.add.container(0, 0);
+          sp.coinG = this.add.graphics();
+          sp.seedImg = this.add.image(0, 0, 'sprout').setOrigin(0.5, 1).setScale(0.7);
+          sp.add([sp.coinG, sp.seedImg]);
+          this.pickupPool[i] = sp;
+        }
+        const ps2 = toScreen(it.x, it.z, 0);
+        const bob = Math.sin(it.bob) * 3;
+        sp.setVisible(true).setPosition(ps2.sx, ps2.sy + bob).setDepth(1000 - it.z + 3);
+        // 最后 3 秒开始闪烁提示即将消失
+        sp.setAlpha(it.life < 3 ? (Math.floor(it.life * 8) % 2 ? 0.35 : 1) : 1);
+        sp.coinG.clear();
+        sp.seedImg.setVisible(it.kind === 'seed');
+        if (it.kind === 'coin') {
+          sp.coinG.fillStyle(0xe8b04b, 1);
+          sp.coinG.fillEllipse(0, -8, 15, 7);
+          sp.coinG.fillStyle(0xffe08a, 1);
+          sp.coinG.fillEllipse(0, -10, 15, 7);
+          sp.coinG.fillStyle(0xc78f2a, 1);
+          sp.coinG.fillRect(-1.2, -14, 2.4, 8);
+        }
+      });
+      for (let i = run.pickups.length; i < this.pickupPool.length; i++) {
+        this.pickupPool[i].setVisible(false);
       }
 
       // ---- 伤害数字：靠每帧比对血量差值得出，不需要逻辑层配合 ----
@@ -839,21 +879,9 @@
       // 之前放在 GROUND_Y+34 又被前景灌木盖住，几乎看不见
       const baseY = 452;
 
-      this.plotGeo = [];
-      const rows = 3, cols = 3;
-      for (let r = 0; r < rows; r++) {
-        const depth = r / (rows - 1);              // 0 近 → 1 远
-        const cy = baseY - r * 96;
-        const rowW = 470 - depth * 110;            // 远处更窄
-        const rowH = 74 - depth * 18;
-        for (let c = 0; c < cols; c++) {
-          const cx = CX + (c - 1) * (rowW / 3);
-          this.plotGeo.push({
-            idx: r * cols + c, cx: cx, cy: cy,
-            w: (rowW / 3) - 12, h: rowH, depth: depth,
-          });
-        }
-      }
+      // 几何来自 hub.farmLayout —— 同一份代码既用于绘制也用于命中判定，
+      // 且能被 Node 测试覆盖（见 tests/test_game_meta.js）
+      this.plotGeo = H.farmLayout(W, baseY);
 
       // 田地边框（木栅栏，环绕整块田）
       const fence = this.add.graphics().setDepth(5);
@@ -901,14 +929,7 @@
     }
 
     hitPlot(px, py) {
-      // 从近到远判定，近的优先（远行画在上面但实际更小）
-      for (let i = this.plotGeo.length - 1; i >= 0; i--) {
-        const g = this.plotGeo[i];
-        if (Math.abs(px - g.cx) <= g.w / 2 + 6 && Math.abs(py - g.cy) <= g.h / 2 + 6) {
-          return g.idx;
-        }
-      }
-      return -1;
+      return H.farmHitPlot(this.plotGeo, px, py);
     }
 
     redrawField() {

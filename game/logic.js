@@ -342,7 +342,9 @@
     if (p.cooldowns[key] > 0) return false;
     const level = state.meta.skills[key] || 1;
     const st = skillStats(key, level);
-    const dmg = st.damage * (1 + (currentDamage(state, p) / playerStats(state).damage - 1));
+    // 直接乘增益倍率。原写法 (1 + current/base - 1) 代数上等价，
+    // 但 BASE_DAMAGE 若变成 0 会除出 NaN。
+    const dmg = st.damage * (p.buffTimer > 0 ? C.SKILLS.cry.buffMult : 1);
     p.cooldowns[key] = st.cooldown;
     p.casting = { key: key, timer: def.fxTime };
 
@@ -384,9 +386,19 @@
       pushEffect(run, 'wave', p.x, p.z, range, def.fxTime, def.fxColor, p.facing, depth);
     } else if (key === 'blink') {
       const fromX = p.x;
+      const fromZ = p.z;
       p.x = clamp(p.x + p.facing * def.distance, C.PLAYER_W / 2, C.FIELD_W - C.PLAYER_W / 2);
       p.invuln = Math.max(p.invuln, def.iframes);
-      hitRadius(def.radius, true, 0);
+      // 描述承诺"沿途造成伤害"，判定要做成到线段的最短距离，
+      // 而不是只结算落点 —— 否则一次穿过一排敌人只有落点那只受伤。
+      run.enemies.forEach(function (e2) {
+        if (e2.state === 'dead') return;
+        if (distToSegment(e2.x, e2.z, fromX, fromZ, p.x, p.z) <= def.radius) {
+          e2.hp -= dmg;
+          e2.hitFlash = 0.12;
+          if (e2.hp <= 0) killEnemy(state, run, e2);
+        }
+      });
       pushEffect(run, 'trail', fromX, p.z, def.radius, def.fxTime, def.fxColor);
       pushEffect(run, 'ring', p.x, p.z, def.radius, def.fxTime, def.fxColor);
     } else if (key === 'slam') {
@@ -415,9 +427,10 @@
       const dz = Math.abs(e.z - p.z);
       const inFront = dx > -C.ATTACK_BACK && dx < C.ATTACK_RANGE;
       const sameDepth = dz <= C.ATTACK_DEPTH;
-      // 跳起来时打不到贴地的目标，落地才有效（简单的高度门限）
-      const reachable = Math.abs(p.h - e.h) < 70;
-      if (inFront && sameDepth && reachable) {
+      // 这里原本还有一条 Math.abs(p.h - e.h) < 70 的高度门限，
+      // 但最大跳跃高度 = 430²/(2·1500) ≈ 61.6px，条件恒真，是死代码。
+      // 已删除：命中判定只看 (x, z)，跳跃不提供额外豁免。
+      if (inFront && sameDepth) {
         e.hp -= currentDamage(state, p);
         e.hitFlash = 0.12;
         p.hitIds.push(e.id);
@@ -753,6 +766,16 @@
         .map(function () { return { state: 'empty', growth: 0 }; }) };
     }
     return s;
+  }
+
+  /** 点到线段的最短距离（闪现的沿途判定用）。 */
+  function distToSegment(px, pz, ax, az, bx, bz) {
+    const abx = bx - ax, abz = bz - az;
+    const len2 = abx * abx + abz * abz;
+    if (len2 === 0) return Math.hypot(px - ax, pz - az);
+    let t = ((px - ax) * abx + (pz - az) * abz) / len2;
+    t = clamp(t, 0, 1);
+    return Math.hypot(px - (ax + abx * t), pz - (az + abz * t));
   }
 
   function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }

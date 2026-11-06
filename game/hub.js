@@ -64,8 +64,11 @@
   function moveHub(state, input, dt, speedMul) {
     const hub = ensureHub(state);
     const mul = speedMul || 1;
-    const speed = 250 * mul;
-    const depthSpeed = 150 * mul;
+    // 数值必须取自 config，并且把「轻步」升级也算进去 ——
+    // 之前硬编码 250/150，导致攻速强化在基地里完全没效果。
+    const up = state.meta.upgrades.speed || 0;
+    const speed = C.PLAYER_SPEED * (1 + up * C.UPGRADES.speed.perLevel) * mul;
+    const depthSpeed = C.PLAYER_DEPTH_SPEED * (1 + up * C.UPGRADES.speed.perLevel) * mul;
     if (input.left) { hub.x -= speed * dt; hub.facing = -1; }
     if (input.right) { hub.x += speed * dt; hub.facing = 1; }
     if (input.up) hub.z += depthSpeed * dt;
@@ -82,26 +85,11 @@
   function zoneActions(state, zoneId) {
     const out = [];
     if (zoneId === 'field') {
-      const empty = [];
-      state.farm.plots.forEach((p, i) => { if (p.state === 'empty') empty.push(i); });
-      out.push({
-        kind: 'plant', id: 'plant-empty',
-        label: empty.length ? '播种下一块空田（' + empty.length + ' 块空着）' : '没有空田了',
-        sub: '消耗 ' + C.FARM.seedCost + ' 颗种子 · 2 局成熟后每局 +' + C.FARM.yieldPerPlot,
-        cost: 0, enabled: empty.length > 0 && state.meta.seeds >= C.FARM.seedCost,
-        disabledReason: empty.length ? (state.meta.seeds < C.FARM.seedCost ? '种子不够' : '') : '没有空田',
-        payload: { plotIndex: empty.length ? empty[0] : -1 },
-      });
-      out.push({
-        kind: 'plant-all', id: 'plant-all',
-        label: '全部空田一次种满',
-        sub: '按现有种子尽可能播种',
-        cost: 0,
-        enabled: empty.length > 0 && state.meta.seeds >= C.FARM.seedCost,
-        disabledReason: empty.length ? (state.meta.seeds < C.FARM.seedCost ? '种子不够' : '') : '没有空田',
-        payload: {},
-      });
-    } else if (zoneId === 'anvil') {
+      // 田地不再在这里出面板：HubScene 会让 J 直接进入农场场景，
+      // 这里保留一个显式空清单，说明"这个区域没有可列的动作"。
+      return out;
+    }
+    if (zoneId === 'anvil') {
       Object.keys(C.UPGRADES).forEach((key) => {
         const def = C.UPGRADES[key];
         const cost = L.upgradeCost(state, key);
@@ -122,12 +110,19 @@
         const cost = L.skillCost(state, key);
         const st = L.skillStats(key, lvl);
         const next = lvl < def.maxLevel ? L.skillStats(key, lvl + 1) : null;
+        // 战吼没有伤害字段（它是治疗技能），旧写法会显示"伤害 0→0"，
+        // 玩家花了铜币却看不到任何变化。按技能实际生效的字段来组织文案。
+        let delta = ' · 已满级';
+        if (next) {
+          const parts = [];
+          if (def.heal) parts.push('治疗 ' + st.heal + '→' + next.heal);
+          if (def.damage) parts.push('伤害 ' + st.damage + '→' + next.damage);
+          parts.push('冷却 ' + st.cooldown.toFixed(1) + '→' + next.cooldown.toFixed(1) + 's');
+          delta = ' · ' + parts.join(' · ');
+        }
         out.push({
           kind: 'skill', id: 'sk-' + key, label: '[' + def.key + '] ' + def.name,
-          sub: 'Lv.' + lvl + '/' + def.maxLevel +
-               (next ? ' · 伤害 ' + st.damage + '→' + next.damage +
-                       ' · 冷却 ' + st.cooldown.toFixed(1) + '→' + next.cooldown.toFixed(1) + 's'
-                     : ' · 已满级'),
+          sub: 'Lv.' + lvl + '/' + def.maxLevel + delta,
           cost: cost,
           enabled: cost !== null && state.meta.coins >= cost,
           disabledReason: cost === null ? '已满级' : (state.meta.coins < cost ? '铜币不够' : ''),
@@ -170,7 +165,47 @@
     return { ok: false, reason: '未知动作' };
   }
 
-  const API = { HUB_W, HUB_D, ZONES, ensureHub, zoneAt, zoneById, moveHub, zoneActions, perform };
+  // ---------------------------------------------------------------- 农场田块
+  /**
+   * 农场田块的几何布局。抽到这一层是为了可测：
+   * 成品里玩家点击播种走的是 FarmScene → hitPlot，而这段几何原先只存在于
+   * 渲染代码里，Node 测试完全覆盖不到 —— 点错田都测不出来。
+   *
+   * @param {number} width  画布宽
+   * @param {number} baseY  最靠前一行田的中心 y
+   */
+  function farmLayout(width, baseY) {
+    const CX = width / 2;
+    const rows = 3, cols = 3;
+    const geo = [];
+    for (let r = 0; r < rows; r++) {
+      const depth = r / (rows - 1);          // 0 近 → 1 远
+      const cy = baseY - r * 96;
+      const rowW = 470 - depth * 110;
+      const rowH = 74 - depth * 18;
+      for (let c = 0; c < cols; c++) {
+        geo.push({
+          idx: r * cols + c, cx: CX + (c - 1) * (rowW / 3), cy: cy,
+          w: (rowW / 3) - 12, h: rowH, depth: depth,
+        });
+      }
+    }
+    return geo;
+  }
+
+  /** 点击落点命中的田块索引；不命中返回 -1。近排优先。 */
+  function farmHitPlot(geo, px, py) {
+    for (let i = geo.length - 1; i >= 0; i--) {
+      const g = geo[i];
+      if (Math.abs(px - g.cx) <= g.w / 2 + 6 && Math.abs(py - g.cy) <= g.h / 2 + 6) {
+        return g.idx;
+      }
+    }
+    return -1;
+  }
+
+  const API = { HUB_W, HUB_D, ZONES, ensureHub, zoneAt, zoneById, moveHub, zoneActions, perform,
+                farmLayout, farmHitPlot };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = API;
   global.GameHub = API;

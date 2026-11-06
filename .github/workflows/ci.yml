@@ -213,25 +213,39 @@ jobs:
           if [ "$bad" -eq 0 ]; then echo "ok: 平衡数值只在 game/config.js 定义"; fi
           exit $bad
 
-      - name: Every difficulty must be playable
+      - name: Every difficulty can be played to an ending
+        # 旧版本是"空手站桩 10 秒，检查血量是否有限" ——
+        # 玩家十秒内死亡后 s.run 变成 null，表达式恒真，等于什么也没查。
+        # 现在用 tests/bot.js 真的把每一档打完，要求出现明确结局且不出非有限值。
         run: |
           node - <<'JS'
-          const C = require('./game/config.js'), L = require('./game/logic.js');
+          const C = require('./game/config.js');
+          const B = require('./tests/bot.js');
           let bad = 0;
           for (const d of C.DIFFICULTIES) {
-            const s = L.createState(4242);
-            L.startRun(s, d.id);
-            if (s.run.enemies.length === 0 && s.run.spawnQueue.length === 0) {
-              console.error(`::error::${d.name} 开局没有任何小怪排队`); bad = 1;
+            const s = B.play(4242, d.id, null);
+            if (s.phase !== 'result') {
+              console.error(`::error::${d.name} 10 分钟模拟后仍未结束（phase=${s.phase}）`);
+              bad = 1;
+              continue;
             }
-            for (let i = 0; i < 600; i++) L.step(s, {}, 1/60);
-            if (!isFinite(s.run ? s.run.player.hp : 1)) {
-              console.error(`::error::${d.name} 出现非有限血量`); bad = 1;
+            const r = s.lastResult;
+            if (!r || typeof r.won !== 'boolean') {
+              console.error(`::error::${d.name} 结算结果缺失`); bad = 1;
             }
+            if (!isFinite(s.meta.coins) || s.meta.coins < 0) {
+              console.error(`::error::${d.name} 结束后铜币非有限或为负: ${s.meta.coins}`); bad = 1;
+            }
+            console.log(`${d.name}: ${r.won ? '通关' : '倒下'}，清 ${r.wavesCleared} 波，用时 ${r.elapsed}s`);
           }
-          if (!bad) console.log('ok: 四个难度都能开局并推进');
+          if (!bad) console.log('ok: 四个难度都能打出明确结局');
           process.exit(bad);
           JS
+
+      - name: Balance ladder is monotone
+        # 平衡数字必须由仓库内脚本复现（tests/balance_report.js），
+        # 不允许存在"报告里写了、仓库里算不出"的胜率。
+        run: node tests/balance_report.js 20 1
 
   compliance:
     name: Report complies with the brief

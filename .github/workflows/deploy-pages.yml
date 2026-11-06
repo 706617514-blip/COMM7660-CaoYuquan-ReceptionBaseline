@@ -18,6 +18,10 @@ on:
   push:
     branches: [main]
     paths:
+      # 站点根目录现在是游戏，缺了 game/** 就等于"改了游戏却从不重新部署"，
+      # 只有手动 workflow_dispatch 才会更新线上版本。
+      - "game/**"
+      - "tests/test_game_page.js"
       - "product/**"
       - "analysis/build_product_data.py"
       - "analysis/build_standalone_html.py"
