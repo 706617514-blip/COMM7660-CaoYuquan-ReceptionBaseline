@@ -61,10 +61,11 @@
   }
 
   /** 基地里走动：只允许水平移动，深度轴同样保留（与战斗一致的手感）。 */
-  function moveHub(state, input, dt) {
+  function moveHub(state, input, dt, speedMul) {
     const hub = ensureHub(state);
-    const speed = 250;
-    const depthSpeed = 150;
+    const mul = speedMul || 1;
+    const speed = 250 * mul;
+    const depthSpeed = 150 * mul;
     if (input.left) { hub.x -= speed * dt; hub.facing = -1; }
     if (input.right) { hub.x += speed * dt; hub.facing = 1; }
     if (input.up) hub.z += depthSpeed * dt;

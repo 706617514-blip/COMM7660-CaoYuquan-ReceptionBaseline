@@ -26,6 +26,8 @@
   const PLAYER_W = 34;
   const PLAYER_H = 54;          // 站立高度，用于跳跃与绘制
   const PLAYER_SPEED = 250;     // 水平速度 px/s
+const SPRINT_MULT = 1.62;     // 按住 Shift 的冲刺倍率
+const SPRINT_DEPTH_MULT = 1.35; // 深度轴上冲刺的倍率（比水平收敛，避免前后跳变）
   const PLAYER_DEPTH_SPEED = 150;// 深度速度 px/s（比水平慢，符合视觉惯性）
   const JUMP_V = 430;           // 起跳初速度
   const GRAVITY = 1500;
@@ -125,13 +127,23 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
    * 全部技能冷却完毕才可释放；冷却与伤害都随等级提升（冷却缩短、伤害增加）。
    */
   const SKILLS = {
+    /**
+     * 裂风斩（原名"旋风斩"）：朝**前方**挥出一道长风。
+     *
+     * 改成朝前之后，三个技能的形状彻底分开了：
+     *   普攻 = 近距离矩形 · 裂风斩 = 前方长条 · 震地 = 环形掀飞
+     * 环绕型的"旋风斩"与普通攻击在体感上太接近（都是"打周围"），
+     * 而朝前释放强迫玩家先面向目标，是更明确的操作。
+     */
     whirl: {
-      key: 'U', name: '旋风斩', short: '旋风',
-      desc: '原地横扫一圈，命中周围所有目标',
-      cooldown: 6.0, maxLevel: 5, baseCost: 40, costGrowth: 1.5,
-      radius: 108, damage: 20, damagePerLevel: 7, stunTime: 0.18,
-      // 冷却随等级小幅缩短，让升级有手感而不只是数字
-      cdPerLevel: 0.25, fxTime: 0.45, fxColor: 0x9ad7ff,
+      key: 'U', name: '裂风斩', short: '裂风',
+      desc: '朝面朝方向挥出一道长风，贯穿前方一整排',
+      cooldown: 5.6, maxLevel: 5, baseCost: 40, costGrowth: 1.5,
+      forwardRange: 190,     // 前方长度
+      forwardDepth: 74,      // 深度容差
+      damage: 26, damagePerLevel: 9,
+      knockback: 360, stunTime: 0.22,
+      cdPerLevel: 0.22, fxTime: 0.40, fxColor: 0x9ad7ff,
     },
     blink: {
       key: 'I', name: '闪现', short: '闪现',
@@ -222,6 +234,7 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
   const API = {
     FIELD_W, FIELD_D, GROUND_Y,
     PLAYER_W, PLAYER_H, PLAYER_SPEED, PLAYER_DEPTH_SPEED,
+    SPRINT_MULT, SPRINT_DEPTH_MULT,
     JUMP_V, GRAVITY,
     ATTACK_DURATION, ATTACK_COOLDOWN, ATTACK_RANGE, ATTACK_DEPTH, ATTACK_BACK,
     INVULN_AFTER_HIT, WAVE_BREAK, WAVE_HEAL,

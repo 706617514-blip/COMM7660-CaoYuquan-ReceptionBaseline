@@ -586,6 +586,87 @@ section('16. 远程敌人与弹道（深度轴必须能用来躲）');
   }
 }
 
+// ---------------------------------------------------------------- 17. 裂风斩与冲刺
+section('17. 裂风斩朝前释放 · Shift 冲刺');
+{
+  // (a) 裂风斩只打前方
+  {
+    const { s, run } = armedRun('wood', 500, 105);
+    const p = run.player;
+    p.facing = 1;
+    const front = addEnemy(s, run, 500 + 150, 105);
+    const behind = addEnemy(s, run, 500 - 150, 105);
+    const aside = addEnemy(s, run, 500 + 150, 105 + 110);
+    const hp0 = { f: front.hp, b: behind.hp, a: aside.hp };
+    L.step(s, { whirl: true }, DT);
+    ok(front.hp < hp0.f, '裂风斩命中正前方目标', `${hp0.f} -> ${front.hp}`);
+    eq(behind.hp, hp0.b, '裂风斩不命中身后目标');
+    eq(aside.hp, hp0.a, '裂风斩不命中深度偏离过大的目标');
+  }
+
+  // (b) 转身后命中方向跟着变
+  {
+    const { s, run } = armedRun('wood', 500, 105);
+    const p = run.player;
+    p.facing = -1;
+    const left = addEnemy(s, run, 500 - 150, 105);
+    const right = addEnemy(s, run, 500 + 150, 105);
+    const hp0 = { l: left.hp, r: right.hp };
+    L.step(s, { whirl: true }, DT);
+    ok(left.hp < hp0.l, '面朝左时命中左侧目标');
+    eq(right.hp, hp0.r, '面朝左时不命中右侧目标');
+  }
+
+  // (c) 冷却生效
+  {
+    const { s, run } = armedRun('wood', 500, 105);
+    L.step(s, { whirl: true }, DT);
+    ok(run.player.cooldowns.whirl > 0, '裂风斩进入冷却', run.player.cooldowns.whirl);
+    const front = addEnemy(s, run, 500 + 150, 105);
+    front.x = 640;
+    const hp0 = front.hp;
+    L.step(s, { whirl: true }, DT);
+    eq(front.hp, hp0, '冷却期间再按不会重复造成伤害');
+  }
+
+  // (d) 冲刺倍率
+  {
+    const measure = (sprint, key) => {
+      const { s, run } = armedRun('wood', 200, 105);
+      run.player.z = 20;
+      const p = run.player;
+      const before = key === 'x' ? p.x : p.z;
+      const input = { right: key === 'x', up: key === 'z', sprint: sprint };
+      for (let i = 0; i < 60; i++) L.step(s, input, DT);
+      return (key === 'x' ? p.x : p.z) - before;
+    };
+    const walk = measure(false, 'x');
+    const sprint = measure(true, 'x');
+    near(walk, C.PLAYER_SPEED, 1, '步行速度符合配置');
+    near(sprint / walk, C.SPRINT_MULT, 0.02, '冲刺倍率符合配置');
+    ok(sprint > walk + 100, '冲刺明显更快', `${walk.toFixed(0)} -> ${sprint.toFixed(0)}`);
+
+    // 深度轴上冲刺更收敛，避免前后跳变太快
+    const dw = measure(false, 'z');
+    const ds = measure(true, 'z');
+    ok(ds / dw < sprint / walk, '深度轴的冲刺倍率小于水平轴', `${(ds/dw).toFixed(2)} vs ${(sprint/walk).toFixed(2)}`);
+  }
+
+  // (e) 松开 Shift 立刻回到步行速度（不做惯性）
+  {
+    const { s, run } = armedRun('wood', 200, 105);
+    const p = run.player;
+    const x0 = p.x;
+    for (let i = 0; i < 30; i++) L.step(s, { right: true, sprint: true }, DT);
+    const x1 = p.x;
+    for (let i = 0; i < 30; i++) L.step(s, { right: true, sprint: false }, DT);
+    const x2 = p.x;
+    near(x1 - x0, C.PLAYER_SPEED * C.SPRINT_MULT * 0.5, 2, '冲刺 0.5 秒位移正确');
+    near(x2 - x1, C.PLAYER_SPEED * 0.5, 2, '松开后 0.5 秒回到常速（无残留惯性）');
+    eq(p.sprinting, false, 'sprinting 标记已复位');
+  }
+}
+
 // ---------------------------------------------------------------- 汇总
 console.log('\n' + '='.repeat(56));
 if (fail === 0) {

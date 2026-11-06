@@ -103,7 +103,7 @@
       // 战吼没有伤害字段，用 0 兜底，否则会算出 NaN 并污染下游计算
       damage: (def.damage || 0) + (def.damagePerLevel || 0) * lv,
       cooldown: Math.max(1.2, def.cooldown - (def.cdPerLevel || 0) * lv),
-      radius: def.radius + (def.radiusPerLevel || 0) * lv,
+      radius: (def.radius || def.forwardRange || 0) + (def.radiusPerLevel || 0) * lv,
       heal: (def.heal || 0) + (def.healPerLevel || 0) * lv,
     };
   }
@@ -261,13 +261,18 @@
     p.attackCd = Math.max(0, p.attackCd - dt);
     p.invuln = Math.max(0, p.invuln - dt);
 
+    // 冲刺：按住 Shift 加速。松开立刻恢复步行（不做惯性，操作要"跟手"）。
+    p.sprinting = !!input.sprint;
+    const speedMul = p.sprinting ? C.SPRINT_MULT : 1;
+    const depthMul = p.sprinting ? C.SPRINT_DEPTH_MULT : 1;
+
     // 水平
     let mx = 0;
     if (input.left) mx -= 1;
     if (input.right) mx += 1;
     if (mx !== 0) {
       p.facing = mx;
-      p.x += mx * st.speed * dt;
+      p.x += mx * st.speed * speedMul * dt;
     }
     // 景深：W/S 在 z 轴走动（这是与纯横版的关键区别）
     // 方向约定：z 越大 = 离镜头越远 = 屏幕上越靠上（render 里 sy = GROUND_Y - z*Z_TO_Y）。
@@ -275,7 +280,10 @@
     let mz = 0;
     if (input.up) mz += 1;
     if (input.down) mz -= 1;
-    if (mz !== 0) p.z += mz * C.PLAYER_DEPTH_SPEED * dt;
+    if (mz !== 0) p.z += mz * C.PLAYER_DEPTH_SPEED * depthMul * dt;
+
+    // 冲刺时留残影（供渲染层用）
+    p.runTrail = p.sprinting && (mx !== 0 || mz !== 0);
 
     // 跳跃
     if (input.jump && p.h === 0) p.vy = C.JUMP_V;
@@ -318,9 +326,10 @@
     return d;
   }
 
-  function pushEffect(run, kind, x, z, radius, time, color) {
+  function pushEffect(run, kind, x, z, radius, time, color, facing, depth) {
     run.effects.push({ kind: kind, x: x, z: z, radius: radius,
-                       timer: time, maxTimer: time, color: color });
+                       timer: time, maxTimer: time, color: color,
+                       facing: facing || 1, depth: depth || 40 });
   }
 
   /**
@@ -358,8 +367,21 @@
     };
 
     if (key === 'whirl') {
-      hitRadius(st.radius, true, 200);
-      pushEffect(run, 'ring', p.x, p.z, st.radius, def.fxTime, def.fxColor);
+      // 朝前长条：只命中面朝方向、且在深度容差内的目标
+      const range = def.forwardRange;
+      const depth = def.forwardDepth;
+      run.enemies.forEach(function (e) {
+        if (e.state === 'dead') return;
+        const dx = (e.x - p.x) * p.facing;
+        if (dx < -C.ATTACK_BACK || dx > range) return;
+        if (Math.abs(e.z - p.z) > depth) return;
+        e.hp -= dmg;
+        e.hitFlash = 0.12;
+        e.vx = p.facing * (def.knockback || 0);
+        if (def.stunTime) e.stun = Math.max(e.stun || 0, def.stunTime);
+        if (e.hp <= 0) killEnemy(state, run, e);
+      });
+      pushEffect(run, 'wave', p.x, p.z, range, def.fxTime, def.fxColor, p.facing, depth);
     } else if (key === 'blink') {
       const fromX = p.x;
       p.x = clamp(p.x + p.facing * def.distance, C.PLAYER_W / 2, C.FIELD_W - C.PLAYER_W / 2);

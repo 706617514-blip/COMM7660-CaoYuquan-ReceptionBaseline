@@ -210,14 +210,14 @@
   function readKeys(scene) {
     const k = scene.input.keyboard.addKeys({
       up: 'W', down: 'S', left: 'A', right: 'D',
-      jump: 'SPACE', attack: 'J',
+      jump: 'SPACE', attack: 'J', sprint: 'SHIFT',
       whirl: 'U', blink: 'I', slam: 'O', cry: 'K', nova: 'L',
       confirm: 'J', esc: 'ESC',
     });
     const read = () => ({
       up: !!k.up.isDown, down: !!k.down.isDown,
       left: !!k.left.isDown, right: !!k.right.isDown,
-      jump: !!k.jump.isDown, attack: !!k.attack.isDown,
+      jump: !!k.jump.isDown, attack: !!k.attack.isDown, sprint: !!k.sprint.isDown,
       whirl: !!k.whirl.isDown, blink: !!k.blink.isDown,
       slam: !!k.slam.isDown, cry: !!k.cry.isDown, nova: !!k.nova.isDown,
     });
@@ -499,7 +499,8 @@
       if (this.panelOpen) return;
       const dt = Math.min(delta / 1000, 0.05);
       const input = this.keyboardApi.read();
-      H.moveHub(this.state, input, dt);
+      // 基地里同样支持 Shift 冲刺
+      H.moveHub(this.state, input, dt, input.sprint ? C.SPRINT_MULT : 1);
 
       const hub = this.state.hub;
       const s = toScreen(hub.x, hub.z, 0);
@@ -682,7 +683,42 @@
 
       // 技能特效
       run.effects.forEach((ef) => {
-        const k = ef.timer / ef.maxTimer;
+        const k = ef.timer / ef.maxTimer;      // 1 → 0
+        const prog = 1 - k;                    // 0 → 1 推进
+        if (ef.kind === 'wave') {
+          // 裂风斩：由一束横向速度线组成的刀风，朝前推进。
+          // 早期画成一个填充椭圆，观感像个灰白气泡，完全不像"风刃"。
+          const dx = ef.facing * ef.radius * prog;
+          const cx = ef.x + dx;
+          const sc = toScreen(cx, ef.z, 0);
+          const halfH = ef.depth * Z_TO_Y * sc.sc;
+          const bladeW = ef.radius * 0.34 * sc.sc * (1.15 - prog * 0.3);
+          const cy = sc.sy - 26 * sc.sc;
+
+          // 5 条横线，中间最长、两侧收窄 —— 整体成一竖条刀形
+          for (let i = -2; i <= 2; i++) {
+            const t = i / 2;                            // -1..1
+            const w = bladeW * Math.cos(t * Math.PI * 0.42);
+            const y = cy + t * halfH * 0.86;
+            const a = (0.62 - Math.abs(t) * 0.30) * k;
+            this.effectGfx.fillStyle(ef.color, a);
+            this.effectGfx.fillRect(sc.sx - w / 2, y - 2.2 * sc.sc, w, 4.4 * sc.sc);
+          }
+          // 前缘亮线：刀风的"刃口"
+          this.effectGfx.lineStyle(2.6 * sc.sc, 0xffffff, 0.9 * k);
+          this.effectGfx.beginPath();
+          this.effectGfx.moveTo(sc.sx + ef.facing * bladeW * 0.5, cy - halfH * 0.86);
+          this.effectGfx.lineTo(sc.sx + ef.facing * bladeW * 0.5, cy + halfH * 0.86);
+          this.effectGfx.strokePath();
+
+          // 尾迹：起手位置的残风
+          const backX = ef.x + ef.facing * ef.radius * prog * 0.35;
+          const bs = toScreen(backX, ef.z, 0);
+          this.effectGfx.fillStyle(ef.color, 0.16 * k);
+          this.effectGfx.fillEllipse(bs.sx, bs.sy - 24 * bs.sc,
+            bladeW * 1.25, halfH * 0.5);
+          return;
+        }
         const s2 = toScreen(ef.x, ef.z, 0);
         this.effectGfx.lineStyle(4, ef.color, k * 0.9);
         this.effectGfx.strokeEllipse(s2.sx, s2.sy - 16, ef.radius * 1.8 * (1.15 - k * 0.15),
@@ -733,6 +769,21 @@
       Object.keys(this.lastEnemyHp).forEach((id) => {
         if (!aliveIds[id]) delete this.lastEnemyHp[id];
       });
+
+      // ---- 冲刺残影：三节逐渐变淡的拖影，让"加速"看得见 ----
+      if (p.runTrail) {
+        for (let i = 1; i <= 3; i++) {
+          const back = -p.facing * i * 16;
+          const ts = toScreen(p.x + back, p.z, p.h);
+          this.effectGfx.fillStyle(0x6fb1e0, 0.16 / i);
+          this.effectGfx.fillRect(ts.sx - 9 * ts.sc, ts.sy - 46 * ts.sc,
+                                  18 * ts.sc, 44 * ts.sc);
+        }
+        // 脚下扬尘
+        this.effectGfx.fillStyle(0xc9b48f, 0.10);
+        this.effectGfx.fillEllipse(ps.sx - p.facing * 22 * ps.sc,
+          toScreen(p.x, p.z, 0).sy + 8, 46 * ps.sc, 12 * ps.sc);
+      }
 
       // ---- 震屏：震地与大招各一次，强度不同 ----
       const cast = p.casting;
