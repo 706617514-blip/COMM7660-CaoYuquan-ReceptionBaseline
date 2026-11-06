@@ -221,7 +221,11 @@ def main() -> int:
 
     rows = load_rows(src)
     frame = {}
-    fpath = RAW / "market_frame_totals.json"
+    # 框架总量优先取输入文件同目录的那份，其次才是主目录。
+    # 定向采样（data/raw/targeted/）有自己的总量文件，不应回落到 9 品类的那份。
+    fpath = src.parent / "market_frame_totals.json"
+    if not fpath.exists():
+        fpath = RAW / "market_frame_totals.json"
     if fpath.exists():
         frame = json.loads(fpath.read_text(encoding="utf-8")).get("totals", {})
 
@@ -278,10 +282,14 @@ def main() -> int:
     say()
     say("--- A3. 另两个决策相关的量 ---")
     hip = max(profiles, key=lambda x: x["ge_1000_pct"])
-    say(f"  上限（≥1000 条评论的比例）最高的是 {hip['genre']}：{hip['ge_1000_pct']:.1f}%"
-        f"，而 {top['genre']} 只有 {top['ge_1000_pct']:.1f}%。")
-    say(f"  即：{top['genre']} 的「拿到一点受众」概率最高，"
-        f"{hip['genre']} 的「做成爆款」概率最高——两者不是同一个目标。")
+    if hip["genre"] != top["genre"]:
+        say(f"  上限（≥1000 条评论的比例）最高的是 {hip['genre']}：{hip['ge_1000_pct']:.1f}%"
+            f"，而 {top['genre']} 只有 {top['ge_1000_pct']:.1f}%。")
+        say(f"  即：{top['genre']} 的「拿到一点受众」概率最高，"
+            f"{hip['genre']} 的「做成爆款」概率最高——两者不是同一个目标。")
+    else:
+        say(f"  {top['genre']} 同时是「拿到受众」点估计最高（{top['ge_100_pct']:.1f}%）"
+            f"和「上限」最高（{top['ge_1000_pct']:.1f}%）的品类，两个目标不冲突。")
     say(f"  样本中位团队规模全品类为 1 人（单人比例 "
         f"{min(p['solo_pct'] for p in profiles):.0f}–{max(p['solo_pct'] for p in profiles):.0f}%），"
         "因此「可行性」这一维度**无法区分品类**——它不构成筛选，只是确认了样本以单人作品为主。")

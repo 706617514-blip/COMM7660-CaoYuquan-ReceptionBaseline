@@ -107,6 +107,9 @@ def main() -> int:
     ap.add_argument("--min-reviews", type=int, default=0,
                     help="默认 0：保留零评论作品，否则无法测出真实评论量分布")
     ap.add_argument("--tags", default=",".join(ALL_TAGS))
+    ap.add_argument("--extra-tags", default="",
+                    help="补充标签，格式 Name=id,Name=id（如 Roguelite=3959,Farming Sim=87918）。"
+                         "用于针对某个具体方向做定向采样，不改动 9 个基础品类。")
     ap.add_argument("--outdir", default="data/raw")
     ap.add_argument("--calibrate-only", action="store_true")
     args = ap.parse_args()
@@ -117,7 +120,21 @@ def main() -> int:
         m += 12
         y -= 1
     window_start = date(y, m, cutoff.day)
-    tags = [t.strip() for t in args.tags.split(",") if t.strip() in GENRE_TAGS]
+    # 定向标签：允许把 Steam 的具体 tag 加进本次采样（不改动 GENRE_TAGS 这个基础定义）
+    tagmap = dict(GENRE_TAGS)
+    for spec in (args.extra_tags or "").split(","):
+        spec = spec.strip()
+        if not spec or "=" not in spec:
+            continue
+        name, _, sid = spec.partition("=")
+        try:
+            tagmap[name.strip()] = int(sid)
+        except ValueError:
+            log(f"忽略无法解析的标签: {spec}")
+    requested = [t.strip() for t in args.tags.split(",") if t.strip()]
+    tags = [t for t in requested if t in tagmap]
+    if not tags and tagmap:
+        tags = list(tagmap)          # 只给了 --extra-tags 时，就只采这些
     all_q = quarters_between(window_start, cutoff)
 
     log(f"cutoff={cutoff}  window={window_start}..{cutoff}  quarters={len(all_q)}")
@@ -192,13 +209,13 @@ def main() -> int:
 
     if args.calibrate_only:
         for tag in tags:
-            seed(tag, GENRE_TAGS[tag])
+            seed(tag, tagmap[tag])
             a = anchors(tag)
             log(f"  {tag}: {a[0][0]}->{a[0][1]} .. {a[-1][0]}->{a[-1][1]}" if a else f"  {tag}: 无锚点")
         return 0
 
     for tag in tags:
-        tid = GENRE_TAGS[tag]
+        tid = tagmap[tag]
         if not observed.get(tag):
             log(f"--- 标定 {tag} ---")
             seed(tag, tid)

@@ -1,0 +1,24 @@
+{
+  "collected_at_utc": "20261106T014703Z",
+  "cutoff": "2026-11-05",
+  "window_start": "2024-11-05",
+  "per_quarter": 6,
+  "min_reviews": 0,
+  "tags": [
+    "Roguelite",
+    "Farming Sim"
+  ],
+  "accepted": 108,
+  "rejections": {
+    "not_a_game": 92
+  },
+  "by_tag": {
+    "Farming Sim": 54,
+    "Roguelite": 54
+  },
+  "review_data_source": "search result tooltip (all-time count + positive %)",
+  "zero_review_titles": 54,
+  "tooltip_absent_candidates": 123,
+  "tooltip_parse_mismatch": 0,
+  "outfile": "/Users/f1gment/Documents/7660/data/raw/targeted/market_titles_20261106T014703Z.csv"
+}
