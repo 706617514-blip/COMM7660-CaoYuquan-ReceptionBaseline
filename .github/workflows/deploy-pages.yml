@@ -70,11 +70,15 @@ jobs:
           set -eu
           rm -rf site
           mkdir -p site/phase1
-          cp game/index.html game/config.js game/logic.js game/render.js site/
+          cp game/index.html game/config.js game/logic.js game/profile.js \
+             game/hub.js game/app.js site/
+          mkdir -p site/vendor
+          cp game/vendor/phaser.min.js site/vendor/
           cp product/index.html site/phase1/index.html
           cp product/reference-data.js site/phase1/reference-data.js
           # 部署产物必须是自洽的：缺任何一个文件都会让页面白屏
-          for f in site/index.html site/config.js site/logic.js site/render.js \
+          for f in site/index.html site/config.js site/logic.js site/profile.js \
+                   site/hub.js site/app.js site/vendor/phaser.min.js \
                    site/phase1/index.html site/phase1/reference-data.js; do
             [ -s "$f" ] || { echo "::error::missing or empty: $f"; exit 1; }
           done

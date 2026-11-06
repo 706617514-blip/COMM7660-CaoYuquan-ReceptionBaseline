@@ -164,10 +164,23 @@ jobs:
         # 深度轴命中判定、战利品结算、作物成熟、存档往返、难度梯度
         run: node tests/test_game_logic.js
 
+      - name: Profile and hub interaction rules
+        # 多档案互不覆盖、存档码往返、基地区域判定与动作可用性
+        run: node tests/test_game_meta.js
+
       - name: Page wiring under a DOM shim
-        # 逻辑测试抓不到接线错误：id 拼错、事件没绑、渲染抛异常。
-        # 这一层会执行 index.html 里真实的 inline 脚本。
+        # 逻辑测试抓不到接线错误：id 拼错、事件没绑、面板按钮点了没反应。
+        # 这一层会执行 index.html 里真实的 inline 脚本（Phaser 用最小桩）。
         run: node tests/test_game_page.js
+
+      - name: Phaser is vendored, not fetched at runtime
+        # 部署要能离线打开；引 CDN 会让教室网络差的时候直接白屏。
+        run: |
+          test -s game/vendor/phaser.min.js || { echo "::error::缺少本地 Phaser"; exit 1; }
+          if grep -qE 'src="https?://' game/index.html; then
+            echo "::error::index.html 引用了外部脚本"; exit 1
+          fi
+          echo "ok: Phaser 本地化，且无外部脚本引用"
 
       - name: Balance values must be DEFINED in config.js only
         # 注意只查「定义/赋值」，不查引用：`diff.lootMul` 是正确读取配置，

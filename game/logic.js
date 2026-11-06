@@ -14,7 +14,7 @@
     ? require('./config.js')
     : global.GameConfig;
 
-  const STATE_VERSION = 2;
+  const STATE_VERSION = 3;
 
   // ---------------------------------------------------------------- 随机数
   // 用可序列化的 mulberry32：种子存在 state 里，
@@ -41,6 +41,8 @@
         coins: 0,
         seeds: 3,                       // 开局给 3 颗种子，让第一局就有经营决策
         upgrades: { damage: 0, maxHp: 0, speed: 0 },
+        // 技能全部从 1 级起步：可用，但升级要靠铜币。
+        skills: { whirl: 1, blink: 1, slam: 1, cry: 1, nova: 1 },
         runsCompleted: 0,
         runsWon: 0,
         bestWave: 0,
@@ -71,6 +73,39 @@
 
   function passiveIncome(state) {
     return maturePlots(state) * C.FARM.yieldPerPlot;
+  }
+
+  function skillCost(state, key) {
+    const def = C.SKILLS[key];
+    if (!def) return null;
+    const lvl = state.meta.skills[key];
+    if (lvl >= def.maxLevel) return null;
+    return Math.round(def.baseCost * Math.pow(def.costGrowth, lvl - 1));
+  }
+
+  function buySkill(state, key) {
+    if (!C.SKILLS[key]) return { ok: false, reason: '没有这个技能' };
+    const current = state.meta.skills[key];
+    const lvl = current === undefined ? 1 : current;
+    state.meta.skills[key] = lvl;                  // 兼容旧存档
+    const cost = skillCost(state, key);
+    if (cost === null) return { ok: false, reason: '已满级' };
+    if (state.meta.coins < cost) return { ok: false, reason: '铜币不够' };
+    state.meta.coins -= cost;
+    state.meta.skills[key] = lvl + 1;
+    return { ok: true };
+  }
+
+  function skillStats(skillKey, level) {
+    const def = C.SKILLS[skillKey];
+    const lv = Math.max(1, level || 1) - 1;
+    return {
+      // 战吼没有伤害字段，用 0 兜底，否则会算出 NaN 并污染下游计算
+      damage: (def.damage || 0) + (def.damagePerLevel || 0) * lv,
+      cooldown: Math.max(1.2, def.cooldown - (def.cdPerLevel || 0) * lv),
+      radius: def.radius + (def.radiusPerLevel || 0) * lv,
+      heal: (def.heal || 0) + (def.healPerLevel || 0) * lv,
+    };
   }
 
   function upgradeCost(state, key) {
@@ -116,6 +151,7 @@
       spawnTimer: 0,
       enemies: [],
       loot: { coins: 0, seeds: 0 },
+      effects: [],
       elapsed: 0,
       player: {
         x: C.FIELD_W / 2,
@@ -130,6 +166,9 @@
         invuln: 0,
         swingId: 0,
         hitIds: [],
+        cooldowns: { whirl: 0, blink: 0, slam: 0, cry: 0, nova: 0 },
+        buffTimer: 0,
+        casting: null,
       },
       diff: diff,
     };
@@ -190,6 +229,15 @@
     dt = Math.min(dt, 0.05);                 // 夹住 dt，避免切页后大跳
     run.elapsed += dt;
 
+    if (run.effects && run.effects.length) {
+      run.effects.forEach(function (ef) { ef.timer -= dt; });
+      run.effects = run.effects.filter(function (ef) { return ef.timer > 0; });
+    }
+    if (run.player.casting) {
+      run.player.casting.timer -= dt;
+      if (run.player.casting.timer <= 0) run.player.casting = null;
+    }
+
     stepPlayer(state, run, input, dt);
     stepSpawning(state, run, dt);
     stepEnemies(state, run, dt);
@@ -216,9 +264,11 @@
       p.x += mx * st.speed * dt;
     }
     // 景深：W/S 在 z 轴走动（这是与纯横版的关键区别）
+    // 方向约定：z 越大 = 离镜头越远 = 屏幕上越靠上（render 里 sy = GROUND_Y - z*Z_TO_Y）。
+    // 所以 W（屏幕向上）必须让 z **增大**。第一版写反了，按 W 会往下走。
     let mz = 0;
-    if (input.up) mz -= 1;
-    if (input.down) mz += 1;
+    if (input.up) mz += 1;
+    if (input.down) mz -= 1;
     if (mz !== 0) p.z += mz * C.PLAYER_DEPTH_SPEED * dt;
 
     // 跳跃
@@ -233,6 +283,18 @@
     p.x = clamp(p.x, C.PLAYER_W / 2, C.FIELD_W - C.PLAYER_W / 2);
     p.z = clamp(p.z, 0, C.FIELD_D);
 
+    // 冷却与增益计时
+    if (!p.cooldowns) p.cooldowns = { whirl: 0, blink: 0, slam: 0, cry: 0, nova: 0 };
+    C.SKILL_ORDER.forEach(function (k) {
+      if (p.cooldowns[k] > 0) p.cooldowns[k] = Math.max(0, p.cooldowns[k] - dt);
+    });
+    p.buffTimer = Math.max(0, (p.buffTimer || 0) - dt);
+
+    // 技能（U/I/O/K/L）：冷却好了就释放
+    C.SKILL_ORDER.forEach(function (k) {
+      if (input[k]) tryCastSkill(state, run, p, k);
+    });
+
     // 攻击
     if (input.attack && p.attackCd === 0) {
       p.attackTimer = C.ATTACK_DURATION;
@@ -241,6 +303,75 @@
       p.hitIds = [];
     }
     if (p.attackTimer > 0) resolveAttack(state, run, p, st);
+  }
+
+  /** 当前实际伤害：战吼生效期间按倍率提升。技能伤害也吃这个倍率。 */
+  function currentDamage(state, p) {
+    let d = playerStats(state).damage;
+    if (p.buffTimer > 0) d *= C.SKILLS.cry.buffMult;
+    return d;
+  }
+
+  function pushEffect(run, kind, x, z, radius, time, color) {
+    run.effects.push({ kind: kind, x: x, z: z, radius: radius,
+                       timer: time, maxTimer: time, color: color });
+  }
+
+  /**
+   * 技能释放。冷却未好则忽略（返回 false）。
+   * 伤害类技能一律按 (x, z) 两轴的距离判定，与普攻一致 —— 深度轴必须贯穿所有玩法。
+   */
+  function tryCastSkill(state, run, p, key) {
+    const def = C.SKILLS[key];
+    if (!def) return false;
+    if (p.cooldowns[key] > 0) return false;
+    const level = state.meta.skills[key] || 1;
+    const st = skillStats(key, level);
+    const dmg = st.damage * (1 + (currentDamage(state, p) / playerStats(state).damage - 1));
+    p.cooldowns[key] = st.cooldown;
+    p.casting = { key: key, timer: def.fxTime };
+
+    const hitRadius = function (rad, applyDamage, knockback) {
+      run.enemies.forEach(function (e) {
+        if (e.state === 'dead') return;
+        const dist = Math.hypot(e.x - p.x, e.z - p.z);
+        if (dist > rad) return;
+        if (applyDamage) {
+          e.hp -= dmg;
+          e.hitFlash = 0.12;
+          if (e.hp <= 0) { killEnemy(state, run, e); return; }
+        }
+        if (knockback) {
+          const dx = e.x - p.x, dz = e.z - p.z;
+          const d = Math.hypot(dx, dz) || 1;
+          e.vx = (dx / d) * knockback;
+          e.vz = (dz / d) * knockback;
+        }
+      });
+    };
+
+    if (key === 'whirl') {
+      hitRadius(st.radius, true, 200);
+      pushEffect(run, 'ring', p.x, p.z, st.radius, def.fxTime, def.fxColor);
+    } else if (key === 'blink') {
+      const fromX = p.x;
+      p.x = clamp(p.x + p.facing * def.distance, C.PLAYER_W / 2, C.FIELD_W - C.PLAYER_W / 2);
+      p.invuln = Math.max(p.invuln, def.iframes);
+      hitRadius(def.radius, true, 0);
+      pushEffect(run, 'trail', fromX, p.z, def.radius, def.fxTime, def.fxColor);
+      pushEffect(run, 'ring', p.x, p.z, def.radius, def.fxTime, def.fxColor);
+    } else if (key === 'slam') {
+      hitRadius(st.radius, true, def.knockback);
+      pushEffect(run, 'burst', p.x, p.z, st.radius, def.fxTime, def.fxColor);
+    } else if (key === 'cry') {
+      p.hp = Math.min(p.maxHp, p.hp + st.heal);
+      p.buffTimer = def.buffTime;
+      pushEffect(run, 'aura', p.x, p.z, 90, def.fxTime, def.fxColor);
+    } else if (key === 'nova') {
+      hitRadius(def.radius, true, 260);
+      pushEffect(run, 'nova', C.FIELD_W / 2, C.FIELD_D / 2, C.FIELD_W, def.fxTime, def.fxColor);
+    }
+    return true;
   }
 
   /**
@@ -258,7 +389,7 @@
       // 跳起来时打不到贴地的目标，落地才有效（简单的高度门限）
       const reachable = Math.abs(p.h - e.h) < 70;
       if (inFront && sameDepth && reachable) {
-        e.hp -= st.damage;
+        e.hp -= currentDamage(state, p);
         e.hitFlash = 0.12;
         p.hitIds.push(e.id);
         e.vx = p.facing * 420;               // 击退冲量（约 42px 位移）
@@ -444,6 +575,7 @@
     STATE_VERSION,
     createState, startRun, step, endRun, returnToFarm,
     plant, buyUpgrade, upgradeCost,
+    buySkill, skillCost, skillStats, tryCastSkill, currentDamage,
     playerStats, maturePlots, passiveIncome,
     serialize, deserialize,
     nextRandom, buildWave, makeEnemy,

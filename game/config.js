@@ -37,7 +37,7 @@
 const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在数学上不可通关
 
   // 玩家基础值（强化会在此之上叠加）
-  const BASE_HP = 100;
+  const BASE_HP = 70;
   const BASE_DAMAGE = 12;
   const BASE_ATTACK_SPEED = 1.0;
 
@@ -52,7 +52,7 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
       hpMul: 0.85, dmgMul: 0.70, speedMul: 0.90, waves: 3, baseCount: 4,
       lootMul: 1.0,  spawnGap: 1.50 },
     { id: 'wood',   name: '林地',  desc: '标准强度，战利品与风险相称',
-      hpMul: 1.20, dmgMul: 1.10, speedMul: 1.00, waves: 3, baseCount: 5,
+      hpMul: 1.32, dmgMul: 1.26, speedMul: 1.02, waves: 3, baseCount: 5,
       lootMul: 1.7,  spawnGap: 1.35 },
     { id: 'deep',   name: '密林',  desc: '多一波，小怪更硬更快',
       hpMul: 1.60, dmgMul: 1.40, speedMul: 1.12, waves: 4, baseCount: 6,
@@ -68,12 +68,12 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
    */
   const ENEMIES = {
     crawler: {
-      name: '爬虫', hp: 42, damage: 7, speed: 88, radius: 18,
+      name: '爬虫', hp: 42, damage: 10, speed: 92, radius: 18,
       behavior: 'chase',            // 直线追玩家，两个轴都跟
       knockback: 1.0,
     },
     runner: {
-      name: '冲刺虫', hp: 30, damage: 10, speed: 120, radius: 16,
+      name: '冲刺虫', hp: 30, damage: 14, speed: 126, radius: 16,
       behavior: 'lunge',            // 先蓄力，再朝玩家方向直线冲
       lungeWindup: 0.55, lungeSpeed: 430, lungeTime: 0.32,
       knockback: 1.4,
@@ -90,6 +90,55 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
     const runners = Math.round(n * runnerShare);
     return { crawler: n - runners, runner: runners };
   }
+
+  /**
+   * 技能：U / I / O / K 是基础技能，L 是大招。
+   *
+   * 设计意图：玩家反馈"整体没有难度"，而单纯加血加伤只会变成互相磨。
+   * 技能给的是**应对手段**——闪现用来脱身、旋风斩用来解围、战吼用来续命、
+   * 大招用来收尾。难度因此来自"要不要用、什么时候用"，而不是数值对撞。
+   *
+   * 全部技能冷却完毕才可释放；冷却与伤害都随等级提升（冷却缩短、伤害增加）。
+   */
+  const SKILLS = {
+    whirl: {
+      key: 'U', name: '旋风斩', short: '旋风',
+      desc: '原地横扫一圈，命中周围所有目标',
+      cooldown: 6.0, maxLevel: 5, baseCost: 40, costGrowth: 1.5,
+      radius: 108, damage: 20, damagePerLevel: 7,
+      // 冷却随等级小幅缩短，让升级有手感而不只是数字
+      cdPerLevel: 0.25, fxTime: 0.45, fxColor: 0x9ad7ff,
+    },
+    blink: {
+      key: 'I', name: '闪现', short: '闪现',
+      desc: '朝面朝方向瞬移，短暂无敌并沿途造成伤害',
+      cooldown: 4.0, maxLevel: 5, baseCost: 35, costGrowth: 1.45,
+      distance: 200, radius: 88, damage: 10, damagePerLevel: 4,
+      iframes: 0.40, cdPerLevel: 0.18, fxTime: 0.28, fxColor: 0xc9a6ff,
+    },
+    slam: {
+      key: 'O', name: '震地', short: '震地',
+      desc: '砸向地面，范围击退并造成伤害',
+      cooldown: 8.0, maxLevel: 5, baseCost: 48, costGrowth: 1.5,
+      radius: 132, damage: 26, damagePerLevel: 9,
+      knockback: 520, cdPerLevel: 0.30, fxTime: 0.40, fxColor: 0xffb066,
+    },
+    cry: {
+      key: 'K', name: '战吼', short: '战吼',
+      desc: '立刻回血，并在数秒内提升攻击力',
+      cooldown: 13.0, maxLevel: 5, baseCost: 44, costGrowth: 1.45,
+      heal: 22, healPerLevel: 10, buffMult: 1.35, buffTime: 6.0,
+      cdPerLevel: 0.45, fxTime: 0.5, fxColor: 0x7fe08a,
+    },
+    nova: {
+      key: 'L', name: '熔野爆发', short: '大招',
+      desc: '大招：烈焰席卷整个林场',
+      cooldown: 26.0, maxLevel: 3, baseCost: 90, costGrowth: 1.8,
+      radius: 2000, damage: 45, damagePerLevel: 22,
+      cdPerLevel: 1.0, fxTime: 0.7, fxColor: 0xff7a3c, ultimate: true,
+    },
+  };
+  const SKILL_ORDER = ['whirl', 'blink', 'slam', 'cry', 'nova'];
 
   /**
    * 强化：三条独立线，成本递增。
@@ -135,7 +184,7 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
     ATTACK_DURATION, ATTACK_COOLDOWN, ATTACK_RANGE, ATTACK_DEPTH, ATTACK_BACK,
     INVULN_AFTER_HIT, WAVE_BREAK, WAVE_HEAL,
     BASE_HP, BASE_DAMAGE, BASE_ATTACK_SPEED,
-    DIFFICULTIES, ENEMIES, UPGRADES, FARM, LOOT,
+    DIFFICULTIES, ENEMIES, UPGRADES, FARM, LOOT, SKILLS, SKILL_ORDER,
     waveComposition,
     difficultyById: function (id) {
       return DIFFICULTIES.find(function (d) { return d.id === id; }) || DIFFICULTIES[1];

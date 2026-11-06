@@ -381,15 +381,29 @@ section('14. 核心循环可以真的被打通（自动操作通关最低难度�
 section('15. 难度梯度与经济门控（回归：防止调参把曲线搞平或搞崩）');
 {
   const DT2 = 1 / 60;
+  // 会走位、也会放技能的 bot。
+  // 早先的 bot 不会用技能，于是"平衡"只反映了普攻对撞——
+  // 玩家实际会旋风斩解围、战吼续命，拿不会用技能的 bot 定难度会偏难。
   function bot(s) {
     const p = s.run.player;
     const i = { left: 0, right: 0, up: 0, down: 0, jump: 0, attack: 0 };
     const live = s.run.enemies.filter(e => e.state !== 'dead');
+    const cd = p.cooldowns || {};
+    const dist = (e) => Math.hypot(e.x - p.x, e.z - p.z);
+    const near = live.filter(e => dist(e) < 130).length;
+    const hpFrac = p.hp / p.maxHp;
+
+    // 技能优先级：保命 → 解围 → 收尾
+    if (hpFrac < 0.45 && cd.cry === 0) i.cry = 1;
+    if (hpFrac < 0.30 && cd.blink === 0) i.blink = 1;
+    if (near >= 2 && cd.whirl === 0) i.whirl = 1;
+    if (near >= 3 && cd.slam === 0) i.slam = 1;
+    if (live.length >= 4 && cd.nova === 0) i.nova = 1;
+
     if (!live.length) return i;
-    const t = live.reduce((a, b) =>
-      Math.hypot(a.x - p.x, a.z - p.z) <= Math.hypot(b.x - p.x, b.z - p.z) ? a : b);
+    const t = live.reduce((a, b) => dist(a) <= dist(b) ? a : b);
     const dx = t.x - p.x, dz = t.z - p.z, d = Math.abs(dx);
-    if (Math.abs(dz) > 18) { if (dz < 0) i.up = 1; else i.down = 1; }
+    if (Math.abs(dz) > 18) { if (dz > 0) i.up = 1; else i.down = 1; }
     if (d > 52) { if (dx < 0) i.left = 1; else i.right = 1; }
     else if (d < 34) { if (dx < 0) i.right = 1; else i.left = 1; }
     if (d < 62 && Math.abs(dz) <= C.ATTACK_DEPTH * 0.85) i.attack = 1;

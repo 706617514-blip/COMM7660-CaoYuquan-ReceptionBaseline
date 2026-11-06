@@ -1,15 +1,14 @@
 /**
- * test_game_page.js — 对 game/index.html 的集成测试（DOM 桩，无需浏览器）。
+ * test_game_page.js — 界面层集成测试（DOM 桩 + 最小 Phaser 桩）。
  *
- * 为什么需要这一层
- * ----------------
- * tests/test_game_logic.js 只测纯逻辑。页面里的接线错误 —— 元素 id 拼错、
- * 事件没绑上、按钮点了没反应、渲染调用抛错 —— 逻辑测试全抓不到，
- * 而这些东西恰好是"玩家一打开就发现坏了"的那类问题。
+ * Phaser 场景无法在 Node 里真跑（要 canvas/WebGL），所以这里不测"画得好不好看"，
+ * 而是测**玩家一点就坏**的那一层：
+ *   - 档案：新建、选择、重名拒绝、存档码导入
+ *   - HUD：技能条构建、冷却显示、血条与波次更新
+ *   - 面板：区域动作渲染、禁用原因、点按钮真的调用到 hub.perform
+ *   - 结算：胜负文案与回基地回调
  *
- * 做法：用最小 DOM 桩执行 index.html 里真实的 inline 脚本，
- * 再通过包装 GameRender.drawScene 拿到页面内部的 state，
- * 于是可以断言"点空田真的播种了""按 D 真的移动了""敌人真的刷出来了"。
+ * 场景层（HubScene/RunScene）的正确性由 app.js 的接线纪律 + 逻辑层测试共同保证。
  *
  * 用法: node tests/test_game_page.js
  */
@@ -20,7 +19,7 @@ const path = require('path');
 const vm = require('vm');
 
 const ROOT = path.join(__dirname, '..');
-const HTML_PATH = path.join(ROOT, 'game', 'index.html');
+const HTML = path.join(ROOT, 'game', 'index.html');
 
 let pass = 0, fail = 0;
 const failures = [];
@@ -32,37 +31,25 @@ function eq(a, b, label) { ok(a === b, label, `got ${JSON.stringify(a)}, want ${
 function section(t) { console.log(`\n=== ${t} ===`); }
 
 // ---------------------------------------------------------------- DOM 桩
-function makeClassList(el) {
-  const set = new Set();
-  return {
-    add: (c) => set.add(c),
-    remove: (c) => set.delete(c),
-    contains: (c) => set.has(c),
-    _set: set,
-  };
-}
-
 function makeEl(id) {
   const el = {
-    id: id || '',
-    textContent: '',
-    _innerHTML: '',
-    title: '',
-    disabled: false,
-    className: '',
-    style: {},
-    children: [],
-    _handlers: {},
-    addEventListener(type, fn) { (this._handlers[type] = this._handlers[type] || []).push(fn); },
-    appendChild(c) { this.children.push(c); return c; },
+    id: id || '', textContent: '', _innerHTML: '', title: '', disabled: false,
+    className: '', style: { cssText: '' }, children: [], _handlers: {},
+    addEventListener(t, fn) { (this._handlers[t] = this._handlers[t] || []).push(fn); },
+    appendChild(c) {
+      this.children.push(c);
+      // 真实 DOM 里 append 之后 getElementById 就能找到它；
+      // 桩必须同步登记，否则脚本动态创建的元素查不到，测试会误判。
+      if (c && c.id) elements.set(c.id, c);
+      return c;
+    },
     querySelector() { return makeEl(''); },
-    getContext() { return makeCtx(); },
-    getBoundingClientRect() { return { left: 0, top: 0, width: 960, height: 600 }; },
-    click() { (this._handlers.click || []).forEach(fn => fn({ preventDefault() {} })); },
+    click() { (this._handlers.click || []).forEach(fn => fn({ preventDefault() {}, stopPropagation() {} })); },
   };
-  el.classList = makeClassList(el);
-  // 真实 DOM 里给 innerHTML 赋值会替换掉全部子节点，
-  // 桩若只存字符串，children 会不断累积，测试就会读到过期元素。
+  const cls = new Set();
+  el.classList = {
+    add: (c) => cls.add(c), remove: (c) => cls.delete(c), contains: (c) => cls.has(c),
+  };
   Object.defineProperty(el, 'innerHTML', {
     get() { return this._innerHTML; },
     set(v) { this._innerHTML = v; this.children.length = 0; },
@@ -70,239 +57,222 @@ function makeEl(id) {
   return el;
 }
 
-const CTX_NOPS = ['fillRect', 'clearRect', 'beginPath', 'closePath', 'moveTo', 'lineTo',
-  'arc', 'arcTo', 'ellipse', 'fill', 'stroke', 'save', 'restore', 'translate',
-  'scale', 'rotate', 'rect', 'strokeRect', 'setTransform', 'quadraticCurveTo',
-  'bezierCurveTo', 'clip', 'fillText', 'strokeText', 'drawImage'];
-
-function makeCtx() {
-  const ctx = { calls: 0 };
-  CTX_NOPS.forEach(name => {
-    ctx[name] = function () { ctx.calls++; };
-  });
-  ctx.createLinearGradient = () => ({ addColorStop() {} });
-  ctx.createRadialGradient = () => ({ addColorStop() {} });
-  ctx.measureText = () => ({ width: 10 });
-  ['fillStyle', 'strokeStyle', 'lineWidth', 'globalAlpha', 'font',
-    'textAlign', 'textBaseline', 'shadowBlur', 'shadowColor'].forEach(p => { ctx[p] = ''; });
-  return ctx;
-}
-
-// ---------------------------------------------------------------- 环境
 const elements = new Map();
-const rafQueue = [];
-const winHandlers = {};
-const store = new Map();
-
-function getEl(id) {
+const getEl = (id) => {
   if (!elements.has(id)) elements.set(id, makeEl(id));
   return elements.get(id);
-}
+};
+const store = new Map();
+let confirmAnswer = true;
 
 const sandbox = {
-  console,
-  Math, Date, JSON, Set, Map, Array, Object, String, Number, Boolean, Error,
-  isFinite, parseInt, parseFloat,
-  setTimeout, clearTimeout,
+  console, Math, Date, JSON, Set, Map, Array, Object, String, Number, Boolean,
+  Error, isFinite, parseInt, parseFloat, setTimeout, clearTimeout, encodeURIComponent,
+  decodeURIComponent, escape, unescape,
+  btoa: (s) => Buffer.from(s, 'binary').toString('base64'),
+  atob: (s) => Buffer.from(s, 'base64').toString('binary'),
 };
-
-// 关键：浏览器里 window === globalThis。模块脚本把 API 挂到 globalThis，
-// 页面脚本却从 window 读 —— 如果桩里把两者拆成不同对象，window.GameLogic 就是 undefined。
-// 所以 window 必须就是沙箱本身。
 sandbox.window = sandbox;
 sandbox.globalThis = sandbox;
 sandbox.self = sandbox;
-sandbox.addEventListener = function (type, fn) {
-  (winHandlers[type] = winHandlers[type] || []).push(fn);
-};
-sandbox.removeEventListener = function () {};
-sandbox.requestAnimationFrame = function (fn) { rafQueue.push(fn); return rafQueue.length; };
-sandbox.cancelAnimationFrame = function () {};
-sandbox.localStorage = {
-  getItem(k) { return store.has(k) ? store.get(k) : null; },
-  setItem(k, v) { store.set(k, String(v)); },
-  removeItem(k) { store.delete(k); },
-};
-sandbox.confirm = () => true;
-sandbox.alert = () => {};
 sandbox.document = {
   getElementById: getEl,
-  createElement: (tag) => makeEl(tag),
+  createElement: () => makeEl(''),
   addEventListener() {},
   querySelector: () => makeEl(''),
 };
+sandbox.localStorage = {
+  getItem: (k) => (store.has(k) ? store.get(k) : null),
+  setItem: (k, v) => store.set(k, String(v)),
+  removeItem: (k) => store.delete(k),
+};
+sandbox.confirm = () => confirmAnswer;
+
+// 最小 Phaser 桩：只要让 app.js 能被求值（class extends Phaser.Scene 需要它存在）
+sandbox.Phaser = {
+  Scene: class Scene { constructor(cfg) { this.key = cfg && cfg.key; } },
+  Game: class Game { constructor() { sandbox.__gameConstructed = true; } },
+  AUTO: 0,
+  Scale: { FIT: 0, CENTER_BOTH: 0 },
+  Input: { Keyboard: { JustDown: () => false } },
+  Display: {
+    Color: {
+      Interpolate: { ColorWithColor: (a, b) => ({ r: 30, g: 40, b: 50 }) },
+      GetColor: () => 0x1e2832,
+    },
+  },
+};
 
 vm.createContext(sandbox);
-
-function runFile(rel) {
-  const code = fs.readFileSync(path.join(ROOT, rel), 'utf-8');
-  vm.runInContext(code, sandbox, { filename: rel });
-}
+const loadModule = (rel) => vm.runInContext(
+  fs.readFileSync(path.join(ROOT, rel), 'utf-8'), sandbox, { filename: rel });
 
 // ---------------------------------------------------------------- 启动
-section('1. 页面脚本能启动');
-const html = fs.readFileSync(HTML_PATH, 'utf-8');
-const inlineScripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
-ok(inlineScripts.length === 1, 'index.html 里只有一个 inline 脚本', inlineScripts.length);
+section('1. 脚本按序加载且不抛异常');
+const html = fs.readFileSync(HTML, 'utf-8');
+const srcs = [...html.matchAll(/<script src="([^"]+)"/g)].map(m => m[1]);
+eq(JSON.stringify(srcs), JSON.stringify([
+  'vendor/phaser.min.js', 'config.js', 'logic.js', 'profile.js', 'hub.js', 'app.js',
+]), '脚本加载顺序正确（Phaser 先于 app.js）');
 
-let bootError = null;
+let bootErr = null;
 try {
-  runFile('game/config.js');
-  runFile('game/logic.js');
-  runFile('game/render.js');
+  loadModule('game/config.js');
+  loadModule('game/logic.js');
+  loadModule('game/profile.js');
+  loadModule('game/hub.js');
+  loadModule('game/app.js');
+} catch (e) { bootErr = e; }
+ok(!bootErr, '模块加载不抛异常', bootErr && bootErr.message);
 
-  // 包装渲染函数以取得页面内部 state（IIFE 里的 state 无法直接访问）
-  let captured = null;
-  const realDrawScene = sandbox.GameRender.drawScene;
-  sandbox.GameRender.drawScene = function (ctx, st, t) {
-    captured = st;
-    return realDrawScene(ctx, st, t);
-  };
-  sandbox.__captured = () => captured;
+ok(typeof sandbox.GameHub === 'object', 'GameHub 已挂在全局');
+ok(typeof sandbox.EmberfieldApp === 'object', 'EmberfieldApp 已挂在全局');
+ok(sandbox.EmberfieldApp.toScreen(480, 0, 0).sy >
+   sandbox.EmberfieldApp.toScreen(480, 200, 0).sy,
+   '坐标映射：远处画得更高');
 
-  vm.runInContext(inlineScripts[0], sandbox, { filename: 'index.html:inline' });
-} catch (e) {
-  bootError = e;
-}
-ok(!bootError, '脚本执行不抛异常', bootError && (bootError.message + '\n' + bootError.stack));
+// 拦截 boot：Phaser 场景不在 Node 里真跑，只记录被调用
+let bootedState = null;
+sandbox.EmberfieldApp.boot = function (state) { bootedState = state; return { fake: true }; };
 
-// ---------------------------------------------------------------- 农庄
-section('2. 农庄界面初始化');
-ok(rafQueue.length > 0, '注册了动画帧回调');
-eq(getEl('st-seeds').textContent, 3, '初始种子显示为 3');
-eq(getEl('st-coins').textContent, 0, '初始铜币显示为 0');
-ok(getEl('farmgrid').children.length === 9, '渲染出 9 块田',
-   getEl('farmgrid').children.length);
-ok(getEl('difflist').children.length === 4, '渲染出 4 个难度档',
-   getEl('difflist').children.length);
-ok(getEl('upgrades').children.length === 3, '渲染出 3 条强化线',
-   getEl('upgrades').children.length);
-ok(getEl('scr-farm').classList.contains('on'), '农庄界面默认可见');
+const inline = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]).pop();
+let uiErr = null;
+try { vm.runInContext(inline, sandbox, { filename: 'index.html:inline' }); }
+catch (e) { uiErr = e; }
+ok(!uiErr, '界面脚本执行不抛异常', uiErr && (uiErr.message + '\n' + uiErr.stack));
+ok(typeof sandbox.EmberfieldUI === 'object', 'EmberfieldUI 暴露给场景');
 
-// ---------------------------------------------------------------- 播种
-section('3. 点空田能真的播种');
-const plotEls = getEl('farmgrid').children;
-ok(plotEls.length === 9 && typeof plotEls[0].click === 'function', '田块是可点击元素');
-plotEls[0].click();
-eq(getEl('st-seeds').textContent, 2, '播种后种子从 3 减到 2');
-// 播种会触发 renderFarm()，整个网格被重建 —— 必须重新取元素，不能复用旧引用
-const plotElsAfter = getEl('farmgrid').children;
-eq(plotElsAfter.length, 9, '重渲染后仍是 9 块田（没有累积）', plotElsAfter.length);
-ok(plotElsAfter[0].className.indexOf('growing') >= 0, '播种后该田进入 growing 样式',
-   plotElsAfter[0].className);
-eq(getEl('farmgrid').children.filter(c => c.className.indexOf('growing') >= 0).length, 1,
-   '只有一块田进入生长状态');
+// ---------------------------------------------------------------- 档案
+section('2. 玩家档案');
+ok(getEl('plist').children.length === 1, '没有档案时显示占位提示',
+   getEl('plist').children.length);
 
-// ---------------------------------------------------------------- 开局
-section('4. 点「下地」进入战斗');
-getEl('btn-start').click();
-ok(getEl('hud').classList.contains('on'), 'HUD 显示');
-ok(!getEl('scr-farm').classList.contains('on'), '农庄界面隐藏');
+getEl('newName').textContent = '';
+getEl('newName').value = '阿青';
+getEl('btnCreate').click();
+ok(!!bootedState, '新建档案后调用了 boot（进入游戏）');
+ok(bootedState && bootedState.meta && typeof bootedState.meta.coins === 'number',
+   'boot 收到的是合法 state');
+eq(getEl('whoName').textContent, '阿青', '顶栏显示当前玩家');
+eq(getEl('profile').className, 'off', '档案界面隐藏');
 
-let frameCb = rafQueue[rafQueue.length - 1];
-let ts = 0;
-let drawError = null;
-try {
-  for (let i = 0; i < 20; i++) { ts += 16.7; frameCb(ts); }
-} catch (e) { drawError = e; }
-ok(!drawError, '渲染 20 帧不抛异常', drawError && drawError.message);
+const namesAfter = JSON.parse(store.get('emberfield.profiles') || '[]');
+ok(namesAfter.indexOf('阿青') >= 0, '档案写入了档案索引', JSON.stringify(namesAfter));
 
-const getState = sandbox.__captured;
-ok(!!getState(), '通过渲染调用拿到了页面内部 state');
-const st0 = getState();
-eq(st0.phase, 'run', '页面已进入 run 阶段');
+// 重复新建应当被拒绝
+getEl('newName').value = '阿青';
+getEl('btnCreate').click();
+ok(JSON.parse(store.get('emberfield.profiles')).length === 1, '重名不会产生第二个档案');
 
-// ---------------------------------------------------------------- 输入
-section('5. 键盘输入真的驱动了移动');
-const x0 = st0.run.player.x;
-const downHandlers = winHandlers.keydown || [];
-ok(downHandlers.length > 0, '注册了 keydown 监听');
-downHandlers.forEach(fn => fn({ code: 'KeyD', preventDefault() {} }));
-frameCb = rafQueue[rafQueue.length - 1];
-for (let i = 0; i < 40; i++) { ts += 16.7; frameCb(ts); }
-const x1 = getState().run.player.x;
-ok(x1 > x0 + 5, '按住 D 后玩家向右移动', `${x0.toFixed(1)} -> ${x1.toFixed(1)}`);
+// ---------------------------------------------------------------- HUD
+section('3. HUD 与技能条');
+sandbox.EmberfieldUI.showHud(true, bootedState);
+eq(getEl('hud').className, 'on', 'HUD 显示');
+eq(getEl('skills').children.length, sandbox.GameConfig.SKILL_ORDER.length,
+   '技能条槽位数量等于技能数量', getEl('skills').children.length);
 
-// 深度轴：按 S 应当让 z 变大
-const z0 = getState().run.player.z;
-(winHandlers.keydown || []).forEach(fn => fn({ code: 'KeyS', preventDefault() {} }));
-for (let i = 0; i < 30; i++) { ts += 16.7; frameCb(ts); }
-const z1 = getState().run.player.z;
-ok(z1 > z0 + 2, '按住 S 后玩家沿景深向后走（W/S 轴有效）', `${z0.toFixed(1)} -> ${z1.toFixed(1)}`);
+// 造一个战斗中的状态
+const L = sandbox.GameLogic, C = sandbox.GameConfig;
+L.startRun(bootedState, 'wood');
+const run = bootedState.run;
+run.player.hp = 35;
+run.loot.coins = 77;
+run.loot.seeds = 4;
+sandbox.EmberfieldUI.updateHud(bootedState);
+eq(getEl('hpNum').textContent, '35 / ' + run.player.maxHp, 'HUD 生命数值正确');
+eq(getEl('lootCoin').textContent, 77, 'HUD 铜币正确');
+eq(getEl('lootSeed').textContent, 4, 'HUD 种子正确');
+ok(/第 1 \/ 3 波/.test(getEl('waveChip').textContent), 'HUD 波次正确',
+   getEl('waveChip').textContent);
 
-// 松开按键
-(winHandlers.keyup || []).forEach(fn => fn({ code: 'KeyD', preventDefault() {} }));
-(winHandlers.keyup || []).forEach(fn => fn({ code: 'KeyS', preventDefault() {} }));
+// 冷却显示
+run.player.cooldowns.whirl = 4.2;
+sandbox.EmberfieldUI.updateHud(bootedState);
+const whirlEl = getEl('skills').children.find(c => c.id === 'sk-whirl');
+ok(whirlEl && whirlEl.className.indexOf('cooling') >= 0, '冷却中的技能显示遮罩',
+   whirlEl && whirlEl.className);
 
-// ---------------------------------------------------------------- 敌人
-section('6. 敌人会刷新且 HUD 在更新');
-let sawEnemy = false;
-for (let i = 0; i < 240; i++) {
-  ts += 16.7; frameCb(ts);
-  const s = getState();
-  if (s && s.run && s.run.enemies.length > 0) sawEnemy = true;
-  if (s && s.phase !== 'run') break;
-}
-ok(sawEnemy, '战斗中有敌人被刷出');
-ok(getEl('wave-label').textContent.indexOf('波') >= 0, 'HUD 波次标签有内容',
-   getEl('wave-label').textContent);
-ok(/\d/.test(getEl('hp-num').textContent), 'HUD 显示生命数值',
-   getEl('hp-num').textContent);
+// ---------------------------------------------------------------- 面板
+section('4. 场景面板');
+L.endRun(bootedState, true);           // 结束这一局，回到可经营状态
+sandbox.EmberfieldUI.showHud(false);
+bootedState.meta.coins = 300;
+bootedState.meta.seeds = 5;
 
-// ---------------------------------------------------------------- 存档
-section('7. 存档写入 localStorage');
-ok(store.size > 0, '有存档写入');
-const saved = JSON.parse(store.get('emberfield_save_v2') || '{}');
-eq(saved.version, 2, '存档版本正确');
-ok(saved.meta && typeof saved.meta.coins === 'number', '存档里含 meta.coins');
+const gate = sandbox.GameHub.ZONES.find(z => z.id === 'gate');
+let startedDifficulty = null;
+const fakeScene = { startRun: (d) => { startedDifficulty = d; } };
+sandbox.EmberfieldUI.openPanel(gate, bootedState, () => {}, (a) => {
+  if (a.kind === 'run') { startedDifficulty = a.payload.difficultyId; return; }
+});
+eq(getEl('panelTitle').textContent, '远征之门', '面板标题为区域名');
+ok(getEl('panelBody').children.length >= C.DIFFICULTIES.length, '门口列出全部难度',
+   getEl('panelBody').children.length);
+
+// 点第一个难度的「出发」
+const actionRows = getEl('panelBody').children.filter(c => c.className.indexOf('act') >= 0);
+const firstRow = actionRows[0];
+const btn = firstRow.children[1];
+ok(!!btn, '每个动作都有按钮');
+btn.click();
+eq(startedDifficulty, C.DIFFICULTIES[0].id, '点击出发把难度传给了场景');
+
+// 铁匠铺：钱够时按钮可点，点后真的扣钱
+const anvil = sandbox.GameHub.ZONES.find(z => z.id === 'anvil');
+let performed = [];
+sandbox.EmberfieldUI.openPanel(anvil, bootedState, () => {}, (a) => {
+  performed.push(a.payload.key);
+  sandbox.GameHub.perform(bootedState, a);
+  sandbox.EmberfieldUI.refreshPanel(anvil, bootedState);
+});
+const anvilRows = getEl('panelBody').children.filter(c => c.className.indexOf('act') >= 0);
+eq(anvilRows.length, 3, '铁匠铺三条强化');
+const coinBefore = bootedState.meta.coins;
+anvilRows[0].children[1].click();
+eq(performed.length, 1, '点击强化按钮触发了动作');
+ok(bootedState.meta.coins < coinBefore, '强化后铜币减少',
+   coinBefore + ' -> ' + bootedState.meta.coins);
+
+// 钱为 0 时按钮应当禁用
+bootedState.meta.coins = 0;
+sandbox.EmberfieldUI.refreshPanel(anvil, bootedState);
+const brokeRows = getEl('panelBody').children.filter(c => c.className.indexOf('act') >= 0);
+ok(brokeRows.every(r => r.children[1].disabled), '没钱时强化按钮全部禁用');
+
+// 祭坛：技能条目带等级与冷却变化
+const altar = sandbox.GameHub.ZONES.find(z => z.id === 'altar');
+sandbox.EmberfieldUI.openPanel(altar, bootedState, () => {}, () => {});
+const altarRows = getEl('panelBody').children.filter(c => c.className.indexOf('act') >= 0);
+eq(altarRows.length, C.SKILL_ORDER.length, '祭坛列出全部技能');
+ok(altarRows[altarRows.length - 1].className.indexOf('ult') >= 0, '大招条目有独立样式');
+
+// 关闭面板
+getEl('panelX').click();
+eq(getEl('panel').className, 'overlay', '点 ✕ 关闭面板');
 
 // ---------------------------------------------------------------- 结算
-section('8. 对局结束会切换到结果界面');
-// 把玩家血量打到 0，逼一次失败结算
-const stNow = getState();
-if (stNow && stNow.run) {
-  stNow.run.player.hp = 1;
-  stNow.run.enemies.length = 0;
-  // 手动塞一个贴脸的敌人
-  const e = sandbox.GameLogic.makeEnemy(stNow, 'crawler', stNow.run.diff);
-  e.x = stNow.run.player.x; e.z = stNow.run.player.z; e.damage = 999;
-  stNow.run.enemies.push(e);
-  frameCb = rafQueue[rafQueue.length - 1];
-  for (let i = 0; i < 60; i++) { ts += 16.7; frameCb(ts); if (getState() === null) break; }
-  ok(getEl('scr-result').classList.contains('on'), '结果界面显示');
-  ok(getEl('rs-title').textContent.length > 0, '结果标题有文案',
-     getEl('rs-title').textContent);
-  ok(getEl('rs-delta').innerHTML.indexOf('难度') >= 0, '结果里列出了难度与战利品');
-}
+section('5. 结算界面');
+L.startRun(bootedState, 'wood');
+L.endRun(bootedState, false);
+let backCalled = false;
+sandbox.EmberfieldUI.showResult(bootedState, () => { backCalled = true; });
+eq(getEl('panelTitle').textContent, '倒下了', '失败标题正确');
+ok(getEl('panelBody').innerHTML.indexOf('只保留一半') >= 0, '失败文案提示战利品减半');
+const backBtn = getEl('panelBody').children.find(c => c.className.indexOf('buy') >= 0);
+ok(!!backBtn, '结算有回基地按钮');
+backBtn.click();
+ok(backCalled, '点回基地会触发回调');
 
-// ---------------------------------------------------------------- 坐标映射
-section('9. 2.5D 坐标映射（深度不能搞反、不能画到屏幕外）');
-{
-  const R = sandbox.GameRender, C = sandbox.GameConfig;
-  const near = R.toScreen(480, 0, 0);            // 最近处、贴地
-  const far = R.toScreen(480, C.FIELD_D, 0);     // 最远处、贴地
-  const jump = R.toScreen(480, 0, 120);          // 跳起来
-
-  ok(far.sy < near.sy, '远的比近的画得更高（深度方向没有搞反）',
-     `near.sy=${near.sy} far.sy=${far.sy}`);
-  ok(far.scale < near.scale, '远的比近的更小（近大远小成立）',
-     `near=${near.scale.toFixed(2)} far=${far.scale.toFixed(2)}`);
-  ok(jump.sy < near.sy, '跳起来会画得更高', `ground=${near.sy} air=${jump.sy}`);
-
-  // 场上任意位置都必须落在画布内（960x600）
-  let minY = Infinity, maxY = -Infinity, minX = Infinity, maxX = -Infinity;
-  for (let x = 0; x <= C.FIELD_W; x += 40) {
-    for (let z = 0; z <= C.FIELD_D; z += 30) {
-      const s = R.toScreen(x, z, 0);
-      minX = Math.min(minX, s.sx); maxX = Math.max(maxX, s.sx);
-      minY = Math.min(minY, s.sy); maxY = Math.max(maxY, s.sy);
-    }
-  }
-  ok(minX >= 0 && maxX <= 960, '水平方向都在画布内', `${minX}..${maxX}`);
-  ok(minY >= 0 && maxY <= 600, '竖直方向都在画布内', `${minY}..${maxY}`);
-  // 小怪抬到最高处（血条在 sy-48*scale）也不能跑到画布顶部之外
-  ok(minY - 60 >= 0, '最远处目标连同血条/头顶仍在画布内', minY - 60);
-}
+// ---------------------------------------------------------------- 存档码
+section('6. 存档码导入');
+const code = sandbox.GameProfile.exportCode('老档', L.serialize(bootedState));
+getEl('codeBox').value = code;
+let importErr = null;
+try { getEl('btnImport').click(); } catch (e) { importErr = e; }
+ok(!importErr, '导入按钮不抛异常', importErr && importErr.message);
+// 注意传 localStorage 包装而不是裸 Map：listProfiles 内部有 try/catch，
+// 传错对象会静默返回空列表，不报错但结果永远是 false。
+ok(sandbox.GameProfile.exists(sandbox.localStorage, '老档'), '存档码导入后档案存在');
 
 // ---------------------------------------------------------------- 汇总
 console.log('\n' + '='.repeat(56));
