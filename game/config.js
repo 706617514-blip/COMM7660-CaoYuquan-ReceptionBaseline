@@ -202,6 +202,21 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
     seedChance: 0.38,       // 每只小怪掉种子的概率
     clearBonusCoins: 20,    // 清完一波的额外奖励
     lossKeep: 0.5,          // 倒下时保留的战利品比例
+    // 掉落物需要走过去捡。这是战斗节奏的关键：
+    // 打完一波之后有一段"扫战场"的动作，而不是数字自动入账，
+    // 于是 打 → 捡 → 下一波 形成节拍。
+    pickupLife: 16,         // 掉落物存在时间（秒）
+    pickupRadiusX: 40,      // 拾取范围
+    pickupRadiusZ: 34,
+  };
+
+  /**
+   * 刷怪分批发。一次全涌出来会让每波变成"站桩清场"，
+   * 改成 3 只一批、批间停顿，战斗就有了推进感。
+   */
+  const SPAWN = {
+    burstSize: 3,           // 每批数量
+    burstGap: 2.6,          // 批与批之间的停顿（秒）
   };
 
   const API = {
@@ -211,7 +226,7 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
     ATTACK_DURATION, ATTACK_COOLDOWN, ATTACK_RANGE, ATTACK_DEPTH, ATTACK_BACK,
     INVULN_AFTER_HIT, WAVE_BREAK, WAVE_HEAL,
     BASE_HP, BASE_DAMAGE, BASE_ATTACK_SPEED,
-    DIFFICULTIES, ENEMIES, UPGRADES, FARM, LOOT, SKILLS, SKILL_ORDER,
+    DIFFICULTIES, ENEMIES, UPGRADES, FARM, LOOT, SKILLS, SKILL_ORDER, SPAWN,
     waveComposition,
     difficultyById: function (id) {
       return DIFFICULTIES.find(function (d) { return d.id === id; }) || DIFFICULTIES[1];

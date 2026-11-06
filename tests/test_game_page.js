@@ -127,6 +127,10 @@ ok(!bootErr, '模块加载不抛异常', bootErr && bootErr.message);
 
 ok(typeof sandbox.GameHub === 'object', 'GameHub 已挂在全局');
 ok(typeof sandbox.EmberfieldApp === 'object', 'EmberfieldApp 已挂在全局');
+ok(typeof sandbox.EmberfieldApp.FarmScene === 'function', '农场场景已定义并注册');
+ok(['BootScene', 'HubScene', 'RunScene', 'FarmScene'].every(
+  (k) => typeof sandbox.EmberfieldApp[k] === 'function'),
+  '四个场景类都存在');
 ok(sandbox.EmberfieldApp.toScreen(480, 0, 0).sy >
    sandbox.EmberfieldApp.toScreen(480, 200, 0).sy,
    '坐标映射：远处画得更高');

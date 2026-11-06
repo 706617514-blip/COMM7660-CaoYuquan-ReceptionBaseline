@@ -179,16 +179,29 @@
 
     // 幼苗 / 成熟作物
     g.clear();
-    g.fillStyle(0x6fbf4a, 1); g.fillRect(4, 8, 3, 12); g.fillRect(10, 5, 3, 15);
-    g.fillStyle(0x3f7a2a, 1); g.fillRect(7, 14, 3, 6);
-    g.generateTexture('sprout', 18, 20);
+    g.fillStyle(0x4f8f33, 1); g.fillRect(8.6, 10, 2, 12);
+    g.fillStyle(0x6fbf4a, 1);
+    g.fillEllipse(5.5, 8, 8, 5.2);
+    g.fillEllipse(13.5, 6.5, 8, 5.2);
+    g.fillStyle(0x8fd968, 1);
+    g.fillEllipse(5.2, 7.2, 4.4, 2.6);
+    g.generateTexture('sprout', 19, 23);
 
+    // 麦穗：细茎 + 顶端谷粒串（之前是三角形，看起来像黄色箭头）
     g.clear();
-    g.fillStyle(0xc9a227, 1); g.fillRect(4, 4, 4, 20);
+    g.fillStyle(0x8a6b2f, 1); g.fillRect(9, 12, 2.2, 18);
+    g.fillStyle(0xc9a227, 1);
+    for (let i = 0; i < 4; i++) {
+      g.fillEllipse(10, 4 + i * 3.2, 5.4 - i * 0.5, 3.4);
+    }
     g.fillStyle(0xe8c14b, 1);
-    g.fillTriangle(8, 4, 20, 10, 8, 16);
-    g.fillTriangle(8, 12, 18, 18, 8, 24);
-    g.generateTexture('crop', 24, 26);
+    for (let i = 0; i < 4; i++) {
+      g.fillEllipse(9.4, 3.4 + i * 3.2, 2.6, 1.7);
+    }
+    g.fillStyle(0x8a6b2f, 1);
+    g.fillTriangle(10, 12, 4, 18, 6, 20);
+    g.fillTriangle(10, 14, 16, 19, 14, 21);
+    g.generateTexture('crop', 20, 32);
 
     g.destroy();
   }
@@ -250,7 +263,8 @@
     });
 
     // ---- 树木：两种交替，远近不同缩放与透明度 ----
-    for (let i = 0; i < 16; i++) {
+    // 农场模式跳过：耕地会盖住地平线，树画上去等于长在田中央
+    for (let i = 0; mode !== 'farm' && i < 16; i++) {
       const key = i % 3 === 1 ? 'treeB' : 'treeA';
       const depthT = (i % 4) / 3;                     // 0..1
       const sc = 0.62 + depthT * 0.5;
@@ -276,20 +290,39 @@
     g.beginPath(); g.moveTo(0, zFar); g.lineTo(W, zFar); g.strokePath();
 
     // ---- 土路：横贯场景，给玩家一条视觉动线 ----
+    if (mode !== 'farm') {
     g.fillStyle(isHub ? 0x4a4030 : 0x4a3a2c, 0.38);
     const roadY = GROUND_Y - 46;
     for (let x = 0; x < W; x += 60) {
       g.fillRoundedRect(x, roadY + Math.sin(x * 0.02) * 3, 62, 26, 8);
     }
+    }
 
     // ---- 围栏：沿景深带后缘一排木桩 ----
-    for (let x = 8; x < W; x += 26) {
+    for (let x = 8; mode !== 'farm' && x < W; x += 26) {
       scene.add.image(x, zFar + 4, 'post').setOrigin(0.5, 1)
         .setScale(0.9).setAlpha(0.55).setDepth(-700);
     }
 
+    // ---- 农场模式：把中段整片铺成耕地，田直接坐在土上 ----
+    if (mode === 'farm') {
+      const soilTop = 206;
+      for (let i = 0; i < 26; i++) {
+        const t = i / 25;
+        const r = Math.round(58 + t * 22);
+        const gg = Math.round(44 + t * 16);
+        const b = Math.round(30 + t * 12);
+        g.fillStyle(Phaser.Display.Color.GetColor(r, gg, b), 1);
+        g.fillRect(0, soilTop + t * (HGT - soilTop), W, (HGT - soilTop) / 25 + 2);
+      }
+      // 远处的地平线阴影，把耕地和树林分开
+      g.fillStyle(0x000000, 0.35);
+      g.fillRect(0, soilTop, W, 12);
+    }
+
     // ---- 前景剪影：贴在画布下缘，让画面有"近处"这一层 ----
-    for (let i = 0; i < 7; i++) {
+    // 农场模式不画：会挡住最靠前的一排田
+    for (let i = 0; mode !== 'farm' && i < 7; i++) {
       const bx = -20 + i * 165 + (i % 2) * 40;
       scene.add.image(bx, HGT + 6, 'bush')
         .setOrigin(0.5, 1).setScale(1.5 + (i % 3) * 0.45)
@@ -485,7 +518,15 @@
       }
 
       if (Phaser.Input.Keyboard.JustDown(this.keyboardApi.keys.confirm) && zone) {
-        this.showPanel(zone);
+        if (zone.id === 'field') {
+          // 农场是一个独立场景，不是弹出面板：
+          // 渐黑 → 切换 → 渐亮，让"走进农田"有过渡感
+          this.panelOpen = true;
+          this.cameras.main.fadeOut(340, 0, 0, 0);
+          this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('Farm'));
+        } else {
+          this.showPanel(zone);
+        }
       }
     }
   }
@@ -717,6 +758,244 @@
   }
 
   // ================================================================ 启动
+  // ================================================================ 农场（独立场景）
+  /**
+   * 农场场景：从基地走到田地按 J 进入（渐黑 → 渐亮）。
+   *
+   * 为什么单独做一个场景而不是弹面板：
+   * 面板只能"点按钮"，而农田是这游戏的经营核心，值得一块完整的画面。
+   * 这里用透视排布的田垄 + 逐格作物，点击或按 J 播种，ESC 回基地。
+   */
+  class FarmScene extends Phaser.Scene {
+    constructor() { super('Farm'); }
+
+    create() {
+      this.state = CURRENT_STATE;
+      H.ensureHub(this.state);
+      this.keyboardApi = readKeys(this);
+      this.cursor = 0;
+      this.busy = false;
+
+      paintBackdrop(this, 'farm');
+      this.cameras.main.fadeIn(420, 0, 0, 0);
+
+      const CX = W / 2;
+      // 近排在第 452，三排向上 96 一档 —— 整块田占住画面主体，
+      // 之前放在 GROUND_Y+34 又被前景灌木盖住，几乎看不见
+      const baseY = 452;
+
+      this.plotGeo = [];
+      const rows = 3, cols = 3;
+      for (let r = 0; r < rows; r++) {
+        const depth = r / (rows - 1);              // 0 近 → 1 远
+        const cy = baseY - r * 96;
+        const rowW = 470 - depth * 110;            // 远处更窄
+        const rowH = 74 - depth * 18;
+        for (let c = 0; c < cols; c++) {
+          const cx = CX + (c - 1) * (rowW / 3);
+          this.plotGeo.push({
+            idx: r * cols + c, cx: cx, cy: cy,
+            w: (rowW / 3) - 12, h: rowH, depth: depth,
+          });
+        }
+      }
+
+      // 田地边框（木栅栏，环绕整块田）
+      const fence = this.add.graphics().setDepth(5);
+      fence.lineStyle(3, 0x4d3a29, 0.9);
+      const topY = baseY - 2 * 96 - 44;
+      fence.beginPath();
+      fence.moveTo(CX - 300, topY); fence.lineTo(CX + 300, topY);
+      fence.strokePath();
+      for (let x = -300; x <= 300; x += 30) {
+        this.add.image(CX + x, topY, 'post').setOrigin(0.5, 1).setScale(0.95).setDepth(6);
+      }
+      // 前排栅栏压在画面下缘，不遮挡田块
+      for (let x = -310; x <= 310; x += 28) {
+        this.add.image(CX + x, HGT - 8, 'post').setOrigin(0.5, 1)
+          .setScale(1.35).setDepth(700);
+      }
+
+      // ---- 土块与作物图层 ----
+      this.soilGfx = this.add.graphics().setDepth(10);
+      this.cropLayer = this.add.container(0, 0).setDepth(20);
+      this.hintLayer = this.add.container(0, 0).setDepth(30);
+      this.redrawField();
+
+      // ---- 顶部信息 ----
+      this.hudText = this.add.text(24, 22, '', {
+        fontSize: '13px', color: '#e6eef6', fontFamily: 'sans-serif',
+        backgroundColor: '#0b1117cc', padding: { x: 12, y: 8 }, lineSpacing: 5,
+      }).setDepth(900);
+      this.refreshHud();
+
+      this.add.text(W - 24, 26, '点击田地播种　·　ESC 回基地', {
+        fontSize: '12px', color: '#8fa3b8', fontFamily: 'sans-serif',
+        backgroundColor: '#0b1117aa', padding: { x: 10, y: 6 },
+      }).setOrigin(1, 0).setDepth(900);
+
+      // ---- 点击播种 ----
+      this.input.on('pointerdown', (pointer) => {
+        if (this.busy) return;
+        const idx = this.hitPlot(pointer.x, pointer.y);
+        if (idx >= 0) this.tryPlant(idx);
+      });
+
+      // ---- ESC / J 返回 ----
+      this.input.keyboard.on('keydown-ESC', () => this.leave());
+    }
+
+    hitPlot(px, py) {
+      // 从近到远判定，近的优先（远行画在上面但实际更小）
+      for (let i = this.plotGeo.length - 1; i >= 0; i--) {
+        const g = this.plotGeo[i];
+        if (Math.abs(px - g.cx) <= g.w / 2 + 6 && Math.abs(py - g.cy) <= g.h / 2 + 6) {
+          return g.idx;
+        }
+      }
+      return -1;
+    }
+
+    redrawField() {
+      const g = this.soilGfx;
+      g.clear();
+      this.cropLayer.removeAll(true);
+      this.hintLayer.removeAll(true);
+
+      this.plotGeo.forEach((geo) => {
+        const plot = this.state.farm.plots[geo.idx];
+        const dark = 0.06 + geo.depth * 0.16;
+
+        // 土块：深棕底，犁沟做明暗配对（暗沟 + 亮脊），才像翻耕过的地
+        g.fillStyle(0x2a1f15, 1);
+        g.fillRoundedRect(geo.cx - geo.w / 2, geo.cy - geo.h / 2, geo.w, geo.h, 5);
+        g.fillStyle(0x3b2c1d, 1);
+        g.fillRoundedRect(geo.cx - geo.w / 2 + 1.5, geo.cy - geo.h / 2 + 1.5,
+                          geo.w - 3, geo.h - 3.5, 4);
+
+        const furrows = 5;
+        for (let f = 0; f < furrows; f++) {
+          const fy = geo.cy - geo.h / 2 + 6 + f * (geo.h - 11) / (furrows - 1);
+          g.fillStyle(0x1b140d, 0.72);
+          g.fillRect(geo.cx - geo.w / 2 + 5, fy, geo.w - 10, 3.2);
+          g.fillStyle(0x5a4530, 0.5);
+          g.fillRect(geo.cx - geo.w / 2 + 5, fy + 3.2, geo.w - 10, 1.6);
+        }
+        // 土坷垃：固定位置的斑点，避免每帧随机跳动
+        for (let d = 0; d < 9; d++) {
+          const dx = ((geo.idx * 37 + d * 53) % 100) / 100;
+          const dy = ((geo.idx * 61 + d * 29) % 100) / 100;
+          g.fillStyle(d % 2 ? 0x2a1f15 : 0x4d3a27, 0.55);
+          g.fillCircle(geo.cx - geo.w / 2 + 8 + dx * (geo.w - 16),
+                       geo.cy - geo.h / 2 + 8 + dy * (geo.h - 16), 1.6 + (d % 3) * 0.7);
+        }
+
+        // 边缘加深，做出凹陷
+        g.lineStyle(1.5, 0x241b12, 0.6 + dark);
+        g.strokeRoundedRect(geo.cx - geo.w / 2, geo.cy - geo.h / 2, geo.w, geo.h, 6);
+
+        // 作物
+        if (plot.state === 'growing') {
+          const n = 6;
+          for (let k = 0; k < n; k++) {
+            const px = geo.cx - geo.w * 0.36 + k * (geo.w * 0.144);
+            const py = geo.cy + geo.h * 0.22;
+            const sp = this.add.image(px, py, 'sprout')
+              .setOrigin(0.5, 1);
+            // 刚种下时很小，随生长局数变大
+            const t = plot.growth / C.FARM.runsToMature;
+            sp.setScale((0.75 + t * 0.7) * (0.95 + geo.depth * 0.15));
+            this.cropLayer.add(sp);
+          }
+          const label = this.add.text(geo.cx, geo.cy - geo.h / 2 - 4,
+            '再 ' + (C.FARM.runsToMature - plot.growth) + ' 局', {
+              fontSize: '10px', color: '#b6d18f', fontFamily: 'sans-serif',
+              backgroundColor: '#0b1117aa', padding: { x: 5, y: 2 },
+            }).setOrigin(0.5, 1);
+          this.hintLayer.add(label);
+        } else if (plot.state === 'mature') {
+          const n = 7;
+          for (let k = 0; k < n; k++) {
+            const px = geo.cx - geo.w * 0.36 + k * (geo.w * 0.12);
+            const py = geo.cy + geo.h * 0.2;
+            const cr = this.add.image(px, py, 'crop')
+              .setOrigin(0.5, 1).setScale(1.25 + geo.depth * 0.25);
+            this.tweens.add({ targets: cr, angle: { from: -3, to: 3 },
+              duration: 1400 + k * 90, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
+            this.cropLayer.add(cr);
+          }
+          // 成熟的光
+          const glow = this.add.image(geo.cx, geo.cy, 'glow')
+            .setScale(1.5).setAlpha(0.34).setBlendMode(Phaser.BlendModes.ADD);
+          this.cropLayer.add(glow);
+          const label = this.add.text(geo.cx, geo.cy - geo.h / 2 - 4,
+            '+' + C.FARM.yieldPerPlot + '/局', {
+              fontSize: '10px', color: '#e8b04b', fontFamily: 'sans-serif',
+              backgroundColor: '#0b1117aa', padding: { x: 5, y: 2 },
+            }).setOrigin(0.5, 1);
+          this.hintLayer.add(label);
+        } else {
+          const label = this.add.text(geo.cx, geo.cy, '空', {
+            fontSize: '11px', color: '#6b5a45', fontFamily: 'sans-serif',
+          }).setOrigin(0.5);
+          this.hintLayer.add(label);
+        }
+      });
+    }
+
+    tryPlant(idx) {
+      const r = L.plant(this.state, idx);
+      if (!r.ok) {
+        this.flash(r.reason, false);
+        return;
+      }
+      global.EmberfieldUI.save(this.state);
+      this.redrawField();
+      this.refreshHud();
+      this.flash('已播种', true);
+    }
+
+    flash(msg, good) {
+      if (this.toastText) this.toastText.destroy();
+      this.toastText = this.add.text(W / 2, HGT - 74, msg, {
+        fontSize: '13px', color: good ? '#bfe6a0' : '#ffc7c0',
+        fontFamily: 'sans-serif',
+        backgroundColor: '#0b1117e6', padding: { x: 14, y: 7 },
+      }).setOrigin(0.5).setDepth(950);
+      this.tweens.add({
+        targets: this.toastText, alpha: 0, y: HGT - 62,
+        duration: 1100, delay: 380, onComplete: () => {
+          if (this.toastText) { this.toastText.destroy(); this.toastText = null; }
+        },
+      });
+    }
+
+    refreshHud() {
+      const s = this.state;
+      this.hudText.setText(
+        '铜币  ' + s.meta.coins + '　　种子  ' + s.meta.seeds + '\n' +
+        '成熟田  ' + L.maturePlots(s) + ' / 9　　每局被动  +' + L.passiveIncome(s) + '\n' +
+        '作物需要 ' + C.FARM.runsToMature + ' 局成熟，输掉也算一局'
+      );
+    }
+
+    leave() {
+      if (this.busy) return;
+      this.busy = true;
+      global.EmberfieldUI.save(this.state);
+      this.cameras.main.fadeOut(320, 0, 0, 0);
+      this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('Hub'));
+    }
+
+    update() {
+      if (this.busy) return;
+      const k = this.keyboardApi.keys;
+      if (Phaser.Input.Keyboard.JustDown(k.esc)) this.leave();
+      // J 也可以返回（与基地的操作键一致）
+      if (Phaser.Input.Keyboard.JustDown(k.confirm)) this.leave();
+    }
+  }
+
   // 引导场景：先在所有纹理就绪后再进基地，避免第一帧拿到不存在的纹理而黑屏
   class BootScene extends Phaser.Scene {
     constructor() { super('Boot'); }
@@ -735,11 +1014,12 @@
       parent: parentId,
       backgroundColor: '#141a22',
       scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
-      scene: [BootScene, HubScene, RunScene],
+      scene: [BootScene, HubScene, RunScene, FarmScene],
       audio: { noAudio: true },
     });
     return game;
   }
 
-  global.EmberfieldApp = { boot, BootScene, HubScene, RunScene, buildTextures, toScreen, W, HGT };
+  global.EmberfieldApp = { boot, BootScene, HubScene, RunScene, FarmScene,
+                          buildTextures, toScreen, W, HGT };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

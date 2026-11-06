@@ -153,6 +153,7 @@
       loot: { coins: 0, seeds: 0 },
       effects: [],
       projectiles: [],
+      pickups: [],
       elapsed: 0,
       player: {
         x: C.FIELD_W / 2,
@@ -245,6 +246,7 @@
     stepSpawning(state, run, dt);
     stepEnemies(state, run, dt);
     stepProjectiles(state, run, dt);
+    stepPickups(state, run, dt);
     stepWave(state, run, dt);
 
     if (run.player.hp <= 0 && run.status === 'active') endRun(state, false);
@@ -405,20 +407,64 @@
 
   function killEnemy(state, run, e) {
     e.state = 'dead';
-    const diff = run.diff;
-    run.loot.coins += Math.round(C.LOOT.coinsPerKill * diff.lootMul);
-    if (nextRandom(state) < C.LOOT.seedChance) run.loot.seeds += 1;
+    // 改成掉在地上等玩家去捡（见 LOOT 注释：这是战斗节奏的一部分）
+    run.pickups.push({
+      x: e.x, z: e.z, kind: 'coin',
+      value: Math.round(C.LOOT.coinsPerKill * run.diff.lootMul),
+      life: C.LOOT.pickupLife, bob: nextRandom(state) * 6.28,
+    });
+    if (nextRandom(state) < C.LOOT.seedChance) {
+      run.pickups.push({
+        x: e.x + randRange(state, -14, 14), z: e.z + randRange(state, -10, 10),
+        kind: 'seed', value: 1, life: C.LOOT.pickupLife,
+        bob: nextRandom(state) * 6.28,
+      });
+    }
+  }
+
+  /** 拾取物：玩家靠近即收，超时消失。 */
+  function stepPickups(state, run, dt) {
+    const p = run.player;
+    for (let i = run.pickups.length - 1; i >= 0; i--) {
+      const it = run.pickups[i];
+      it.life -= dt;
+      it.bob += dt * 3.2;
+      const near = Math.abs(it.x - p.x) < C.LOOT.pickupRadiusX
+                && Math.abs(it.z - p.z) < C.LOOT.pickupRadiusZ;
+      if (near) {
+        if (it.kind === 'coin') run.loot.coins += it.value;
+        else run.loot.seeds += it.value;
+        run.pickups.splice(i, 1);
+      } else if (it.life <= 0) {
+        run.pickups.splice(i, 1);
+      }
+    }
+  }
+
+  /** 把场上所有掉落物一次收走（清波时用，避免"清完场却丢了战利品"）。 */
+  function collectAll(state, run) {
+    run.pickups.forEach(function (it) {
+      if (it.kind === 'coin') run.loot.coins += it.value;
+      else run.loot.seeds += it.value;
+    });
+    run.pickups.length = 0;
   }
 
   function stepSpawning(state, run, dt) {
     if (run.waveState !== 'spawning') return;
     if (!run.spawnQueue.length) return;
     run.spawnTimer -= dt;
-    if (run.spawnTimer <= 0) {
+    if (run.spawnTimer > 0) return;
+
+    // 一批 3 只同时出来，批与批之间停顿 —— 比连续滴漏更有推进感
+    const burst = Math.min(C.SPAWN.burstSize, run.spawnQueue.length);
+    for (let i = 0; i < burst; i++) {
       const kind = run.spawnQueue.shift();
       run.enemies.push(makeEnemy(state, kind, run.diff));
-      run.spawnTimer = run.diff.spawnGap;
     }
+    run.spawnTimer = run.spawnQueue.length
+      ? C.SPAWN.burstGap * (run.diff.spawnGap / 1.1)
+      : 0;
   }
 
   function stepEnemies(state, run, dt) {
@@ -590,6 +636,7 @@
     if (run.waveState === 'spawning' && run.spawnQueue.length === 0 && alive === 0) {
       run.waveState = 'break';
       run.breakTimer = C.WAVE_BREAK;
+      collectAll(state, run);
       run.loot.coins += Math.round(C.LOOT.clearBonusCoins * run.diff.lootMul);
       // 清波回血：没有它，难度越高越变成"数学上不可能"而不是"更难"
       run.player.hp = Math.min(run.player.maxHp, run.player.hp + C.WAVE_HEAL);
@@ -667,7 +714,7 @@
     createState, startRun, step, endRun, returnToFarm,
     plant, buyUpgrade, upgradeCost,
     buySkill, skillCost, skillStats, tryCastSkill, currentDamage,
-    stepProjectiles, stepRanged, spawnProjectile,
+    stepProjectiles, stepRanged, spawnProjectile, stepPickups, collectAll,
     playerStats, maturePlots, passiveIncome,
     serialize, deserialize,
     nextRandom, buildWave, makeEnemy,

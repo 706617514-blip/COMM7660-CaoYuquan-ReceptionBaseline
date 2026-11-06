@@ -129,7 +129,21 @@ section('4. 击杀掉落');
   const input = Object.assign({}, INPUT, { attack: true });
   L.step(s, input, DT);
   eq(e.state, 'dead', '血量归零后进入 dead 状态');
-  ok(run.loot.coins > coins0, '击杀后铜币增加', `${coins0} -> ${run.loot.coins}`);
+  // 掉落改为"掉在地上、要走过去捡"，这是战斗节奏的一部分
+  ok(run.pickups.length > 0, '击杀后掉落物出现在场上', run.pickups.length);
+  eq(run.loot.coins, coins0, '战利品不会自动入账（必须先捡）');
+
+  // 走过去捡起来
+  run.player.x = e.x; run.player.z = e.z;
+  L.stepPickups(s, run, DT);
+  ok(run.loot.coins > coins0, '踩到掉落物后铜币入账', `${coins0} -> ${run.loot.coins}`);
+
+  // 清波时应当把没捡的也收走，避免"清完场却丢战利品"
+  run.pickups.push({ x: 200, z: 20, kind: 'coin', value: 7, life: 9, bob: 0 });
+  const beforeCollect = run.loot.coins;
+  L.collectAll(s, run);
+  eq(run.loot.coins, beforeCollect + 7, '清波会收走剩余掉落物');
+  eq(run.pickups.length, 0, '收走后场上清空');
 }
 
 // ---------------------------------------------------------------- 5. 难度影响数值
@@ -342,62 +356,88 @@ section('13. 每个难度都能完整推进且不出现 NaN');
 }
 
 // ---------------------------------------------------------------- 14. 核心循环打通
-section('14. 核心循环可以真的被打通（自动操作通关最低难度）');
+section('14. 核心循环可以真的被打通');
 {
-  const s = L.createState(2026);
-  let wonAt = -1;
-  for (let run = 0; run < 6 && wonAt < 0; run++) {
-    L.startRun(s, 'grass');
-    for (let i = 0; i < 60 * 120 && s.phase === 'run'; i++) {
-      const p = s.run.player;
-      const live = s.run.enemies.filter(e => e.state !== 'dead');
-      const input = Object.assign({}, INPUT);
-      // 先躲弹道：往深度方向侧移，拉开 |dz| 就躲开
-      const projs = (s.run && s.run.projectiles) || [];
-      let dodging = false;
-      for (let q = 0; q < projs.length; q++) {
-        const pr = projs[q];
-        if (Math.abs(pr.x - p.x) < 150 && Math.abs(pr.z - p.z) < 45) {
-          if (pr.z >= p.z) input.down = true; else input.up = true;
-          dodging = true;
-        }
-      }
-      // 会放技能：只躲不打的 bot 打不过远程怪，那不代表"循环不可完成"。
-      const cd = p.cooldowns || {};
-      const hpF = p.hp / p.maxHp;
-      const near = live.filter(e => Math.hypot(e.x - p.x, e.z - p.z) < 130).length;
-      if (hpF < 0.45 && cd.cry === 0) input.cry = true;
-      if (hpF < 0.30 && cd.blink === 0) input.blink = true;
-      if (near >= 2 && cd.whirl === 0) input.whirl = true;
-      if (near >= 3 && cd.slam === 0) input.slam = true;
-      if (live.length >= 4 && cd.nova === 0) input.nova = true;
+  // 早先这一节用的是一个"贴到 6px 才出手"的笨代理，它被打死并不代表循环不可完成。
+  // 改为与平衡测试同款的走位 bot，并用多局统计代替"某一局必须赢"。
+  const DT2 = 1 / 60;
+  function playBot(state) {
+    const p = state.run.player;
+    const i = Object.assign({}, INPUT);
+    const live = state.run.enemies.filter(e => e.state !== 'dead');
+    const cd = p.cooldowns || {};
+    const hpF = p.hp / p.maxHp;
+    const dist = (e) => Math.hypot(e.x - p.x, e.z - p.z);
+    const near = live.filter(e => dist(e) < 130).length;
 
-      if (live.length) {
-        const t = live.reduce((a, b) =>
-          Math.hypot(a.x - p.x, a.z - p.z) <= Math.hypot(b.x - p.x, b.z - p.z) ? a : b);
-        if (t.x < p.x - 6) input.left = true;
-        if (t.x > p.x + 6) input.right = true;
-        if (!dodging) {
-          if (t.z < p.z - 6) input.up = true;
-          if (t.z > p.z + 6) input.down = true;
-        }
-        input.attack = true;
+    const projs = state.run.projectiles || [];
+    let dodging = false;
+    for (let k = 0; k < projs.length; k++) {
+      const pr = projs[k];
+      if (Math.abs(pr.x - p.x) < 150 && Math.abs(pr.z - p.z) < 45) {
+        if (pr.z >= p.z) i.down = true; else i.up = true;
+        dodging = true;
       }
-      L.step(s, input, DT);
     }
-    if (s.lastResult && s.lastResult.won) wonAt = run;
-    // 每局之后在农庄里花掉种子和铜币，验证经营层能真正参与循环
-    for (let i = 0; i < s.farm.plots.length; i++) {
-      if (s.farm.plots[i].state === 'empty' && s.meta.seeds > 0) L.plant(s, i);
+    if (hpF < 0.45 && cd.cry === 0) i.cry = true;
+    if (hpF < 0.30 && cd.blink === 0) i.blink = true;
+    if (near >= 2 && cd.whirl === 0) i.whirl = true;
+    if (near >= 3 && cd.slam === 0) i.slam = true;
+    if (live.length >= 4 && cd.nova === 0) i.nova = true;
+
+    if (!live.length) {
+      // 没敌人时去捡掉落（打 → 捡 → 下一波 的节拍）
+      const pk = state.run.pickups || [];
+      if (pk.length) {
+        const t = pk.reduce((a, b) => dist(a) <= dist(b) ? a : b);
+        if (t.x < p.x - 6) i.left = true;
+        if (t.x > p.x + 6) i.right = true;
+        if (t.z < p.z - 6) i.up = true;
+        if (t.z > p.z + 6) i.down = true;
+      }
+      return i;
     }
-    if (s.meta.coins >= L.upgradeCost(s, 'damage') || 0) L.buyUpgrade(s, 'damage');
-    L.returnToFarm(s);
+    const t = live.reduce((a, b) => dist(a) <= dist(b) ? a : b);
+    const dx = t.x - p.x, dz = t.z - p.z, d = Math.abs(dx);
+    if (!dodging && Math.abs(dz) > 18) { if (dz > 0) i.up = true; else i.down = true; }
+    if (d > 52) { if (dx < 0) i.left = true; else i.right = true; }
+    else if (d < 34) { if (dx < 0) i.right = true; else i.left = true; }
+    if (d < 62 && Math.abs(dz) <= C.ATTACK_DEPTH * 0.85) i.attack = true;
+    return i;
   }
-  ok(wonAt >= 0, '在 6 局内打通了最低难度（核心循环可完成）', `第 ${wonAt + 1} 局`);
-  ok(s.meta.runsCompleted >= 1, '局数被正确累计', s.meta.runsCompleted);
-  ok(s.farm.plots.some(p => p.state !== 'empty'), '农庄在循环中被实际使用',
-     s.farm.plots.map(p => p.state).join(','));
+
+  function playOne(seed, diffId) {
+    const s = L.createState(seed);
+    L.startRun(s, diffId);
+    let t = 0;
+    while (s.phase === 'run' && t < 300) { t += DT2; L.step(s, playBot(s), DT2); }
+    return s;
+  }
+
+  // 最低难度必须稳定可通关：20 次里至少 16 次
+  let wins = 0;
+  for (let k = 1; k <= 20; k++) {
+    const s = playOne(k * 137, 'grass');
+    if (s.lastResult && s.lastResult.won) wins++;
+  }
+  ok(wins >= 16, '最低难度可稳定通关（20 次里胜 ' + wins + ' 次）', wins);
+
+  // 一局打完确实有战利品进账（掉落拾取机制生效）
+  const s2 = playOne(4242, 'grass');
+  ok(s2.lastResult && s2.lastResult.coins > 0, '一局能带回铜币',
+     s2.lastResult && s2.lastResult.coins);
+
+  // 经营层确实参与循环：种下的田会在两局后成熟并开始产出
+  const s3 = L.createState(777);
+  L.plant(s3, 0);
+  L.plant(s3, 1);
+  L.startRun(s3, 'grass'); L.endRun(s3, true);
+  eq(L.maturePlots(s3), 0, '一局后尚未成熟');
+  L.startRun(s3, 'grass'); L.endRun(s3, false);
+  eq(L.maturePlots(s3), 2, '两局后两块田成熟（输掉也算）');
+  ok(L.passiveIncome(s3) > 0, '成熟田开始产生被动收入', L.passiveIncome(s3));
 }
+
 
 // ---------------------------------------------------------------- 15. 难度梯度
 section('15. 难度梯度与经济门控（回归：防止调参把曲线搞平或搞崩）');
