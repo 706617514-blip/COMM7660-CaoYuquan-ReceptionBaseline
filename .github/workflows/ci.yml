@@ -187,10 +187,26 @@ jobs:
         # 应当放行；`lootMul: 2.5` 或 `hpMul = 1.5` 才是把数值写死在逻辑里。
         run: |
           bad=0
-          for f in game/logic.js game/render.js; do
+          # 逐个检查所有游戏源文件。曾经这里写死了 game/render.js，
+          # 该文件后来被删除 —— grep 对不存在的文件返回 2，if 判为 false，
+          # 于是整个检查静默通过，而真正写渲染逻辑的 app.js 从未被检查。
+          # 现在改为：文件必须存在，且必须在清单里。
+          for f in game/logic.js game/hub.js game/profile.js game/app.js; do
+            if [ ! -f "$f" ]; then
+              echo "::error::期望存在的文件缺失: $f（如果已重命名，请同步更新本清单）"
+              bad=1
+              continue
+            fi
             if grep -qE "(lootMul|hpMul|dmgMul|perLevel|yieldPerPlot)[[:space:]]*[:=]" "$f"; then
               echo "::error::$f 里定义了平衡数值，应移到 game/config.js"
               grep -nE "(lootMul|hpMul|dmgMul|perLevel|yieldPerPlot)[[:space:]]*[:=]" "$f"
+              bad=1
+            fi
+          done
+          # 反向检查：config.js 必须确实定义了这些值，否则上面的检查等于没检查
+          for k in lootMul hpMul dmgMul perLevel yieldPerPlot; do
+            if ! grep -q "$k" game/config.js; then
+              echo "::error::game/config.js 里找不到 $k —— 反向校验失败"
               bad=1
             fi
           done
