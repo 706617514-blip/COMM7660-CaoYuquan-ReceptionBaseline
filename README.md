@@ -2,8 +2,12 @@
 
 **Student:** Cao Yuquan — student identifier 26366290
 **Repository:** <https://github.com/706617514-blip/COMM7660-CaoYuquan-ReceptionBaseline>
-**Media product:** Reception Baseline — a base-rate locator for expected Steam reception
-**Intended audience:** small studios and self-publishers preparing a Steam launch
+**Phase 2 media product:** 熔野耕作 / Emberfield — a 2.5D side-scrolling roguelite with a
+farming economy layer, played in the browser (`game/`)
+**Intended audience:** players of short-run action games; the product is a game, not a tool
+**Phase 1 analytics artefact:** Reception Baseline — a Steam reception base-rate locator,
+retained at `product/` and published beside the game at `/phase1/`. This is the analysis the
+game decision was made with, not the Phase 2 product.
 **Collaborator:** `fffchaobu` (Professor Charles Feng) — invited 2026-10-13 — status **accepted**
 (invitation id 337417458, write permission, confirmed on 2026-10-13 via the repository's
 collaborator list). Access is retained through both phases and the review period.
@@ -20,7 +24,12 @@ collaborator list). Access is retained through both phases and the review period
 | Phase | Tag / release | Full commit identifier | Moodle report |
 |---|---|---|---|
 | Phase 1 | `phase1-analytics` tag and GitHub Release | `3e7f65e3b9bac55bc06e5e8641b2707836528891` | `reports/COMM7660_Phase1_report.docx`, attached to the release |
-| Phase 2 | `v0.2-submission` | _(to be recorded at tag time)_ | _(attached to the release)_ |
+| Phase 2, release 1 | `v0.2-mvp` tag and GitHub Release | _(record at tagging)_ | _(attached to the release)_ |
+| Phase 2, final | `v0.2-submission` tag and GitHub Release | _(record at tagging)_ | `reports/COMM7660_Phase2_report.docx`, attached to the release |
+
+> The Phase 2 cells are blank on purpose. A tag and a commit identifier are execution facts;
+> they can only be filled in by creating them. See [release notes](docs/release-notes.md) for
+> the tagging order.
 
 ## Phase 1 review route
 
@@ -48,7 +57,7 @@ python3 analysis/check_report_compliance.py     # exit code 0 = compliant
 
 | Brief requirement | Status |
 |---|---|
-| Report 1,000–1,200 words, excluding access block, references, tables and figures | ✅ ~1,024–1,064 (builder vs independent checker) |
+| Report 1,000–1,200 words, excluding access block, references, tables and figures | ✅ 1,178 as counted by `check_report_compliance.py` reading the finished `.docx` (22 words of headroom) |
 | At most two main tables/figures | ✅ 1 table + 1 figure |
 | Full outputs and appendices belong in GitHub, not the report | ✅ no appendix in the report |
 | Access block: title, name, identifier, phase, repository, collaborator `fffchaobu` + status, release/tag, commit identifier | ✅ all fields present (4 need the student's values) |
@@ -78,10 +87,37 @@ variation.
 
 ## Phase 2 review route
 
-_(populated during Phase 2)_
+**The product is a game.** `game/` is the Phase 2 deliverable: a browser roguelite with a
+farming economy, built because the Phase 1 analysis could justify a *decision* (what to build)
+but could not rescue the tool itself — a percentile with no attached decision is never used.
 
-Working prototype, changes from Phase 1, tests, workflow runs, pilot findings, final
-recommendation.
+1. **Why this product, and not the tool** — the market analysis behind the choice is in
+   `analysis/market/` (486 titles across 9 genres, plus a 108-title targeted sample of the two
+   relevant Steam tags). Summary: `analysis/market/market_summary.txt`. The targeted sample is
+   what reversed the earlier recommendation — see the commit message on the targeted analysis.
+2. **Playable build** — `game/index.html`, served over HTTP (not `file://`). Instructions are
+   on the page. Controls: A/D + W/S + Space, J to attack and to interact, Shift to sprint,
+   U/I/O/K/L for skills, J at the field to enter the farm scene.
+3. **Rules and where they live** — `game/logic.js` is the whole simulation and knows nothing
+   about rendering; `docs/` carries the release record and the rollback procedure.
+4. **Automated checks** — three suites, 212 assertions, all headless:
+   ```bash
+   NODE="/Users/f1gment/Library/Application Support/dsh-desktop/harness/.desktop-bin/node"
+   "$NODE" tests/test_game_logic.js     # rules: 111
+   "$NODE" tests/test_game_page.js      # page wiring under a DOM shim: 41
+   "$NODE" tests/test_game_meta.js      # profiles, hub, farm geometry: 60
+   "$NODE" tests/balance_report.js      # the difficulty ladder, reproducible
+   ```
+5. **Balance** — `tests/balance_report.js` is the only source of truth for win rates. It uses
+   a scripted agent (`tests/bot.js`) that kites and uses skills; treat its numbers as a lower
+   bound, not as a claim about how the game feels.
+6. **Releases and rollback** — [release notes](docs/release-notes.md) and
+   [blocked-defect procedure](docs/blocked-defect-demo.md). The blank cells in the release
+   index are execution facts that only a real tag/run can fill.
+7. **Evidence state, stated plainly** — there is **no user pilot**. Testing so far is developer
+   self-play plus the automated suites. The Phase 2 report must say that in those words.
+8. **Screenshots** — `docs/screenshots/` (hub, run, farm), captured from a headless Electron
+   render of the actual build.
 
 ## Reproducing the analysis
 
@@ -128,11 +164,13 @@ non-`synthetic_` output path.
 | `.agents/skills/` | Reusable project skills |
 | `records/` | Approval, verification, coding, skill-execution and extraction-audit logs |
 | `reports/` | The phase reports |
-| `tests/` | Automated checks |
-| `product/` | Product source. Held at the Phase 1 boundary: the reference distribution, the app, and a standalone build |
-| `media/` | Media assets (Phase 2). Git does not track empty directories, so this appears once the first asset is committed |
-| `.github/workflows/` | CI/CD workflows (Phase 2). Appears once the first workflow is committed |
-| `evaluation/` | Event dictionary and privacy-protected pilot records (Phase 2). Appears once the first record is committed |
+| `game/` | **The Phase 2 product.** The game: `logic.js` (all rules, no rendering), `config.js` (all balance numbers), `hub.js` (base-scene rules), `profile.js` (per-player saves), `app.js` (Phaser presentation), `vendor/phaser.min.js` (vendored, MIT) |
+| `analysis/market/` | The market analysis the game's genre and difficulty choice rests on |
+| `docs/screenshots/` | Headless renders of the current build (hub, combat, farm) |
+| `tests/` | Automated checks: the three game suites, the balance report, and the Phase 1 analysis checks |
+| `product/` | The **Phase 1** analytics artefact: reference distribution, locator app, standalone build. Published at `/phase1/` beside the game |
+| `.github/workflows/` | CI (`ci.yml`) and Pages deployment (`deploy-pages.yml`) |
+| `evaluation/` | Pilot materials: plan, recruitment message, consent, facilitator script, observation sheet. **No records** — no pilot ran |
 
 ## Data and ethics notes
 
