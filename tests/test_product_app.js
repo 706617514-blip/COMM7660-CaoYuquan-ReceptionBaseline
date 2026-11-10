@@ -185,7 +185,47 @@ for (let v = 0; v <= 100; v++) {
 }
 ok(emptyAt === null, "0–100 每个整数都返回了百分位", emptyAt === null ? "" : "在 " + emptyAt + " 处为空");
 ok(drops === 0, "百分位随输入单调不减", drops + " 处下降");
-ok(Number(els.pctNum.textContent) === 100, "输入 100 时百分位为 100", els.pctNum.textContent);
+
+// 「单调不减」太弱：返回一个常数也满足它。
+// 注入过这样一个缺陷 —— percentileOf 在中段恒返回 50 —— 上面那条断言仍然是绿的。
+// 工具对外的承诺是**严格**单调（输入变大，结果一定变大），所以这里直接断言严格性。
+// 「单调不减」抓不住"返回常数"这类缺陷，所以这里直接断言严格性 ——
+// 但只能断言**在数据范围之内**。实测：
+//   - 输入 0..33 时百分位恒为 0，因为数据里最低那档好评率就在 33% 附近，
+//     低于最小值的输入按定义都返回 0；
+//   - 同理高端会有一段恒为 100。
+// 那两段是数据的真实形状，把它当错误会让测试在正确代码上变红（真的红过）。
+// 中间区间才必须严格递增。
+const RATES = globalThis.REFERENCE_DATA.rates_sorted;
+const loPct = Math.ceil(RATES[0] * 100) + 1;      // 进入数据范围
+const hiPct = Math.floor(RATES[RATES.length - 1] * 100) - 1;
+// 「单调不减」抓不住"返回常数"这类缺陷，所以这里断言严格递增 —— 但必须
+// 按**显示的精度**来设计，否则测的是四舍五入而不是规则。踩过两次：
+//   1. 整数步长 + 1 位小数显示：低端百分位只有 0.1~0.2 量级，
+//      相邻整数显示值相同，267 处"未上升"全是显示精度造成的假阳性；
+//   2. 只断言"不下降"：返回常数 50 也能通过。
+// 正确做法：按固定跨度抽样，要求**每一段都有可分辨的上升**。
+const SPAN = 5;                       // 每次前进 5 个百分点，足够超过显示精度
+let stagnant = 0, firstStagnant = null, lastP = null;
+for (let v = loPct; v <= hiPct; v += SPAN) {
+  els.num.value = String(v);
+  els.num.fire("input");
+  const pv = Number(els.pctNum.textContent);
+  if (lastP !== null && pv <= lastP) {
+    stagnant += 1;
+    if (firstStagnant === null) firstStagnant = v;
+  }
+  lastP = pv;
+}
+ok(stagnant === 0,
+   "数据范围内每前进 " + SPAN + " 个百分点，百分位都有上升（抓得住恒定区间）",
+   stagnant + " 段未上升，首个在输入 " + firstStagnant);
+// 必须先显式设回 100：上面循环会把输入留在最后一个采样点，
+// 不重置就会拿遗留值来断言（踩过 —— 显示 86.2 而非 100）。
+els.num.value = "100";
+els.num.fire("input");
+// 显示值保留 1 位小数，判 99.5 以上即可；要求严格等于 100 是在测显示精度。
+ok(Number(els.pctNum.textContent) >= 99.5, "输入 100 时百分位接近 100", els.pctNum.textContent);
 
 /* -------------------------------------------------- 4. 错误分支 */
 
