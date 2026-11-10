@@ -133,13 +133,20 @@ section('4. 击杀掉落');
   ok(run.pickups.length > 0, '击杀后掉落物出现在场上', run.pickups.length);
   eq(run.loot.coins, coins0, '战利品不会自动入账（必须先捡）');
 
-  // 走过去捡起来
+  // 走过去捡起来。注意掉落物要先落地才可拾取，所以要用真实的 step 推进，
+  // 而不是手搓一个 h=0 的对象。
   run.player.x = e.x; run.player.z = e.z;
-  L.stepPickups(s, run, DT);
-  ok(run.loot.coins > coins0, '踩到掉落物后铜币入账', `${coins0} -> ${run.loot.coins}`);
+  for (let i = 0; i < 180 && run.pickups.length; i++) {
+    L.step(s, {}, DT);
+  }
+  ok(run.loot.coins > coins0, '走过去把落地的掉落物捡起来后铜币入账',
+     `${coins0} -> ${run.loot.coins}`);
 
   // 清波时应当把没捡的也收走，避免"清完场却丢战利品"
-  run.pickups.push({ x: 200, z: 20, kind: 'coin', value: 7, life: 9, bob: 0 });
+  // 先清空场上残留，否则断言会把前面击杀掉落的币也算进来
+  run.pickups.length = 0;
+  run.pickups.push({ x: 200, z: 20, kind: 'coin', value: 7, life: 9, bob: 0,
+                     h: 20, vh: 100, vx: 0, vz: 0, grounded: false });
   const beforeCollect = run.loot.coins;
   L.collectAll(s, run);
   eq(run.loot.coins, beforeCollect + 7, '清波会收走剩余掉落物');
@@ -661,6 +668,116 @@ section('17. 裂风斩朝前释放 · Shift 冲刺');
     near(x2 - x1, C.PLAYER_SPEED * 0.5, 2, '松开后 0.5 秒回到常速（无残留惯性）');
     eq(p.sprinting, false, 'sprinting 标记已复位');
   }
+}
+
+// ---------------------------------------------------------------- 18. 三段式普攻
+section('18. 三段式普攻（连击）');
+{
+  const { s, run } = armedRun('wood', 500, 105);
+  const p = run.player;
+  p.facing = 1;
+
+  // (a) 起手：comboStep 从 0 推进到 1，仍然是快招
+  eq(p.comboStep, 0, '开局连击计数为 0');
+  L.step(s, { attack: true }, DT);
+  eq(p.comboStep, 1, '第一次攻击后连击计数为 1');
+  const firstCd = p.attackCd;
+
+  // (b) 连击窗口内再次攻击 → 进入第二段
+  p.attackCd = 0;
+  L.step(s, { attack: true }, DT);
+  eq(p.comboStep, 2, '连击窗口内再次攻击进入第二段');
+
+  // (c) 第三段是收招：伤害更高、硬直更长
+  p.attackCd = 0;
+  const before3 = p.comboStep;
+  L.step(s, { attack: true }, DT);
+  eq(before3, 2, '第三段之前连击计数为 2');
+  eq(p.comboStep, 0, '第三段打完后连击重置为 0');
+  const thirdCd = p.attackCd;
+  ok(thirdCd > firstCd, '第三段硬直长于第一段（快→快→慢的节奏）',
+     `${firstCd.toFixed(2)}s vs ${thirdCd.toFixed(2)}s`);
+
+  // (d) 三段伤害必须递增 —— 否则第三段的慢硬直没有回报，连击就没意义
+  const hitDamageAt = (stepIndex) => {
+    const r = armedRun('wood', 500, 105);
+    const pl = r.run.player;
+    pl.facing = 1;
+    // 把连击推进到指定段（不真的打人）
+    for (let i = 0; i < stepIndex; i++) {
+      pl.attackCd = 0;
+      L.step(r.s, { attack: true }, DT);
+    }
+    pl.attackCd = 0;
+    r.run.enemies.length = 0;
+    const target = addEnemy(r.s, r.run, 540, 105);
+    const before = target.hp;
+    L.step(r.s, { attack: true }, DT);
+    return before - target.hp;
+  };
+  const dmg = [0, 1, 2].map(hitDamageAt);
+  console.log('    三段伤害: ' + dmg.join(' → '));
+  ok(dmg[1] > dmg[0], '第二段伤害高于第一段', `${dmg[0]} → ${dmg[1]}`);
+  ok(dmg[2] > dmg[1] * 1.4, '第三段伤害显著高于第二段（收招的回报）',
+     `${dmg[1]} → ${dmg[2]}`);
+
+  // (e) 长时间不出手，连击会断
+  {
+    const r = armedRun('wood', 500, 105);
+    const pl = r.run.player;
+    L.step(r.s, { attack: true }, DT);
+    eq(pl.comboStep, 1, '打一下后连击为 1');
+    pl.attackCd = 0;
+    const wait = Math.ceil((C.COMBO.window + 0.1) * 60);
+    for (let i = 0; i < wait; i++) L.step(r.s, {}, DT);
+    eq(pl.comboStep, 0, '停手超过窗口后连击断开');
+  }
+
+}
+
+// ---------------------------------------------------------------- 19. 掉落物实体
+section('19. 掉落物作为实体：有落点、会弹出、会沉降');
+{
+  const { s, run } = armedRun('wood', 500, 105);
+  run.player.facing = 1;
+  const e = addEnemy(s, run, 540, 105);
+  e.hp = 1;
+  L.step(s, { attack: true }, DT);
+
+  ok(run.pickups.length > 0, '击杀产生掉落物');
+  const it = run.pickups[0];
+  // 实体感来自：有垂直偏移（弹出抛物线）与缩放阶段，而不是贴地不动
+  ok(typeof it.h === 'number', '掉落物有离地高度 h', typeof it.h);
+  ok(typeof it.vh === 'number', '掉落物有垂直速度 vh', typeof it.vh);
+  ok(it.vh !== 0 || it.h > 0, '掉落物生成时处于弹起状态', `h=${it.h} vh=${it.vh}`);
+
+  // 跑几帧后应当落地（h 归零），并且停住
+  for (let i = 0; i < 120; i++) L.stepPickups(s, run, DT);
+  ok(it.h <= 0.01, '掉落物最终落到地面', it.h);
+  eq(it.vh, 0, '落地后垂直速度归零');
+
+  // 弹出应当有横向散开，而不是全叠在一点
+  const { s: s2, run: r2 } = armedRun('wood', 500, 105);
+  r2.player.facing = 1;
+  // 必须都落在同一条深度线上，否则攻击的深度容差会把它们筛掉
+  for (let k = 0; k < 8; k++) {
+    const t2 = addEnemy(s2, r2, 520 + k * 4, 105);
+    t2.hp = 1;
+  }
+  r2.player.attackCd = 0;
+  r2.player.comboRange = 400;
+  r2.player.comboDamageMul = 99;   // 确保一击必杀，测的是掉落数量而不是伤害
+  L.step(s2, { attack: true }, DT);
+  // 玩家此时就站在尸体堆里，但掉落物**弹在空中时不能被捡**，
+  // 所以这一帧结束应当看到完整的 8 枚铜币，而不是被立刻吸走。
+  const coins = r2.pickups.filter((it2) => it2.kind === 'coin');
+  ok(coins.length === 8, '每只敌人必掉一枚铜币，且空中不可拾取', `${coins.length} / 8`);
+  ok(r2.pickups.every((it2) => it2.grounded === false || it2.h >= 0),
+     '掉落物处于弹出过程中');
+  ok(r2.pickups.length >= 8, '一次击杀多个敌人产生多个掉落物', r2.pickups.length);
+  const xs = r2.pickups.map((p2) => p2.x);
+  ok(new Set(xs.map((v) => Math.round(v))).size > 1, '多个掉落物有各自的落点（不重叠）',
+     xs.map((v) => v.toFixed(0)).join(','));
 }
 
 // ---------------------------------------------------------------- 汇总

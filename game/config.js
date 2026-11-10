@@ -33,6 +33,21 @@ const SPRINT_DEPTH_MULT = 1.35; // 深度轴上冲刺的倍率（比水平收敛
   const GRAVITY = 1500;
   const ATTACK_DURATION = 0.16; // 挥击持续时间
   const ATTACK_COOLDOWN = 0.30;
+
+  /**
+   * 三段式普攻。节奏是 快 → 快 → 慢：
+   *   第 1、2 段出手极快，用来贴上去压血；
+   *   第 3 段是收招，伤害与击退都明显更高，但硬直长，打空就会被惩罚。
+   * 连击窗口内再次按下才接续；超时则回到第 1 段。
+   */
+  const COMBO = {
+    steps: [
+      { damageMul: 1.00, cooldown: 0.26, range: 58, knockback: 120, stun: 0.10 },
+      { damageMul: 1.15, cooldown: 0.28, range: 62, knockback: 180, stun: 0.12 },
+      { damageMul: 1.85, cooldown: 0.62, range: 74, knockback: 460, stun: 0.34 },
+    ],
+    window: 0.55,   // 两段之间允许的间隔
+  };
   const ATTACK_RANGE = 62;      // 前方攻击距离
   const ATTACK_DEPTH = 52;      // 深度容差：|z 差| 超过它就打不中
   const ATTACK_BACK = 14;       // 身后也能蹭到一点
@@ -222,6 +237,7 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
     pickupLife: 16,         // 掉落物存在时间（秒）
     pickupRadiusX: 40,      // 拾取范围
     pickupRadiusZ: 34,
+    pickupGravity: 620,     // 掉落物弹出的重力，决定手感（越大落得越快）
   };
 
   /**
@@ -238,7 +254,7 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
     PLAYER_W, PLAYER_H, PLAYER_SPEED, PLAYER_DEPTH_SPEED,
     SPRINT_MULT, SPRINT_DEPTH_MULT,
     JUMP_V, GRAVITY,
-    ATTACK_DURATION, ATTACK_COOLDOWN, ATTACK_RANGE, ATTACK_DEPTH, ATTACK_BACK,
+    ATTACK_DURATION, ATTACK_COOLDOWN, ATTACK_RANGE, ATTACK_DEPTH, ATTACK_BACK, COMBO,
     INVULN_AFTER_HIT, WAVE_BREAK, WAVE_HEAL,
     BASE_HP, BASE_DAMAGE, BASE_ATTACK_SPEED,
     DIFFICULTIES, ENEMIES, UPGRADES, FARM, LOOT, SKILLS, SKILL_ORDER, SPAWN,

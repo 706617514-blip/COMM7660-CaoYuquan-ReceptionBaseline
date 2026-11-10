@@ -134,6 +134,19 @@
     g.fillCircle(40, 20, 15);
     g.generateTexture('bush', 76, 58);
 
+    // ---- 土粒（播种溅射用）----
+    g.clear();
+    g.fillStyle(0x3b2c1d, 1); g.fillRect(0, 2, 4, 4);
+    g.fillStyle(0x5a4530, 1); g.fillRect(1, 3, 2, 2);
+    g.generateTexture('clod', 4, 8);
+
+    // ---- 种子（带实体感的椭圆 + 高光）----
+    g.clear();
+    g.fillStyle(0x8a6b2f, 1); g.fillEllipse(6, 5, 12, 9);
+    g.fillStyle(0xc9a227, 1); g.fillEllipse(6, 4.4, 11, 8);
+    g.fillStyle(0xf0dfa0, 1); g.fillEllipse(4, 3, 4, 2.4);
+    g.generateTexture('seed', 13, 11);
+
     // ---- 火星粒子 ----
     g.clear();
     g.fillStyle(0xffd9a0, 1); g.fillCircle(3, 3, 2.2);
@@ -610,41 +623,66 @@
       // 玩家看不出"到底打哪里"。
       this.heroSwing.clear();
       if (p.attackTimer > 0) {
-        const t = 1 - p.attackTimer / C.ATTACK_DURATION;   // 0 → 1 推进
+        const t = 1 - p.attackTimer / C.ATTACK_DURATION;
+        // 三段用不同弧线、配色与厚度，让"打到第几段"一眼可辨：
+        //   1 段 上挑（窄、白）　2 段 横扫（宽、青）　3 段 重劈（大、金 + 拖尾）
+        const seg = p.comboSwingStep || 1;
+        const main = seg === 1 ? 0xfffdf2 : (seg === 2 ? 0xc8ecff : 0xffd166);
+        const edge = seg === 1 ? 0xffe9a8 : (seg === 2 ? 0x9ad7ff : 0xfff2c0);
         const cx = ps.sx, cy = ps.sy - 26 * ps.sc;
         const face = p.facing;
-        // 由实际判定框反推：水平 ATTACK_RANGE，深度 ±ATTACK_DEPTH（屏幕上按 Z_TO_Y 压缩）
-        const rOutX = C.ATTACK_RANGE * 1.08 * ps.sc;
-        const rOutY = C.ATTACK_DEPTH * Z_TO_Y * 0.92 * ps.sc;
-        const rInX = rOutX * 0.42, rInY = rOutY * 0.42;
-        const a0 = -0.95 + t * 0.55, a1 = 0.95 + t * 0.55;  // 挥动扫过
+        const reach = p.comboRange || C.ATTACK_RANGE;
+        const rOutX = reach * 1.08 * ps.sc;
+        const rOutY = C.ATTACK_DEPTH * Z_TO_Y * (seg === 3 ? 1.06 : 0.92) * ps.sc;
+        const rInX = rOutX * (seg === 3 ? 0.34 : 0.42);
+        const rInY = rOutY * (seg === 3 ? 0.34 : 0.42);
+        const sweep = seg === 1 ? 0.55 : (seg === 2 ? 1.15 : 1.45);
+        const a0 = -sweep + t * sweep * 0.7, a1 = sweep + t * sweep * 0.7;
 
         const arcPts = (rx, ry) => {
-          const pts = [];
-          for (let i = 0; i <= 14; i++) {
-            const a = a0 + (a1 - a0) * (i / 14);
-            pts.push([cx + Math.cos(a) * rx * face, cy + Math.sin(a) * ry]);
+          const out = [];
+          for (let k = 0; k <= 14; k++) {
+            const a = a0 + (a1 - a0) * (k / 14);
+            out.push([cx + Math.cos(a) * rx * face, cy + Math.sin(a) * ry]);
           }
-          return pts;
+          return out;
         };
         const outer = arcPts(rOutX, rOutY);
         const inner = arcPts(rInX, rInY).reverse();
         const poly = outer.concat(inner);
 
-        // 主体：淡金色半透明
-        this.heroSwing.fillStyle(0xfffdf2, 0.30 * (1 - t * 0.5));
+        this.heroSwing.fillStyle(main, (seg === 3 ? 0.46 : 0.34) * (1 - t * 0.5));
         this.heroSwing.beginPath();
         this.heroSwing.moveTo(poly[0][0], poly[0][1]);
-        for (let i = 1; i < poly.length; i++) this.heroSwing.lineTo(poly[i][0], poly[i][1]);
+        for (let k = 1; k < poly.length; k++) this.heroSwing.lineTo(poly[k][0], poly[k][1]);
         this.heroSwing.closePath();
         this.heroSwing.fillPath();
 
-        // 外缘亮线：让刀光有"边"，不是一团糊
-        this.heroSwing.lineStyle(2.5 * ps.sc, 0xffe9a8, 0.95 * (1 - t * 0.55));
+        this.heroSwing.lineStyle((seg === 3 ? 4 : 2.5) * ps.sc, edge, 0.95 * (1 - t * 0.55));
         this.heroSwing.beginPath();
         this.heroSwing.moveTo(outer[0][0], outer[0][1]);
-        for (let i = 1; i < outer.length; i++) this.heroSwing.lineTo(outer[i][0], outer[i][1]);
+        for (let k = 1; k < outer.length; k++) this.heroSwing.lineTo(outer[k][0], outer[k][1]);
         this.heroSwing.strokePath();
+
+        // 第三段额外拖尾：收招更重，视觉上要有分量
+        if (seg === 3) {
+          // 拖尾只画**已扫过的那一段**，且偏移很小。
+          // 早期让拖尾覆盖整条弧并偏移 0.16 弧度，结果和主体连成一个"碗"。
+          for (let d = 1; d <= 2; d++) {
+            this.heroSwing.lineStyle((4.5 - d * 1.5) * ps.sc, edge, (0.12 / d) * (1 - t));
+            this.heroSwing.beginPath();
+            const from = 0.35;                       // 从弧的中段开始
+            for (let k = 0; k <= 14; k++) {
+              const f = from + (1 - from) * (k / 14);
+              const a = a0 + (a1 - a0) * f - d * 0.055;
+              const px = cx + Math.cos(a) * rOutX * (1 + d * 0.035) * face;
+              const py = cy + Math.sin(a) * rOutY * (1 + d * 0.035);
+              if (k === 0) this.heroSwing.moveTo(px, py);
+              else this.heroSwing.lineTo(px, py);
+            }
+            this.heroSwing.strokePath();
+          }
+        }
       }
 
       // 小怪
@@ -762,20 +800,26 @@
           sp.add([sp.coinG, sp.seedImg]);
           this.pickupPool[i] = sp;
         }
-        const ps2 = toScreen(it.x, it.z, 0);
-        const bob = Math.sin(it.bob) * 3;
+        // 用 h 做真实的抛物线高度：东西是"抛出来"的，不是原地出现的
+        const ps2 = toScreen(it.x, it.z, it.h || 0);
+        const bob = it.grounded ? Math.sin(it.bob) * 2 : 0;
         sp.setVisible(true).setPosition(ps2.sx, ps2.sy + bob).setDepth(1000 - it.z + 3);
-        // 最后 3 秒开始闪烁提示即将消失
         sp.setAlpha(it.life < 3 ? (Math.floor(it.life * 8) % 2 ? 0.35 : 1) : 1);
+        // 未落地时带一点旋转，落地后停正
+        sp.setRotation(it.grounded ? 0 : (it.bob + (it.h || 0) * 0.05));
         sp.coinG.clear();
         sp.seedImg.setVisible(it.kind === 'seed');
         if (it.kind === 'coin') {
+          const sq = it.grounded ? 1 : 0.55 + Math.min(1, (it.h || 0) / 26) * 0.45;
           sp.coinG.fillStyle(0xe8b04b, 1);
-          sp.coinG.fillEllipse(0, -8, 15, 7);
+          sp.coinG.fillEllipse(0, -7, 15, 7 * sq);
           sp.coinG.fillStyle(0xffe08a, 1);
-          sp.coinG.fillEllipse(0, -10, 15, 7);
-          sp.coinG.fillStyle(0xc78f2a, 1);
-          sp.coinG.fillRect(-1.2, -14, 2.4, 8);
+          sp.coinG.fillEllipse(0, -8.5, 15, 6.5 * sq);
+          sp.coinG.fillStyle(0xf7ecc0, 1);
+          sp.coinG.fillEllipse(-3, -10, 4, 2);
+        } else {
+          sp.seedImg.setY(-6 - (it.grounded ? 0 : Math.min(6, (it.h || 0) * 0.2)));
+          sp.seedImg.setScale(0.9);
         }
       });
       for (let i = run.pickups.length; i < this.pickupPool.length; i++) {
@@ -1025,10 +1069,54 @@
         this.flash(r.reason, false);
         return;
       }
+      this.splashSoil(idx);          // 土块溅射：播种要有"翻土"的反馈
       global.EmberfieldUI.save(this.state);
       this.redrawField();
       this.refreshHud();
       this.flash('已播种', true);
+    }
+
+    /**
+     * 播种时的土粒溅射。用一次性 Graphics + 补间，不引入粒子系统，
+     * 因为农场场景只需要几粒土，粒子系统在这里是过度的。
+     */
+    splashSoil(idx) {
+      const geo = this.plotGeo[idx];
+      if (!geo) return;
+      const g = this.add.graphics().setDepth(25);
+      const clods = [];
+      for (let k = 0; k < 14; k++) {
+        clods.push({
+          x: geo.cx + (Math.random() - 0.5) * geo.w * 0.7,
+          y: geo.cy + geo.h * 0.2,
+          vx: (Math.random() - 0.5) * 130,
+          vy: -70 - Math.random() * 110,
+          size: 2 + Math.random() * 3,
+          col: Math.random() < 0.5 ? 0x3b2c1d : 0x5a4530,
+        });
+      }
+      let life = 0;
+      const total = 0.55;
+      const timer = this.time.addEvent({
+        delay: 16, loop: true,
+        callback: () => {
+          life += 0.016;
+          const dt2 = 0.016;
+          g.clear();
+          let alive = 0;
+          clods.forEach((c) => {
+            c.vy += 700 * dt2;
+            c.x += c.vx * dt2;
+            c.y += c.vy * dt2;
+            if (c.y < geo.cy + geo.h * 0.55) {
+              alive += 1;
+              g.fillStyle(c.col, Math.max(0, 1 - life / total));
+              g.fillRect(c.x, c.y, c.size, c.size);
+            }
+          });
+          if (alive === 0 || life >= total) { timer.remove(); g.destroy(); }
+        },
+      });
     }
 
     flash(msg, good) {

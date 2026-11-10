@@ -168,6 +168,8 @@
         invuln: 0,
         swingId: 0,
         hitIds: [],
+        comboStep: 0,
+        comboTimer: 0,
         cooldowns: { whirl: 0, blink: 0, slam: 0, cry: 0, nova: 0 },
         buffTimer: 0,
         casting: null,
@@ -309,12 +311,26 @@
       if (input[k]) tryCastSkill(state, run, p, k);
     });
 
-    // 攻击
+    // 连击窗口倒计时：超时就回到第 1 段
+    if (p.comboTimer > 0) {
+      p.comboTimer = Math.max(0, p.comboTimer - dt);
+      if (p.comboTimer === 0) p.comboStep = 0;
+    }
+
+    // 攻击（三段式：快 → 快 → 慢）
     if (input.attack && p.attackCd === 0) {
+      const step = C.COMBO.steps[Math.min(p.comboStep, C.COMBO.steps.length - 1)];
       p.attackTimer = C.ATTACK_DURATION;
-      p.attackCd = C.ATTACK_COOLDOWN;
+      p.attackCd = step.cooldown;
       p.swingId += 1;
       p.hitIds = [];
+      p.comboDamageMul = step.damageMul;
+      p.comboKnockback = step.knockback;
+      p.comboStun = step.stun;
+      p.comboRange = step.range;
+      p.comboSwingStep = p.comboStep + 1;   // 渲染用：本次挥击是第几段
+      p.comboStep = (p.comboStep + 1) % C.COMBO.steps.length;
+      p.comboTimer = C.COMBO.window;
     }
     if (p.attackTimer > 0) resolveAttack(state, run, p, st);
   }
@@ -354,7 +370,7 @@
         const dist = Math.hypot(e.x - p.x, e.z - p.z);
         if (dist > rad) return;
         if (applyDamage) {
-          e.hp -= dmg;
+          e.hp -= Math.round(dmg);
           e.hitFlash = 0.12;
           if (e.hp <= 0) { killEnemy(state, run, e); return; }
         }
@@ -377,7 +393,7 @@
         const dx = (e.x - p.x) * p.facing;
         if (dx < -C.ATTACK_BACK || dx > range) return;
         if (Math.abs(e.z - p.z) > depth) return;
-        e.hp -= dmg;
+        e.hp -= Math.round(dmg);
         e.hitFlash = 0.12;
         e.vx = p.facing * (def.knockback || 0);
         if (def.stunTime) e.stun = Math.max(e.stun || 0, def.stunTime);
@@ -394,7 +410,7 @@
       run.enemies.forEach(function (e2) {
         if (e2.state === 'dead') return;
         if (distToSegment(e2.x, e2.z, fromX, fromZ, p.x, p.z) <= def.radius) {
-          e2.hp -= dmg;
+          e2.hp -= Math.round(dmg);
           e2.hitFlash = 0.12;
           if (e2.hp <= 0) killEnemy(state, run, e2);
         }
@@ -425,16 +441,20 @@
       if (e.state === 'dead' || p.hitIds.indexOf(e.id) >= 0) continue;
       const dx = (e.x - p.x) * p.facing;
       const dz = Math.abs(e.z - p.z);
-      const inFront = dx > -C.ATTACK_BACK && dx < C.ATTACK_RANGE;
+      const reach = p.comboRange || C.ATTACK_RANGE;
+      const inFront = dx > -C.ATTACK_BACK && dx < reach;
       const sameDepth = dz <= C.ATTACK_DEPTH;
       // 这里原本还有一条 Math.abs(p.h - e.h) < 70 的高度门限，
       // 但最大跳跃高度 = 430²/(2·1500) ≈ 61.6px，条件恒真，是死代码。
       // 已删除：命中判定只看 (x, z)，跳跃不提供额外豁免。
       if (inFront && sameDepth) {
-        e.hp -= currentDamage(state, p);
+        // 取整：三段伤害应当是 12 / 14 / 22 这样的整数，
+        // 浮点数会让伤害数字显示成 13.799999999999997
+        e.hp -= Math.round(currentDamage(state, p) * (p.comboDamageMul || 1));
         e.hitFlash = 0.12;
         p.hitIds.push(e.id);
-        e.vx = p.facing * 420;               // 击退冲量（约 42px 位移）
+        e.vx = p.facing * (p.comboKnockback || 420);
+        if (p.comboStun) e.stun = Math.max(e.stun || 0, p.comboStun);
         if (e.hp <= 0) killEnemy(state, run, e);
       }
     }
@@ -443,18 +463,21 @@
   function killEnemy(state, run, e) {
     e.state = 'dead';
     // 改成掉在地上等玩家去捡（见 LOOT 注释：这是战斗节奏的一部分）
-    run.pickups.push({
-      x: e.x, z: e.z, kind: 'coin',
-      value: Math.round(C.LOOT.coinsPerKill * run.diff.lootMul),
-      life: C.LOOT.pickupLife, bob: nextRandom(state) * 6.28,
-    });
-    if (nextRandom(state) < C.LOOT.seedChance) {
+    // 掉落物是**实体**：从死亡点弹起、抛向一侧，落地后停住。
+    // 旧版本只是贴在原地不动的标记，视觉上没有"东西掉出来"的感觉。
+    const spawn = function (kind, value, spreadX, spreadZ) {
       run.pickups.push({
-        x: e.x + randRange(state, -14, 14), z: e.z + randRange(state, -10, 10),
-        kind: 'seed', value: 1, life: C.LOOT.pickupLife,
-        bob: nextRandom(state) * 6.28,
+        x: e.x, z: e.z, kind: kind, value: value,
+        life: C.LOOT.pickupLife, bob: nextRandom(state) * 6.28,
+        h: 30,                                    // 起始离地高度
+        vh: randRange(state, 90, 150),            // 上抛速度
+        vx: randRange(state, -spreadX, spreadX),  // 横向散开
+        vz: randRange(state, -spreadZ, spreadZ),
+        grounded: false,
       });
-    }
+    };
+    spawn('coin', Math.round(C.LOOT.coinsPerKill * run.diff.lootMul), 90, 55);
+    if (nextRandom(state) < C.LOOT.seedChance) spawn('seed', 1, 110, 70);
   }
 
   /** 拾取物：玩家靠近即收，超时消失。 */
@@ -464,7 +487,29 @@
       const it = run.pickups[i];
       it.life -= dt;
       it.bob += dt * 3.2;
-      const near = Math.abs(it.x - p.x) < C.LOOT.pickupRadiusX
+
+      // 抛物线：未落地时受重力，落地即停（不做弹跳，避免散落物到处滚）
+      if (!it.grounded) {
+        it.vh -= C.LOOT.pickupGravity * dt;
+        it.h += it.vh * dt;
+        it.x += it.vx * dt;
+        it.z += it.vz * dt;
+        it.vx *= Math.exp(-2.2 * dt);
+        it.vz *= Math.exp(-2.2 * dt);
+        if (it.h <= 0) {
+          it.h = 0;
+          it.vh = 0;
+          it.vx = 0;
+          it.vz = 0;
+          it.grounded = true;
+        }
+        it.x = clamp(it.x, 20, C.FIELD_W - 20);
+        it.z = clamp(it.z, 0, C.FIELD_D);
+      }
+      // 只有**落地后**才能被捡起。否则弹在空中的掉落物会立刻被吸走，
+      // 玩家看不到"东西掉出来"的过程 —— 那正是实体感想表达的东西。
+      const near = it.grounded
+                && Math.abs(it.x - p.x) < C.LOOT.pickupRadiusX
                 && Math.abs(it.z - p.z) < C.LOOT.pickupRadiusZ;
       if (near) {
         if (it.kind === 'coin') run.loot.coins += it.value;
