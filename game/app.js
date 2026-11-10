@@ -884,6 +884,14 @@
       if (this.state.phase === 'result') {
         global.EmberfieldUI.showHud(false);
         global.EmberfieldUI.save(this.state);
+        const finishedDiff = run.diff.id;
+        // restart：用同一难度重开一局。原文把 restart 列为游戏形态的必需项。
+        global.EmberfieldUI.setAgainHandler(() => {
+          L.returnToFarm(this.state);
+          L.startRun(this.state, finishedDiff);
+          global.EmberfieldUI.save(this.state);
+          this.scene.restart();
+        });
         global.EmberfieldUI.showResult(this.state, () => {
           L.returnToFarm(this.state);
           this.scene.start('Hub');

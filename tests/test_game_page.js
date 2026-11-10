@@ -262,8 +262,23 @@ let backCalled = false;
 sandbox.EmberfieldUI.showResult(bootedState, () => { backCalled = true; });
 eq(getEl('panelTitle').textContent, '倒下了', '失败标题正确');
 ok(getEl('panelBody').innerHTML.indexOf('只保留一半') >= 0, '失败文案提示战利品减半');
-const backBtn = getEl('panelBody').children.find(c => c.className.indexOf('buy') >= 0);
-ok(!!backBtn, '结算有回基地按钮');
+// 结算界面现在把两个按钮放在一行里（div > button）：
+// 「再来一局」是 restart（原文对游戏形态的必需项），「回基地」去经营。
+// 断言要按 id 找，而不是按位置 —— 按位置找会在布局调整时静默失灵。
+function findByIdIn(node, id) {
+  if (!node) return null;
+  if (node.id === id) return node;
+  for (const c of (node.children || [])) {
+    const hit = findByIdIn(c, id);
+    if (hit) return hit;
+  }
+  return null;
+}
+const panelBody = getEl('panelBody');
+const backBtn = findByIdIn(panelBody, 'btn-back');
+const againBtn = findByIdIn(panelBody, 'btn-again');
+ok(!!backBtn, '结算有「回基地」按钮');
+ok(!!againBtn, '结算有「再来一局」按钮（restart 是游戏形态的必需项）');
 
 // ✕ 必须和"回基地"等价。它会先让 closePanel 走一遍 onClose，
 // 所以 onClose 里不能再调 closePanel（会无限递归，实测栈溢出）。
@@ -274,9 +289,16 @@ ok(backCalled, '结算卡点 ✕ 也会回基地（不会卡在死界面）');
 // 回基地按钮本身也要work
 backCalled = false;
 sandbox.EmberfieldUI.showResult(bootedState, () => { backCalled = true; });
-const backBtn2 = getEl('panelBody').children.find(c => c.className.indexOf('buy') >= 0);
-backBtn2.click();
+findByIdIn(getEl('panelBody'), 'btn-back').click();
 ok(backCalled, '点回基地按钮会触发回调');
+
+// 再来一局会调用场景注册的实现
+let againCalled = false;
+sandbox.EmberfieldUI.setAgainHandler(() => { againCalled = true; });
+sandbox.EmberfieldUI.showResult(bootedState, () => {});
+const again2 = findByIdIn(getEl('panelBody'), 'btn-again');
+ok(!!again2, '再来一局按钮存在');
+if (again2) { again2.click(); ok(againCalled, '点再来一局触发了场景的重开实现'); }
 
 // ---------------------------------------------------------------- 存档码
 section('6. 存档码导入');

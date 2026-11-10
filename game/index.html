@@ -371,12 +371,31 @@
         : (r.passive > 0
             ? '成熟田产出 <b style="color:#e8b04b">' + r.passive + '</b> 铜币<br>' : '')) +
       '</div>';
+    // 两个动作：再来一局（restart 核心循环）与回基地经营。
+    // 原文对游戏形态的要求包含 restart，所以"再来一局"是必需项，不是便利功能。
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;margin-top:14px';
+
+    const again = document.createElement('button');
+    again.className = 'buy';
+    again.id = 'btn-again';
+    again.style.cssText = 'flex:1;padding:11px';
+    again.textContent = '再来一局';
+    again.addEventListener('click', function () {
+      closePanel();
+      globalThis.__emberfieldAgain && globalThis.__emberfieldAgain();
+    });
+
     const back = document.createElement('button');
     back.className = 'buy free';
-    back.style.cssText = 'width:100%;margin-top:14px;padding:11px';
+    back.id = 'btn-back';
+    back.style.cssText = 'flex:1;padding:11px';
     back.textContent = '回基地';
     back.addEventListener('click', function () { closePanel(); onBack(); });
-    body.appendChild(back);
+
+    row.appendChild(again);
+    row.appendChild(back);
+    body.appendChild(row);
     // ✕ 必须和"回基地"等价。之前 onClose 是空函数：
     // 点掉结算卡之后 HUD 已关、RunScene.update 又直接 return，
     // 玩家会卡在一张冻结的战场上，只能刷新页面。
@@ -484,6 +503,9 @@
     openPanel: openPanel, refreshPanel: refreshPanel, closePanel: closePanel,
     toast: toast, showHud: showHud, updateHud: updateHud, showResult: showResult, save: save,
   };
+
+  // RunScene 在结算时会注册"再来一局"的具体实现（重开同难度的一局）
+  window.EmberfieldUI.setAgainHandler = function (fn) { globalThis.__emberfieldAgain = fn; };
 
   // 引擎加载失败时给出明确提示，而不是留一个黑框让人猜。
   if (typeof window.Phaser === 'undefined') {
