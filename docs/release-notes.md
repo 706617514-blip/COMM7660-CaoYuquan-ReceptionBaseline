@@ -179,3 +179,41 @@ tagged source. Do these in order.
 2. `git tag -a v0.2-mvp -m "..."` then `git push origin v0.2-mvp`.
 3. Create the GitHub Release on that tag and attach the report.
 4. Only then treat the tag as frozen.
+
+---
+
+## Rollback rehearsal — executed 2026-11-10
+
+The procedure above was run against the real repository rather than described. The fault was
+simulated, because a real production fault cannot be scheduled; the mechanics of the rollback
+are the real ones.
+
+| Step | Action | Result |
+|---|---|---|
+| 1 | Confirm the rollback target | `v0.2-mvp` exists, points at `55e0447` |
+| 2 | Inject a fault | `SPRINT_MULT` 1.62 → 0.30 in `game/config.js` (commit `0d55bfc`) |
+| 3 | Confirm the fault is visible | `SPRINT_MULT` reads 0.30, so sprinting is slower than walking |
+| 4 | Roll back by restoring the file | `git checkout v0.2-mvp -- game/config.js` (commit `f7dd104`) |
+| 5 | Confirm recovery | all 302 assertions pass: 131 + 60 + 41 + 70 |
+| 6 | Confirm code matches the release | `git diff v0.2-mvp HEAD` shows only the demo record and the improved test |
+
+### Why this rollback rather than a tag revert
+
+The release is a **static site**, so "rolling back" means "make the deployed content match the
+previous release". Two mechanisms were available and the simpler one was chosen:
+
+- **`git revert` of the bad commit, then a normal push** — the preferred route. It keeps history
+  linear and lets the required checks run on the result. It is what was rehearsed.
+- **`git reset --hard` and force-push** — rejected. Branch protection has
+  `allow_force_pushes: false`, so it would fail anyway, and it would also rewrite history on a
+  branch that has already been deployed.
+
+The rehearsal did not need a force-push because the fault was a single-file change, so
+restoring that file from the tag is a normal forward commit.
+
+### What the rehearsal does not prove
+
+The rehearsal shows the **mechanism** works. It does not show that the deployed Pages site
+would be restored within a known time, because the deployment was not re-triggered during the
+rehearsal — the GitHub Pages workflow takes about a minute to publish. Timing that is not
+measured should not be claimed as a number.
