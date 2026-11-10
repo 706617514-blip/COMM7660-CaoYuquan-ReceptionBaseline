@@ -1313,7 +1313,7 @@
       }).setDepth(900);
       this.refreshHud();
 
-      this.add.text(W - 24, 26, '点击田地播种　·　ESC 回基地', {
+      this.add.text(W - 24, 26, '点击空田播种　·　成熟后每局自动产出，无需收取　·　ESC 回基地', {
         fontSize: '12px', color: '#8fa3b8', fontFamily: 'sans-serif',
         backgroundColor: '#0b1117aa', padding: { x: 10, y: 6 },
       }).setOrigin(1, 0).setDepth(900);
@@ -1405,12 +1405,24 @@
           const glow = this.add.image(geo.cx, geo.cy, 'glow')
             .setScale(1.5).setAlpha(0.34).setBlendMode(Phaser.BlendModes.ADD);
           this.cropLayer.add(glow);
+          // 标签写清是"自动"，并加一个金币小图标暗示入账
           const label = this.add.text(geo.cx, geo.cy - geo.h / 2 - 4,
-            '+' + C.FARM.yieldPerPlot + '/局', {
+            '✓ 每局自动 +' + C.FARM.yieldPerPlot, {
               fontSize: '10px', color: '#e8b04b', fontFamily: 'sans-serif',
               backgroundColor: '#0b1117aa', padding: { x: 5, y: 2 },
             }).setOrigin(0.5, 1);
           this.hintLayer.add(label);
+
+          // 飘起的金币数字：成熟田"正在产出"的持续提示
+          const coin = this.add.text(geo.cx, geo.cy + geo.h * 0.1,
+            '+' + C.FARM.yieldPerPlot, {
+              fontSize: '11px', color: '#ffd166', fontFamily: 'sans-serif',
+            }).setOrigin(0.5).setAlpha(0.9);
+          this.cropLayer.add(coin);
+          this.tweens.add({
+            targets: coin, y: coin.y - 16, alpha: 0.25,
+            duration: 1500, yoyo: true, repeat: -1, ease: 'Sine.inOut',
+          });
         } else {
           const label = this.add.text(geo.cx, geo.cy, '空', {
             fontSize: '11px', color: '#6b5a45', fontFamily: 'sans-serif',
@@ -1421,6 +1433,24 @@
     }
 
     tryPlant(idx) {
+      const plot = this.state.farm.plots[idx];
+
+      // 成熟田不需要"收取"：它在每局结束时自动按块数产出。
+      // 之前点它会走 plant() 并弹出"这块田不是空的" —— 玩家由此以为
+      // 有个"收取"动作被漏掉了。现在按状态给出正确的说明。
+      if (plot && plot.state === 'mature') {
+        this.flash('已成熟，每局结算自动产出 ' + C.FARM.yieldPerPlot +
+                   ' 铜币，不需要收取', true);
+        this.pulsePlot(idx);
+        return;
+      }
+      if (plot && plot.state === 'growing') {
+        const left = C.FARM.runsToMature - plot.growth;
+        this.flash('生长中，再下地 ' + left + ' 局成熟', false);
+        this.pulsePlot(idx);
+        return;
+      }
+
       const r = L.plant(this.state, idx);
       if (!r.ok) {
         this.flash(r.reason, false);
@@ -1431,6 +1461,18 @@
       this.redrawField();
       this.refreshHud();
       this.flash('已播种', true);
+    }
+
+    /** 点田时的轻微反馈，让"点到了"看得见。 */
+    pulsePlot(idx) {
+      const geo = this.plotGeo[idx];
+      if (!geo) return;
+      const mark = this.add.ellipse(geo.cx, geo.cy, geo.w, geo.h)
+        .setStrokeStyle(2.5, 0xffe07a, 0.9).setDepth(26);
+      this.tweens.add({
+        targets: mark, scaleX: 1.12, scaleY: 1.12, alpha: 0,
+        duration: 420, onComplete: () => mark.destroy(),
+      });
     }
 
     /**
@@ -1496,7 +1538,8 @@
       this.hudText.setText(
         '铜币  ' + s.meta.coins + '　　种子  ' + s.meta.seeds + '\n' +
         '成熟田  ' + L.maturePlots(s) + ' / 9　　每局被动  +' + L.passiveIncome(s) + '\n' +
-        '作物需要 ' + C.FARM.runsToMature + ' 局成熟，输掉也算一局'
+        '作物需要 ' + C.FARM.runsToMature + ' 局成熟（输掉也算）\n' +
+        '成熟后每局结算自动产出，不需要手动收取'
       );
     }
 

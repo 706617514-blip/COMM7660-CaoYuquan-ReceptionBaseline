@@ -780,6 +780,50 @@ section('19. 掉落物作为实体：有落点、会弹出、会沉降');
      xs.map((v) => v.toFixed(0)).join(','));
 }
 
+// ---------------------------------------------------------------- 20. 成熟田的产出方式
+section('20. 成熟田自动产出，不需要手动收取');
+{
+  // 玩家反馈"种子成熟了没法收取"。查下来逻辑是对的：
+  // 成熟田在**每局结束时**自动产出，界面上没有任何"收取"动作。
+  // 问题是界面没表达清楚，点成熟田还会弹"这块田不是空的" —— 误导。
+  // 这一节先把既有行为锁住，改界面时才不会把正确的逻辑一起改坏。
+  const s = L.createState(31);
+  s.meta.seeds = 3;
+
+  // 种一块、跑两局让它成熟
+  ok(L.plant(s, 0).ok, '种下第一块田');
+  L.startRun(s, 'grass'); L.endRun(s, true);
+  eq(L.maturePlots(s), 0, '一局后尚未成熟');
+  L.startRun(s, 'grass'); L.endRun(s, true);
+  eq(L.maturePlots(s), 1, '两局后成熟');
+
+  // 成熟后：每局结束自动按块数产出，不需要任何"收取"调用
+  const before = s.meta.coins;
+  L.startRun(s, 'grass'); L.endRun(s, true);
+  const gained = s.meta.coins - before;
+  ok(gained >= C.FARM.yieldPerPlot,
+     '成熟田在每局结束时自动产出，无需手动收取', `本局 +${gained}`);
+
+  // 产出随成熟块数线性增长
+  const s2 = L.createState(32);
+  s2.meta.seeds = 9;
+  for (let i = 0; i < 3; i++) L.plant(s2, i);
+  L.startRun(s2, 'grass'); L.endRun(s2, true);
+  L.startRun(s2, 'grass'); L.endRun(s2, true);
+  eq(L.maturePlots(s2), 3, '三块田都成熟');
+  eq(L.passiveIncome(s2), 3 * C.FARM.yieldPerPlot, '被动收入 = 块数 × 每块产出');
+  const b2 = s2.meta.coins;
+  L.startRun(s2, 'grass'); L.endRun(s2, false);      // 输掉也照常产出
+  ok(s2.meta.coins - b2 >= 3 * C.FARM.yieldPerPlot,
+     '输掉的那一局同样产出（作物按局计龄，不按胜负）', s2.meta.coins - b2);
+
+  // 点成熟田应当给出**说明**而不是"这块田不是空的"
+  const r = L.plant(s, 0);
+  ok(!r.ok, '成熟田不能再次播种');
+  ok(r.reason.indexOf('不是空的') >= 0, '（既有）plant 的拒绝理由就是这个字符串',
+     r.reason);
+}
+
 // ---------------------------------------------------------------- 汇总
 console.log('\n' + '='.repeat(56));
 if (fail === 0) {

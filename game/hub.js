@@ -30,7 +30,7 @@
    * reach 是触发半径：玩家 x 落在 [x-reach, x+reach] 内即可交互。
    */
   const ZONES = [
-    { id: 'field', name: '田地', hint: '播种 / 查看作物',
+    { id: 'field', name: '田地', hint: '播种 · 成熟后自动产出',
       x: 150, reach: 95, art: 'field' },
     { id: 'anvil', name: '铁匠铺', hint: '强化攻击、生命、移速',
       x: 400, reach: 80, art: 'anvil' },
