@@ -26,7 +26,7 @@
   const PLAYER_W = 34;
   const PLAYER_H = 54;          // 站立高度，用于跳跃与绘制
   const PLAYER_SPEED = 250;     // 水平速度 px/s
-const SPRINT_MULT = 0.30;   // 模拟故障：冲刺比走路还慢     // 按住 Shift 的冲刺倍率
+const SPRINT_MULT = 1.62;     // 按住 Shift 的冲刺倍率
 const SPRINT_DEPTH_MULT = 1.35; // 深度轴上冲刺的倍率（比水平收敛，避免前后跳变）
   const PLAYER_DEPTH_SPEED = 150;// 深度速度 px/s（比水平慢，符合视觉惯性）
   const JUMP_V = 430;           // 起跳初速度
