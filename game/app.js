@@ -147,6 +147,47 @@
     g.fillStyle(0xf0dfa0, 1); g.fillEllipse(4, 3, 4, 2.4);
     g.generateTexture('seed', 13, 11);
 
+    // ---- 草叶纹理：三种形态，随机选，避免整片草地重复感 ----
+    // 关键：纹理底部必须落在 y=H，这样 origin(0.5,1) 贴地时根部正好在地面线上，
+    // 旋转/缩放时根部不动、叶片摆动。
+    const bladeG = (h, lean, thick, colTop, colBot) => {
+      g.clear();
+      // 用两个三角拼一条有弧度的叶：底部厚、顶部收尖
+      g.fillStyle(colBot, 1);
+      g.fillTriangle(10 - thick / 2, h, 10 + thick / 2, h, 10 + lean * 0.45, h * 0.42);
+      g.fillStyle(colTop, 1);
+      g.fillTriangle(10 - thick / 2 * 0.8, h * 0.5,
+                     10 + thick / 2 * 0.8, h * 0.5,
+                     10 + lean, 0);
+      return 20;
+    };
+    bladeG(34, 5, 5, 0x6f9a4a, 0x3d5a2c);
+    g.generateTexture('bladeA', 20, 34);
+
+    bladeG(46, -7, 6, 0x7fa956, 0x44632f);
+    g.generateTexture('bladeB', 20, 46);
+
+    // 丛生：三片叶子从同一点散开
+    g.clear();
+    g.fillStyle(0x3d5a2c, 1);
+    g.fillTriangle(9, 40, 13, 40, 2, 10);
+    g.fillTriangle(9, 40, 13, 40, 17, 6);
+    g.fillTriangle(9, 40, 13, 40, 24, 14);
+    g.fillStyle(0x6f9a4a, 1);
+    g.fillTriangle(9, 40, 12, 40, 4, 12);
+    g.fillTriangle(10, 40, 13, 40, 16, 8);
+    g.fillStyle(0x8fbf63, 1);
+    g.fillTriangle(10, 40, 12, 40, 20, 16);
+    g.generateTexture('bladeC', 26, 40);
+
+    // 带穗的草：草叶 + 顶端小花穗（近处用，增加细节）
+    g.clear();
+    g.fillStyle(0x3d5a2c, 1); g.fillTriangle(8, 52, 12, 52, 10, 14);
+    g.fillStyle(0x6f9a4a, 1); g.fillTriangle(8, 52, 11, 52, 9, 16);
+    g.fillStyle(0xc9b06a, 1);
+    for (let i = 0; i < 4; i++) g.fillEllipse(10, 8 + i * 3.2, 4.5 - i * 0.4, 2.8);
+    g.generateTexture('bladeS', 20, 52);
+
     // ---- 火星粒子 ----
     g.clear();
     g.fillStyle(0xffd9a0, 1); g.fillCircle(3, 3, 2.2);
@@ -237,6 +278,120 @@
       slam: !!k.slam.isDown, cry: !!k.cry.isDown, nova: !!k.nova.isDown,
     });
     return { keys: k, read: read };
+  }
+
+  // ================================================================ 草（会动）
+  /**
+   * 地面上的草。三个设计要点：
+   *
+   * 1. **按 z 排序**：草的 depth 用 1000 - z，与角色/敌人同一套排序，
+   *    所以靠前的草会盖住靠后的角色，走近草丛时有"拨草"的层次感。
+   * 2. **两道相位不同的风**：一道低频的大风（整片一起倒），一道高频的小风
+   *    （叶尖各自抖）。只有一道正弦会像整体平移，很假。
+   * 3. **每株草自带相位与频率偏移**：同相位会让整片草像一块板子在晃。
+   */
+  const grassFields = new WeakMap();
+
+  function plantGrass(scene, mode) {
+    if (mode === 'farm') return null;      // 农场是耕地，不长草
+    const isHub = mode === 'hub';
+    const blades = [];
+    const rng = (i) => {
+      // 确定性伪随机：同一株草每帧相位一致，不会跳。
+      const x = Math.sin(i * 127.1) * 43758.5453;
+      return x - Math.floor(x);
+    };
+
+    // 密度是关键。第一版只种了 120 根铺满 960px（平均 8px 一根），
+    // 看起来像一根根麦子插在地上，不像草地。
+    // 现在按 z 分带，近处密、远处疏，总量约 5 倍。
+    const BANDS = 7;
+    const perBand = isHub ? 62 : 52;
+    let idx = 0;
+    for (let band = 0; band < BANDS; band++) {
+      const zLo = (band / BANDS) * C.FIELD_D;
+      const zHi = ((band + 1) / BANDS) * C.FIELD_D;
+      // 越近的带种得越多（近处密度 ≈ 2.4 倍于远处）
+      const n = Math.round(perBand * (0.45 + (band / (BANDS - 1)) * 1.15));
+      for (let k = 0; k < n; k++) {
+        idx += 1;
+        const r1 = rng(idx * 5 + 1), r2 = rng(idx * 5 + 2), r3 = rng(idx * 5 + 3);
+        const z = zLo + r1 * (zHi - zLo);
+        const x = r2 * W;
+        const near = z / C.FIELD_D;
+        // 形状分布：多数是单叶，少数是丛与穗，避免整片同款
+        let key = 'bladeA';
+        if (r3 > 0.90) key = 'bladeS';
+        else if (r3 > 0.68) key = 'bladeC';
+        else if (r3 > 0.34) key = 'bladeB';
+        const img = scene.add.image(x, 0, key).setOrigin(0.5, 1);
+        // 尺寸：0.30~0.72，草大致到角色小腿到膝盖。
+        // 叠加 ±18% 的随机高度，否则整片草像一排等高篱笆。
+        const jitter = 0.82 + r3 * 0.36;
+        const scale = (0.30 + near * 0.42) * jitter;
+        img.setScale(scale);
+        // 草是背景，不该抢角色的注意力。
+        // 第一版 alpha 0.42~0.87 且用亮绿，结果整片草比主角还显眼。
+        img.setAlpha(0.20 + near * 0.34);
+        img.setDepth(1000 - z);
+        // 略压暗色调，并让远处的草更淡（空气透视）
+        img.setTint(near < 0.35 ? 0x6d8a58 : 0x8fae6e);
+        blades.push({
+          img: img, x: x, z: z,
+          baseScale: scale,
+          phase: r1 * 6.283,
+          freq: 0.85 + r2 * 0.7,
+          amp: (0.05 + r3 * 0.07) * (0.5 + near),
+          depthT: near,
+        });
+      }
+    }
+
+    // 前景草：贴画面下缘的一层，比可走区域更靠前。
+    // 它不参与游戏逻辑，只负责把画面下缘"封住"，避免草地上方悬空。
+    for (let k = 0; k < 26; k++) {
+      const r1 = rng(9000 + k * 3), r2 = rng(9001 + k * 3), r3 = rng(9002 + k * 3);
+      const img = scene.add.image(r2 * W, HGT + 10, r3 > 0.5 ? 'bladeC' : 'bladeS')
+        .setOrigin(0.5, 1);
+      const scale = 1.35 + r1 * 0.75;
+      img.setScale(scale).setAlpha(0.72).setDepth(4700);   // 在角色之前，盖住下缘
+      img.setTint(0x4f6b42);
+      blades.push({
+        img: img, x: r2 * W, z: -30,
+        baseScale: scale, phase: r1 * 6.283,
+        freq: 1.1 + r2 * 0.5, amp: 0.10, depthT: 1.4, foreground: true,
+      });
+    }
+
+    const state = { blades: blades, t: 0 };
+    grassFields.set(scene, state);
+    return state;
+  }
+
+  /** 每帧更新草。风用两道正弦，坡的相位差由 x 决定，于是风会"扫过"草地。 */
+  function updateGrass(scene, dt) {
+    const st = grassFields.get(scene);
+    if (!st) return;
+    st.t += dt;
+    const t = st.t;
+    for (let i = 0; i < st.blades.length; i++) {
+      const b = st.blades[i];
+      // 低频大风：波沿 x 推进，所以草是依次倒下的
+      const gust = Math.sin(b.x * 0.0065 - t * 1.15 + b.depthT * 1.6);
+      // 高频小抖：叶尖细节
+      const flutter = Math.sin(t * 3.7 * b.freq + b.phase);
+      const angle = gust * b.amp * 1.6 + flutter * b.amp * 0.55;
+      b.img.setRotation(angle);
+      // 风大时略微压扁，模拟被压弯
+      const squash = 1 - Math.abs(angle) * 0.35;
+      b.img.setScale(b.baseScale, b.baseScale * squash);
+      // 前景草固定贴在画布下缘；其余随 z 贴地
+      if (b.foreground) {
+        b.img.setY(HGT + 10);
+      } else {
+        b.img.setY(GROUND_Y - b.z * Z_TO_Y + 4);
+      }
+    }
   }
 
   // ================================================================ 背景
@@ -366,6 +521,10 @@
       });
       em.setDepth(4000);
     }
+
+    // 地面上的草（会随风摆动）。放在背景之后种，所以天然在背景之上。
+    plantGrass(scene, mode);
+
     return g;
   }
 
@@ -517,6 +676,8 @@
       // 基地里同样支持 Shift 冲刺
       H.moveHub(this.state, input, dt, input.sprint ? C.SPRINT_MULT : 1);
 
+      updateGrass(this, dt);
+
       const hub = this.state.hub;
       const s = toScreen(hub.x, hub.z, 0);
       this.hero.setPosition(s.sx, s.sy).setDepth(1000 - hub.z);
@@ -600,6 +761,8 @@
 
       const input = this.keyboardApi.read();
       L.step(this.state, input, dt);
+
+      updateGrass(this, dt);
 
       // 必须每帧清空：Phaser 的 Graphics 会累积绘制命令，
       // 不清的话前一帧的血条、特效、范围圈会全部叠加残留，
@@ -1159,7 +1322,8 @@
       this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('Hub'));
     }
 
-    update() {
+    update(time, delta) {
+      updateGrass(this, Math.min((delta || 16) / 1000, 0.05));
       if (this.busy) return;
       const k = this.keyboardApi.keys;
       if (Phaser.Input.Keyboard.JustDown(k.esc)) this.leave();
@@ -1193,5 +1357,6 @@
   }
 
   global.EmberfieldApp = { boot, BootScene, HubScene, RunScene, FarmScene,
-                          buildTextures, toScreen, W, HGT };
+                          buildTextures, toScreen, W, HGT,
+                          plantGrass: plantGrass, updateGrass: updateGrass };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

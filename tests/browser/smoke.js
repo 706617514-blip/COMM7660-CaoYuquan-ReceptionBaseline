@@ -168,6 +168,38 @@ const SCRIPT = `
       ? window.EmberfieldApp.__scene.scene.key : null;
   }
 
+  // ---- 3b. 草在动（视觉参数化，不是静态贴图）----
+  // 断言"草各自独立摆动"而不是"画面上有草"：
+  // 同相位的整片平移是常见的错误实现，它看起来像一块板子在晃。
+  {
+    const scene = window.EmberfieldApp.__scene;
+    function sampleBlades() {
+      const arr = [];
+      if (!scene || !scene.children) return arr;
+      scene.children.list.forEach((o) => {
+        if (o.texture && ['bladeA', 'bladeB', 'bladeC', 'bladeS'].includes(o.texture.key)) {
+          arr.push(o.rotation);
+        }
+      });
+      return arr;
+    }
+    const a = sampleBlades();
+    out.bladeCount = a.length;
+    await wait(700);
+    const b = sampleBlades();
+    let moved = 0, maxD = 0;
+    for (let i = 0; i < Math.min(a.length, b.length); i++) {
+      const d = Math.abs(b[i] - a[i]);
+      if (d > 0.001) moved++;
+      if (d > maxD) maxD = d;
+    }
+    out.bladesMoved = moved;
+    out.bladeMaxDelta = maxD;
+    // 相位离散度：整片同相位时这个值会很小
+    const nonzero = a.filter((r) => Math.abs(r) > 0.001);
+    out.bladePhases = new Set(nonzero.map((r) => r.toFixed(1))).size;
+  }
+
   // ---- 4. 重开（restart）按钮存在 ----
   out.hasAgainButton = !!document.getElementById('btn-again') ||
                        document.body.innerHTML.indexOf('再来一局') >= 0;
@@ -238,6 +270,13 @@ const SCRIPT = `
   ok(r.enemyCount >= 0, '能读到场上敌人数量', r.enemyCount);
   ok(r.playerHp > 0, '玩家血量是有效数值', r.playerHp);
   ok(r.sceneDuringRun === 'Run', '场景已切换到 Run', r.sceneDuringRun);
+
+  console.log('\n--- 3b. 草在随风摆动 ---');
+  ok(r.bladeCount > 200, '草地上有足够多的草叶', r.bladeCount);
+  ok(r.bladesMoved > r.bladeCount * 0.9, '绝大多数草叶在 0.7 秒内改变了角度',
+     `${r.bladesMoved}/${r.bladeCount}`);
+  ok(r.bladeMaxDelta > 0.05, '摆幅可见（不是几乎不动）', r.bladeMaxDelta);
+  ok(r.bladePhases >= 5, '各叶相位不同（不是整片同相位平移）', r.bladePhases);
 
   console.log('\n--- 4. 重开（restart）---');
   ok(r.hasAgainButton === true, '存在「再来一局」（restart）入口');

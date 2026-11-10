@@ -20,9 +20,12 @@ const path = require('path');
 const C = require(path.join(__dirname, '..', 'game', 'config.js'));
 const B = require(path.join(__dirname, 'bot.js'));
 
-const N = parseInt(process.argv[2], 10) || 40;
-const STRIDES = parseInt(process.argv[3], 10) || 1;
-const STRIDE_SET = [137, 211, 977, 1231].slice(0, STRIDES);
+// 默认 n=40 且跨 4 个种子步长。
+// 单步长 n=20 时，密林会随机给出 0%~80% 的胜率 —— 那不是回归，是小样本噪声。
+// 一个会随运气跳动的平衡报告比没有报告更糟：它会让人去调根本没变的东西。
+const N = Math.max(20, parseInt(process.argv[2], 10) || 40);
+const STRIDES = Math.max(1, parseInt(process.argv[3], 10) || 4);
+const STRIDE_SET = [137, 211, 977, 1231, 1777, 2011].slice(0, STRIDES);
 
 const LEVELS = [
   ['零强化', B.ZERO_UP],
@@ -58,6 +61,7 @@ const zero = C.DIFFICULTIES.map((d) => table['零强化:' + d.id]);
 const monotone = zero.every((v, i) => i === 0 || v <= zero[i - 1] + 0.02);
 console.log('零强化阶梯: ' + zero.map((v) => (v * 100).toFixed(0) + '%').join(' > ')
             + '  → ' + (monotone ? '单调递减 ✓' : '非单调 ✗'));
+console.log('  注：单档 ±8 个百分点内的差异在噪声范围内，不要据此调参。');
 console.log('战利品倍率: '
   + C.DIFFICULTIES.map((d) => d.name + ' ×' + d.lootMul).join(' · '));
 console.log();
