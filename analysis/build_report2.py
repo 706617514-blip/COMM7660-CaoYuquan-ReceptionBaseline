@@ -237,136 +237,78 @@ def build(pilot: Path | None) -> None:
 
     doc.add_paragraph()
 
-    # ---- 1. 与 Phase 1 的衔接 ----
-    heading(doc, "1. What Phase 1 established, and what it did not")
+    # ---- 正文（500–700 词，作业 Table 7 硬要求） ----
+    heading(doc, "1. From Phase 1 to the prototype")
     para(doc,
-         "Phase 1 asked which media product to build and answered it with data. Two findings "
-         "shaped Phase 2. Phase 1 tested five declared attributes of a released title: business "
-         "model, age, review volume, genre and a derived multiplayer flag. Together they "
-         "explained under 1% of the variation in positive review rate (pseudo-R² 0.007). No "
-         "focal coefficient was distinguishable from zero. Popularity is predictable; "
-         "reception largely is not. "
-         "Second, a follow-up market analysis of "
-         f"{v['market_main']} titles across nine genre tags found that reach differences "
-         "between genres were not significant (permutation p = 0.297), while crowding "
-         f"differences were large. A targeted sample of {v['market_targeted']} titles added "
-         "the two tags the prototype would occupy: 123,538 titles sit under Indie, against "
-         "15,215 under Roguelite and 2,582 under Farming Sim.")
+         "Phase 1 tested five declared attributes of a released Steam title: business model, "
+         "age, review volume, genre and a derived multiplayer flag. Together they explained "
+         "under 1% of the variation in positive review rate (pseudo-R² 0.007), and no "
+         "coefficient was distinguishable from zero. A follow-up market sample of "
+         f"{v['market_main']} titles found reach differences between genres not significant "
+         "(permutation p = 0.297) while crowding differed by an order of magnitude, from "
+         "123,538 titles under Indie to 2,582 under Farming Sim. A targeted sample of "
+         f"{v['market_targeted']} titles placed Roguelite and Farming Sim at 22.2% reach, level "
+         "with the best genre at a fraction of the crowding.")
     para(doc,
-         "The consequence for Phase 2 is a change of product form, and it is worth stating "
-         "plainly because it is the largest decision in this phase. Phase 1's own deliverable "
-         "was an analytics tool: a base-rate locator that told a developer where an expected "
-         "reception rate sat in the market. The analysis behind it is sound, but as a product "
-         "it fails its own test — a user reads a percentile and then does nothing differently. "
-         "**A tool that changes no decision is not an MVP.** The market analysis pointed at a "
-         "different, bounded product: a game in a less crowded tag, where the analytical work "
-         "justifies entering a specific niche. Delivering another dashboard would not.")
+         "This changed the product form, the largest decision this phase. Phase 1's "
+         "deliverable was an analytics tool: a base-rate locator. The analysis behind it is "
+         "sound, but a user reads a percentile and then does nothing differently. **A tool that "
+         "changes no decision is not an MVP.** The evidence pointed instead at a game in a less "
+         "crowded tag.")
+    para(doc,
+         "Emberfield is a browser roguelite in which combat funds a farming economy that "
+         "determines how hard the next run can be. Three decisions carry the argument. It has a "
+         "**depth axis**: movement, hit resolution and enemy behaviour all use (x, z), and one "
+         "enemy fires down a straight line in both axes, so stepping in depth is the dodge. "
+         "**Difficulty replaces level count**: four tiers differ in enemy strength and loot, "
+         "making risk and reward one decision. The economy gates the risk tier: measured with a "
+         "scripted agent, the hardest tier is not reliably winnable without upgrades and "
+         "becomes so once they are bought.")
+    para(doc,
+         f"Delivery is complete: {v['assertions_total']} assertions across four "
+         "headless suites, five CI jobs on every push, a live deployment loaded with no console errors, "
+         "two numbered releases, a blocked-failure demonstration, and a rehearsed rollback.")
 
-    # ---- 2. 交付了什么 ----
-    heading(doc, "2. The prototype delivered")
+    heading(doc, "2. Evidence status")
     para(doc,
-         "Emberfield is a browser game: a 2.5D side-scrolling roguelite in which combat funds a "
-         "farming economy that in turn determines how hard the next run can be. Source is in "
-         "`game/`; it runs from a static deployment with no server and no account.")
+         "**User evidence is not yet available.** Participants are recruited and sessions are "
+         "scheduled, but none has taken place, so this report contains no user observations, no "
+         "completion rates and nothing attributed to use. Reporting otherwise would be "
+         "fabrication. What is verified is delivery and mechanics, not reception. Balance "
+         "figures come from a scripted agent and are a lower bound. **Developer self-play is "
+         "not a pilot.**")
     para(doc,
-         "Three design decisions carry the argument. First, the game has a **depth axis**: "
-         "movement, hit resolution and enemy behaviour all use (x, z), and a ranged enemy fires "
-         "a projectile that travels a straight line in both axes, so stepping in depth is the "
-         "dodge. Without that, the axis would be decoration. Second, **difficulty replaces "
-         "level count** — four tiers differ in enemy health, damage, speed, wave count and loot "
-         "multiplier. This makes risk and reward a single decision. Third, the economy "
-         "gates the risk tier: measured with a scripted agent, the "
-         "hardest tier is not reliably winnable without upgrades, and becomes so once they are "
-         "bought.")
+         "One finding changed the work. Preparing the blocked-failure demo, we "
+         "injected a defect and the suite **stayed green**: the assertion was that the "
+         "percentile is monotonic non-decreasing, and a constant function satisfies that. The "
+         "guard did not exist. Three rewrites were needed, each failing on correct code for a "
+         "different reason, before it could catch the defect.")
 
-    three_line_table(doc,
-        ["Artifact", "Verification"],
-        [["Automated tests", f"{v['assertions_total']} assertions across four headless suites"],
-         ["CI", "Five jobs on every push: data rules, model reproduction, product logic, game "
-                "logic and page wiring, report compliance"],
-         ["Deployment", "GitHub Pages, live, loaded in a headless browser with no console errors"],
-         ["Releases", f"{v['tags']} numbered Phase 2 releases, each with a GitHub Release"],
-         ["Blocked failure", "PR #1 — a required check fails and the merge is refused"],
-         ["Rollback", "Rehearsed: fault injected, restored from the tag, all suites green"]])
-    doc.add_paragraph()
-
-    # ---- 3. 证据状态（诚实） ----
-    heading(doc, "3. Evidence status, stated without inflation")
-    if pilot is None:
-        para(doc,
-             "**User evidence is not yet available.** Participants have been recruited and "
-             "sessions are scheduled, but none has taken place, so this report contains no "
-             "user observations, no completion rates and no revision attributed to use. "
-             "Reporting otherwise would be fabrication. The sections below state what would "
-             "have to be true for the Phase 2 decision to change once the sessions run.")
-    else:
-        raise SystemExit("--pilot 已提供，但本版脚本尚未实现试用数据的解析；"
-                         "请先确认记录格式再启用。")
-    para(doc,
-         "What has been verified is delivery and mechanics, not reception. Balance figures come "
-         "from a scripted agent that kites and uses skills; they are a lower bound on what a "
-         "person can achieve and say nothing about how the game feels. Rendering is covered by "
-         "headless screenshots rather than automated tests, so layout and drawing faults were "
-         "caught by looking, not by asserting. **Developer self-play is not a pilot.**")
-
-    # ---- 4. 一个必须先讲的失败 ----
-    heading(doc, "4. A check that did not exist, and the demonstration that proved it")
-    para(doc,
-         "The brief requires evidence of a blocked failure: a check that actually stops a bad "
-         "change. Preparing that demonstration produced the most useful finding of this phase. "
-         "With a defect injected — the percentile function returning a constant across part of "
-         "its range — the test suite **stayed green**. The assertion was that the percentile is "
-         "monotonic non-decreasing, and a constant function satisfies it. The guard protecting "
-         "the tool's central promise did not exist.")
-    para(doc,
-         "Three rewrites were needed before the assertion could catch the defect. Each failed on "
-         "correct code for a different reason. Strict increase at integer steps failed: below "
-         "the data minimum the percentile is legitimately zero for every input. Finer steps "
-         "failed too, because one decimal of display precision cannot resolve a 0.1–0.2 "
-         "magnitude change. That produced 267 false positives. Sampling every five points "
-         "worked. "
-         "The demonstration now records a real pull request where the required check fails and "
-         "the merge state reads as not mergeable.")
-
-    # ---- 5. 决定 ----
-    heading(doc, "5. Decision")
+    heading(doc, "3. Decision")
     para(doc,
          "**Proceed, with revision contingent on the pilot.** The analytical case for the niche "
-         "is the strongest part of the evidence and the delivery chain is complete and "
-         "exercised. What is missing is the one thing that cannot be reasoned into existence: "
-         "whether a person can play it unaided. The pilot is therefore the gate on the "
-         "next decision, not a formality.")
+         "is the strongest evidence available and the delivery chain is complete. What is "
+         "missing cannot be reasoned into existence: whether a person can play it unaided.")
     para(doc,
-         "Conditions that would change this decision are predeclared rather than chosen after "
-         "the fact. If fewer than 70% of sessions produce a completed run, the core loop is not "
-         "communicating. The response is to narrow the first run further, not to add "
-         "features. If fewer than 60% of participants can say that the answer does not depend "
-         "on genre or business model, the disclosure is wrong and the revision is editorial. If "
-         "the depth axis is not used without being explained, the mechanic is invisible and "
-         "belongs in the on-screen prompt. A stop decision remains available and, per the "
-         "brief, would not itself lose marks.")
-    para(doc,
-         "Remaining uncertainty is concentrated in three places: whether the loop reads as a "
-         "loop rather than two disjoint screens; whether the farming layer feels like an "
-         "investment or a chore; and whether the difficulty ladder is legible without a "
-         "tutorial. Resources committed are bounded and declared below.")
+         "Conditions for reconsideration are predeclared rather than chosen after seeing "
+         "results. If fewer than 70% of sessions complete a run, the loop is not communicating; "
+         "the response is to narrow the first run, not to add features. If fewer than 60% of "
+         "participants can say the answer does not depend on genre or business model, the "
+         "disclosure is wrong. If the depth axis goes unused without being explained, the "
+         "mechanic is invisible. A stop decision would not itself lose marks.")
 
-    # ---- 6. 收尾句式（原文要求） ----
-    heading(doc, "6. Recommendation")
+    heading(doc, "4. Recommendation")
     para(doc,
-         "I recommend **finishing the pilot and issuing a revised release** for **players of "
-         "short-run action games**, rather than **pivoting to a different genre or expanding "
-         "the scope**, because the market analysis (reach differences between genres were not "
-         "significant, permutation p = 0.297, while crowding differed by an order of magnitude "
-         "between candidate tags) and the prototype evidence (a complete CI and release chain, "
-         f"{v['assertions_total']} passing assertions, a blocked-failure demonstration and a "
-         "rehearsed rollback) support **the narrower claim that the niche is defensible and the "
-         "delivery is real, while reception remains unmeasured**. My main unresolved assumption "
-         "is **that a new player can complete a run without being told what to do**. I will "
-         "commit **one bounded revision cycle of five to eight pilot sessions followed by a "
-         "single targeted release**, and reconsider if **fewer than 70% of sessions complete a "
-         "run, or if the depth axis is consistently unused** — in either case I would stop "
-         "adding content and cut the first run down instead.")
+         "I recommend finishing the pilot and issuing a revised release for players of "
+         "short-run action games rather than pivoting or expanding scope, because the market "
+         "analysis (reach differences between genres not significant, p = 0.297, while crowding "
+         f"differed by an order of magnitude) and the prototype evidence ({v['assertions_total']} "
+         "passing assertions, deployed, a blocked failure and a rehearsed rollback) support the "
+         "narrower claim that the niche is defensible and the delivery is real while reception "
+         "remains unmeasured. My main unresolved assumption is that a new player can complete a "
+         "run without being told what to do. I will commit one bounded revision cycle of five "
+         "to eight sessions followed by a single targeted release, and reconsider if fewer than "
+         "70% of sessions complete a run or the depth axis is consistently unused.")
 
     doc.save(str(OUT))
     print(f"已写出 {OUT.relative_to(ROOT)}")

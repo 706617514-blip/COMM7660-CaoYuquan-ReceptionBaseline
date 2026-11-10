@@ -242,6 +242,12 @@ jobs:
           process.exit(bad);
           JS
 
+      - name: A test that once failed and was repaired
+        # Table 8 要求 tests/ 里有 failed-and-repaired test。
+        # 这个脚本用纯 Python 复现红→绿循环：旧断言放过缺陷、新断言抓住它、
+        # 新断言不误报正确代码。三步任一不符即失败。
+        run: python analysis/demo_failed_test.py
+
       - name: Balance ladder is monotone
         # 平衡数字必须由仓库内脚本复现（tests/balance_report.js），
         # 不允许存在"报告里写了、仓库里算不出"的胜率。
