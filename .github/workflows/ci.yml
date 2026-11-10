@@ -242,6 +242,11 @@ jobs:
           process.exit(bad);
           JS
 
+      - name: Every referenced texture is generated
+        # 静态检查：Phaser 对未知纹理 key 不报错，只画 missing-texture。
+        # 重做贴图时曾漏掉 glow/acid，画面出现绿框而控制台与测试全绿。
+        run: node tests/check_textures.js
+
       - name: Real-browser smoke test (opening to restart)
         # 原文对 canvas 游戏的要求："check game state and interactions; a screenshot alone
         # is insufficient"。Node + DOM 桩跑不了 Phaser（canvas 为 null，update 不执行），

@@ -48,91 +48,268 @@
   // ================================================================ 纹理
   function buildTextures(scene) {
     const g = scene.add.graphics();
+    // 安全网：每次 generateTexture 前重置描边与填充路径。
+    // Phaser 的 Graphics 会保留当前路径与描边设置，任何一次忘记重置都会让
+    // 残留的 path 进入下一个纹理 —— 表现为场景里出现无来源的方框。
+    const _gen = g.generateTexture.bind(g);
+    g.generateTexture = function (key, w, h) {
+      g.lineStyle(0, 0x000000, 0);
+      _gen(key, w, h);
+    };
 
-    // 主角：斗篷 + 头 + 剑
-    g.clear();
-    g.fillStyle(0x2f4a63, 1); g.fillRoundedRect(6, 22, 28, 32, 6);      // 身体
-    g.fillStyle(0x6fb1e0, 1); g.fillRoundedRect(9, 18, 20, 22, 5);      // 胸甲
-    g.fillStyle(0xf0d3b0, 1); g.fillCircle(20, 12, 10);                 // 头
-    g.fillStyle(0x1b2635, 1); g.fillRoundedRect(11, 3, 18, 8, 4);       // 兜帽
-    g.fillStyle(0xd8e2ec, 1); g.fillRect(30, 16, 4, 26);                // 剑身
-    g.fillStyle(0x8a6b2f, 1); g.fillRect(28, 40, 8, 4);                 // 护手
-    g.generateTexture('hero', 40, 58);
+    // ================= 主角与敌人（重做：加轮廓光、四肢、材质）=================
+    // 之前是纯色圆角矩形叠圆，没有轮廓也没有四肢，像色块拼图。
+    // 现在每个都加：深色描边（把角色从背景里拉出来）、受光面、细分部件。
 
-    // 爬虫：圆胖团子
+    // ---- 主角：兜帽 + 披风 + 四肢 + 剑 ----
     g.clear();
-    g.fillStyle(0x3b5a2a, 1); g.fillEllipse(22, 30, 44, 34);
-    g.fillStyle(0x7ba05b, 1); g.fillEllipse(22, 26, 40, 30);
-    g.fillStyle(0x20301c, 1); g.fillCircle(15, 22, 3.4); g.fillCircle(29, 22, 3.4);
-    g.fillStyle(0xffffff, 0.85); g.fillCircle(16.4, 20.8, 1.2); g.fillCircle(30.4, 20.8, 1.2);
-    g.generateTexture('crawler', 44, 44);
+    // 披风（后层，带褶皱）
+    g.fillStyle(0x1e2f42, 1);
+    g.fillTriangle(18, 20, 4, 54, 34, 54);
+    g.fillStyle(0x27415c, 1);
+    g.fillTriangle(19, 22, 9, 52, 31, 52);
+    // 腿
+    g.fillStyle(0x22303f, 1);
+    g.fillRoundedRect(13, 42, 6, 14, 2.5);
+    g.fillRoundedRect(21, 42, 6, 14, 2.5);
+    // 靴
+    g.fillStyle(0x3a2c20, 1);
+    g.fillRoundedRect(12, 53, 8, 5, 2);
+    g.fillRoundedRect(20, 53, 8, 5, 2);
+    // 躯干
+    g.fillStyle(0x2f4a63, 1);
+    g.fillRoundedRect(10, 20, 20, 25, 5);
+    // 胸甲（受光 + 背光）
+    g.fillStyle(0x6fb1e0, 1);
+    g.fillRoundedRect(12, 22, 16, 16, 4);
+    g.fillStyle(0x9ad0f0, 1);
+    g.fillRoundedRect(13, 23, 6, 10, 3);
+    // 腰带
+    g.fillStyle(0x8a6b2f, 1);
+    g.fillRect(10, 39, 20, 3.5);
+    // 头
+    g.fillStyle(0xf0d3b0, 1);
+    g.fillCircle(20, 13, 9);
+    g.fillStyle(0xffe6c8, 1);
+    g.fillCircle(17.5, 11, 4);                   // 受光面
+    // 兜帽（罩住头顶与后脑）
+    g.fillStyle(0x1b2635, 1);
+    g.beginPath(); g.moveTo(20, 2); g.lineTo(31, 16); g.lineTo(9, 16); g.closePath();
+    g.fillPath();
+    g.fillStyle(0x27384c, 1);
+    g.beginPath(); g.moveTo(19, 4); g.lineTo(28, 15); g.lineTo(11, 15); g.closePath();
+    g.fillPath();
+    // 眼睛
+    g.fillStyle(0x1b1310, 1);
+    g.fillCircle(17, 14, 1.5); g.fillCircle(22.5, 14, 1.5);
+    // 剑（斜挎）
+    g.fillStyle(0xb8c6d4, 1); g.fillRect(30, 14, 3.5, 28);
+    g.fillStyle(0xe8f2fa, 1); g.fillRect(30, 14, 1.4, 28);      // 剑脊高光
+    g.fillStyle(0x2b2016, 1); g.fillRect(28, 40, 8, 4.5);       // 护手
+    g.fillStyle(0x6b5138, 1); g.fillRect(30.5, 43, 3, 7);       // 剑柄
+    g.generateTexture('hero', 40, 60);
 
-    // 冲刺虫：带尖角的三角
+    // ---- 爬虫：六足 + 甲壳分层 ----
     g.clear();
-    g.fillStyle(0x6b2f1c, 1); g.fillTriangle(22, 2, 44, 40, 0, 40);
-    g.fillStyle(0xb8543a, 1); g.fillTriangle(22, 8, 39, 38, 5, 38);
-    g.fillStyle(0xffd9a0, 1); g.fillCircle(17, 26, 3); g.fillCircle(27, 26, 3);
-    g.generateTexture('runner', 44, 42);
+    // 腿（先画，压在身体下）
+    g.lineStyle(2.6, 0x22341a, 1);
+    [[14, 30], [22, 33], [30, 30]].forEach((pt) => {
+      g.beginPath(); g.moveTo(pt[0], pt[1]); g.lineTo(pt[0] - 5, pt[1] + 9); g.strokePath();
+      g.beginPath(); g.moveTo(pt[0], pt[1]); g.lineTo(pt[0] + 5, pt[1] + 9); g.strokePath();
+    });
+    g.lineStyle(0, 0x000000, 0);   // 重置描边，避免残留路径被下一个纹理带走
+    // 甲壳：背光层 → 主体 → 受光层
+    g.fillStyle(0x2a3f1c, 1); g.fillEllipse(23, 29, 46, 34);
+    g.fillStyle(0x6d9450, 1); g.fillEllipse(22, 26, 40, 29);
+    g.fillStyle(0x93b870, 1); g.fillEllipse(18, 21, 20, 13);
+    // 甲片分节
+    g.fillStyle(0x3d5a2a, 0.6);
+    g.fillRect(12, 28, 22, 1.6);
+    g.fillRect(14, 33, 18, 1.6);
+    // 眼（带高光）
+    g.fillStyle(0x18220f, 1);
+    g.fillCircle(15, 21, 3.6); g.fillCircle(29, 21, 3.6);
+    g.fillStyle(0xf0ffd8, 0.9);
+    g.fillCircle(14, 20, 1.3); g.fillCircle(28, 20, 1.3);
+    g.generateTexture('crawler', 46, 46);
 
-    // 吐酸虫：矮胖，带一张吐酸的嘴
+    // ---- 冲刺虫：尖角 + 蓄势的后腿 ----
     g.clear();
-    g.fillStyle(0x2f2a44, 1); g.fillEllipse(24, 32, 46, 32);
-    g.fillStyle(0x5a4d80, 1); g.fillEllipse(24, 28, 42, 28);
-    g.fillStyle(0x9ad06a, 1); g.fillEllipse(24, 36, 15, 9);      // 酸囊
-    g.fillStyle(0x1a1626, 1); g.fillCircle(16, 24, 3.6); g.fillCircle(32, 24, 3.6);
-    g.fillStyle(0xd6a6ff, 1); g.fillCircle(16, 23, 1.4); g.fillCircle(32, 23, 1.4);
-    g.generateTexture('spitter', 48, 48);
+    g.fillStyle(0x5a2515, 1); g.fillTriangle(23, 1, 46, 41, 0, 41);
+    g.fillStyle(0xb8543a, 1); g.fillTriangle(23, 7, 41, 39, 5, 39);
+    g.fillStyle(0xd97a5c, 1); g.fillTriangle(22, 9, 33, 35, 11, 35);   // 受光面
+    // 背刺
+    g.fillStyle(0x3d1a0e, 1);
+    g.fillTriangle(23, 2, 27, 14, 19, 14);
+    // 眼（发光）
+    g.fillStyle(0xffd9a0, 1);
+    g.fillCircle(17, 27, 3.2); g.fillCircle(29, 27, 3.2);
+    g.fillStyle(0xfff4e0, 1);
+    g.fillCircle(17, 26, 1.4); g.fillCircle(29, 26, 1.4);
+    g.generateTexture('runner', 46, 43);
 
-    // 酸弹
+    // ---- 吐酸虫：鼓胀的酸囊 + 皱褶 ----
     g.clear();
-    g.fillStyle(0x9ad06a, 0.35); g.fillCircle(9, 9, 9);
-    g.fillStyle(0xbfe88a, 0.9); g.fillCircle(9, 9, 5.5);
-    g.fillStyle(0xf0ffd8, 1); g.fillCircle(8, 8, 2.4);
-    g.generateTexture('acid', 18, 18);
+    g.fillStyle(0x241f33, 1); g.fillEllipse(25, 33, 48, 33);
+    g.fillStyle(0x5a4d80, 1); g.fillEllipse(24, 29, 43, 29);
+    g.fillStyle(0x7a68a8, 1); g.fillEllipse(19, 23, 21, 13);           // 受光面
+    // 酸囊（带高光）
+    g.fillStyle(0x7ab84a, 1); g.fillEllipse(25, 38, 17, 10);
+    g.fillStyle(0xbfe88a, 1); g.fillEllipse(22, 37, 8, 5);
+    // 皱褶
+    g.fillStyle(0x3b3358, 0.7);
+    g.fillRect(12, 30, 26, 1.4);
+    g.fillRect(15, 34, 20, 1.4);
+    // 眼
+    g.fillStyle(0x140f1e, 1);
+    g.fillCircle(16, 24, 3.7); g.fillCircle(33, 24, 3.7);
+    g.fillStyle(0xd6a6ff, 1);
+    g.fillCircle(16, 23, 1.5); g.fillCircle(33, 23, 1.5);
+    g.generateTexture('spitter', 50, 50);
 
     // 影子
     g.clear();
     g.fillStyle(0x000000, 1); g.fillEllipse(24, 8, 48, 16);
     g.generateTexture('shadow', 48, 16);
 
-    // ---- 树木 A：三层针叶，带明暗，看起来有体积 ----
+    // ---- 光晕：地面光池与成熟作物用 ----
+    // 注意：这个纹理在重做植被时曾被误删，而场景仍在引用它，
+    // Phaser 于是渲染默认的 missing-texture —— 画面上表现为绿色方框。
     g.clear();
-    g.fillStyle(0x141d17, 1); g.fillRect(27, 62, 7, 36);
-    g.fillStyle(0x18241b, 1); g.fillTriangle(30, 4, 12, 44, 48, 44);
-    g.fillStyle(0x1e2e22, 1); g.fillTriangle(30, 20, 8, 64, 52, 64);
-    g.fillStyle(0x263a2a, 1); g.fillTriangle(30, 38, 4, 86, 56, 86);
-    g.fillStyle(0x2f4633, 1); g.fillTriangle(30, 10, 20, 36, 40, 36);
-    g.generateTexture('treeA', 60, 98);
-
-    // ---- 树木 B：枯树，配"熔野"的调子 ----
-    g.clear();
-    g.fillStyle(0x211a16, 1); g.fillRect(28, 10, 5, 86);
-    g.fillStyle(0x2b211a, 1);
-    g.fillTriangle(30, 30, 6, 16, 14, 32);
-    g.fillTriangle(32, 46, 58, 28, 50, 48);
-    g.fillTriangle(30, 20, 16, 4, 24, 22);
-    g.generateTexture('treeB', 64, 98);
-
-    // ---- 围栏木桩 ----
-    g.clear();
-    g.fillStyle(0x3a2c20, 1); g.fillRect(0, 6, 7, 26);
-    g.fillStyle(0x4d3a29, 1); g.fillRect(1, 6, 4, 26);
-    g.generateTexture('post', 7, 32);
-
-    // ---- 光晕（用同心圆近似径向渐变）----
-    g.clear();
-    for (let i = 12; i >= 1; i--) {
-      g.fillStyle(0xffc06a, 0.035 * (13 - i) / 12 + 0.012);
-      g.fillCircle(48, 48, i * 4);
+    for (let i = 26; i >= 1; i--) {
+      const t = i / 26;
+      g.fillStyle(0xffc06a, 0.020 + t * 0.030);
+      g.fillCircle(56, 56, i * 2.1);
     }
-    g.generateTexture('glow', 96, 96);
+    g.generateTexture('glow', 112, 112);
 
-    // ---- 前景灌木（压住画面下缘，避免下方空荡）----
+    // ---- 酸弹 ----
     g.clear();
-    g.fillStyle(0x0e1512, 1);
-    g.fillCircle(26, 34, 24); g.fillCircle(52, 30, 20); g.fillCircle(8, 38, 16);
-    g.fillCircle(40, 20, 15);
-    g.generateTexture('bush', 76, 58);
+    g.fillStyle(0x9ad06a, 0.32); g.fillCircle(9, 9, 9);
+    g.fillStyle(0xbfe88a, 0.92); g.fillCircle(9, 9, 5.5);
+    g.fillStyle(0xf0ffd8, 1); g.fillCircle(7.6, 7.6, 2.4);
+    g.generateTexture('acid', 18, 18);
+
+    // ================= 植被（重做：多层明暗 + 枝干细节 + 轮廓变化）=================
+    // 之前是无细节的三角/圆形堆，远看就是深绿团块。现在加：
+    //   树干分叉、枝叶分层（每层有受光面与背光面）、随机缺口、地衣斑点。
+
+    // 针叶树（近，细节多）
+    (function () {
+      const seed = 3.1;
+      const rnd = (i) => { const x = Math.sin(seed + i * 78.233) * 43758.5453; return x - Math.floor(x); };
+      const h = 104;
+      g.clear();
+      const cx = 34;
+      g.fillStyle(0x2b2016, 1); g.fillRect(cx - 3, h * 0.58, 6, h * 0.42);
+      g.fillStyle(0x1a130d, 1); g.fillRect(cx + 1, h * 0.58, 2, h * 0.42);
+      for (let L = 0; L < 5; L++) {
+        const t = L / 4;
+        const yBase = h * (0.66 - t * 0.50);
+        const w = 27 * (1 - t * 0.60);
+        const yTop = yBase - h * 0.26;
+        g.fillStyle(0x162218, 1);
+        g.fillTriangle(cx + 2.5, yTop + 3, cx - w, yBase + 4, cx + w + 3, yBase + 4);
+        g.fillStyle(0x2c4432, 1);
+        g.fillTriangle(cx, yTop, cx - w + 2, yBase, cx + w - 1, yBase);
+        g.fillStyle(0x415f3e, 0.5);
+        g.fillTriangle(cx - 1, yTop + 4, cx - w + 3, yBase - 1, cx - w * 0.3, yBase - 1);
+      }
+      for (let k = 0; k < 6; k++) {
+        g.fillStyle(0x162218, 0.85);
+        g.fillCircle(cx + (rnd(k) - 0.5) * 40, h * (0.16 + rnd(k + 8) * 0.44), 1.5 + rnd(k + 5) * 2);
+      }
+      g.generateTexture('treeA', 68, h);
+    })();
+
+    // 阔叶树（另一种轮廓，避免整片同款）
+    (function () {
+      const seed = 9.4;
+      const rnd = (i) => { const x = Math.sin(seed + i * 51.77) * 43758.5453; return x - Math.floor(x); };
+      const w = 84, h = 100;
+      g.clear();
+      const cx = w / 2;
+      // 树干 + 两根分叉
+      g.fillStyle(0x3a2c20, 1);
+      g.fillRect(cx - 4, h * 0.52, 8, h * 0.48);
+      g.fillRect(cx - 13, h * 0.56, 13, 5);
+      g.fillRect(cx + 1, h * 0.62, 12, 5);
+      g.fillStyle(0x241a12, 1);
+      g.fillRect(cx + 2, h * 0.52, 2.5, h * 0.48);
+      // 树冠：一圈重叠的椭圆，每个带受光面
+      const blobs = [
+        [cx - 16, 30, 22, 15], [cx + 15, 26, 20, 14], [cx, 16, 24, 16],
+        [cx - 5, 38, 26, 14], [cx + 12, 44, 18, 11], [cx - 20, 44, 17, 10],
+      ];
+      blobs.forEach((b0, i) => {
+        g.fillStyle(0x1b2a1d, 1);
+        g.fillEllipse(b0[0] + 2, b0[1] + 3, b0[2] * 2, b0[3] * 2);
+      });
+      blobs.forEach((b0, i) => {
+        const lit = i % 3 === 0 ? 0x4a6b40 : 0x36512f;
+        g.fillStyle(lit, 1);
+        g.fillEllipse(b0[0], b0[1], b0[2] * 2 - 3, b0[3] * 2 - 3);
+      });
+      blobs.forEach((b0, i) => {
+        if (i % 2) return;
+        g.fillStyle(0x5c8148, 0.42);
+        g.fillEllipse(b0[0] - b0[2] * 0.3, b0[1] - b0[3] * 0.4, b0[2] * 0.9, b0[3] * 0.7);
+      });
+      g.generateTexture('treeB', w, h);
+    })();
+
+    // 灌木：现在带受光面、枝条和浆果，不再是黑团
+    (function () {
+      const seed = 5.5;
+      const rnd = (i) => { const x = Math.sin(seed + i * 39.31) * 43758.5453; return x - Math.floor(x); };
+      const w = 92, h = 66;
+      g.clear();
+      // 枝条先画，从底部散开
+      for (let k = 0; k < 5; k++) {
+        const bx = 18 + k * 14;
+        g.lineStyle(2.2, 0x2a2016, 1);
+        g.beginPath();
+        g.moveTo(bx, h - 6);
+        g.lineTo(bx + (rnd(k) - 0.5) * 22, h * 0.42);
+        g.strokePath();
+      }
+      // 画完枝条必须重置：残留路径会被下一次 generateTexture 一起渲染，
+      // 在场景里表现为莫名其妙的方框（实测出现过绿色描边框）。
+      g.lineStyle(0, 0x000000, 0);
+      const lumps = [
+        [22, 40, 20, 15], [46, 32, 23, 17], [70, 42, 18, 13],
+        [34, 24, 17, 12], [58, 20, 16, 11], [12, 46, 13, 10],
+      ];
+      lumps.forEach((b0) => {
+        g.fillStyle(0x141f16, 1);
+        g.fillEllipse(b0[0] + 2, b0[1] + 3, b0[2] * 2, b0[3] * 2);
+      });
+      lumps.forEach((b0, i) => {
+        g.fillStyle(i % 2 ? 0x2e4529 : 0x38542f, 1);
+        g.fillEllipse(b0[0], b0[1], b0[2] * 2 - 3, b0[3] * 2 - 3);
+      });
+      lumps.forEach((b0, i) => {
+        if (i % 2) return;
+        g.fillStyle(0x51733f, 0.5);
+        g.fillEllipse(b0[0] - b0[2] * 0.35, b0[1] - b0[3] * 0.45, b0[2] * 0.95, b0[3] * 0.7);
+      });
+      // 浆果
+      for (let k = 0; k < 5; k++) {
+        g.fillStyle(0x8a3a3a, 1);
+        g.fillCircle(16 + rnd(k + 30) * 60, 22 + rnd(k + 40) * 22, 2.1);
+      }
+      g.generateTexture('bush', w, h);
+    })();
+
+    // 木桩：加木纹与顶面，不再是一根扁矩形
+    g.clear();
+    g.fillStyle(0x2e2318, 1); g.fillRect(0, 4, 8, 28);
+    g.fillStyle(0x4d3a29, 1); g.fillRect(1, 4, 5.5, 28);
+    g.fillStyle(0x6b5138, 1); g.fillRect(1.5, 4, 2, 28);          // 受光木纹
+    g.fillStyle(0x8a6b46, 1); g.fillEllipse(4, 4, 7, 3.2);        // 顶面
+    g.fillStyle(0x2e2318, 1); g.fillRect(2, 12, 4, 1.2);          // 纹理
+    g.fillRect(2, 20, 4, 1.2);
+    g.generateTexture('post', 8, 34);
 
     // ---- 土粒（播种溅射用）----
     g.clear();
@@ -439,9 +616,11 @@
       const depthT = (i % 4) / 3;                     // 0..1
       const sc = 0.62 + depthT * 0.5;
       const y = zFar + 6 + depthT * 26;
-      scene.add.image(30 + i * 62 + (i % 3) * 9, y, key)
-        .setOrigin(0.5, 1).setScale(sc).setAlpha(0.32 + depthT * 0.42)
+      const tree = scene.add.image(30 + i * 62 + (i % 3) * 9, y, key)
+        .setOrigin(0.5, 1).setScale(sc).setAlpha(0.30 + depthT * 0.38)
         .setDepth(-900 + i);
+      // 远树统一压暗并偏冷，制造空气透视；否则新加的细节会显得离得很近
+      tree.setTint(depthT < 0.5 ? 0x2a3a30 : 0x3d5142);
     }
 
     // ---- 地面：景深带 + 横向分道，让"能前后走"看得见 ----
@@ -492,11 +671,16 @@
 
     // ---- 前景剪影：贴在画布下缘，让画面有"近处"这一层 ----
     // 农场模式不画：会挡住最靠前的一排田
-    for (let i = 0; mode !== 'farm' && i < 7; i++) {
-      const bx = -20 + i * 165 + (i % 2) * 40;
-      scene.add.image(bx, HGT + 6, 'bush')
-        .setOrigin(0.5, 1).setScale(1.5 + (i % 3) * 0.45)
-        .setAlpha(0.9).setDepth(4800 + i);
+    // 前景剪影：新灌木纹理有受光面和浆果，直接用会显得"飘"在草地上，
+    // 而且 1.5~2.4 倍缩放会堵住整个下缘。剪影层应当更暗、更小、更靠下。
+    for (let i = 0; mode !== 'farm' && i < 6; i++) {
+      const bx = -10 + i * 180 + (i % 2) * 46;
+      const img = scene.add.image(bx, HGT + 26, 'bush')
+        .setOrigin(0.5, 1).setScale(1.15 + (i % 3) * 0.3)
+        .setDepth(4800 + i);
+      // 压成暗剪影：保持轮廓、去掉落差，才不会和明亮的草地抢注意力
+      img.setTint(0x2a3a26);
+      img.setAlpha(0.85);
     }
 
     // ---- 底部柔化（不是黑色板子，是渐变）----
@@ -545,9 +729,11 @@
         const y = GROUND_Y - (H.HUB_D / 2) * Z_TO_Y;
 
         // 地面光池（ADD 混合，成本极低但质感提升明显）
+        // 光池：给设施一个暖色地面反光。缩放与透明度都要克制，
+        // 第一版 2.4~3.4 倍 + alpha 0.42 看起来像四个探照灯。
         const pool = this.add.image(z.x, y + 8, 'glow')
-          .setScale(z.art === 'field' ? 3.4 : 2.4)
-          .setAlpha(0.42)
+          .setScale(z.art === 'field' ? 1.5 : 1.15)
+          .setAlpha(0.22)
           .setBlendMode(Phaser.BlendModes.ADD)
           .setDepth(2);
 
