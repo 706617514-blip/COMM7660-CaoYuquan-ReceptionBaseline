@@ -137,7 +137,9 @@ the repository and the GitHub API.
 | Defect commit | `51acccd` — `percentileOf()` returns a constant 50 for inputs in (0.5, 0.9) |
 | Failing check | **Product data and page logic** (job [129603748389](https://github.com/706617514-blip/COMM7660-CaoYuquan-ReceptionBaseline/actions/runs/42747676680/job/129603748389)) |
 | Other four checks | pass (Data rules, Model reproduces, Game logic, Report complies) |
-| Merge state | **`BLOCKED`** — verified via `gh pr view 1 --json mergeStateStatus` |
+| Merge state at first observation | **`BLOCKED`** |
+| Merge state later | **`BEHIND`** — see the note below |
+| Merge state now | **not mergeable, for two independent reasons** |
 | Date | 2026-11-10 |
 
 ### Branch protection actually enabled
@@ -149,9 +151,23 @@ A red check is only a warning unless something refuses the merge. Protection was
 - `allow_force_pushes: false`, `allow_deletions: false`
 - `enforce_admins: false` — deliberately, so the single maintainer is not locked out
 
-With that in place `gh pr view 1` reports `mergeable: MERGEABLE` but
-`mergeStateStatus: BLOCKED`. The two together are the evidence: GitHub considers the branch
-mergeable in principle and refuses it because a required check failed.
+With that in place `gh pr view 1` reported `mergeable: MERGEABLE` but
+`mergeStateStatus: BLOCKED`. The two together are the evidence: GitHub considered the branch
+mergeable in principle and refused it because a required check failed.
+
+**The status label changed within the hour, and the record has to say so.** Once `main`
+advanced, `mergeStateStatus` became `BEHIND` — because `strict: true` also requires the branch
+to be up to date before merging. Two facts hold simultaneously and both independently prevent
+the merge:
+
+- `Product data and page logic` is **failing** on the branch, which does not change when the
+  branch is updated, because the defect is in the code;
+- the branch is **behind** `main`, which would resolve by merging `main` in — and would then
+  immediately return to `BLOCKED` on the same failing check.
+
+Quoting `BLOCKED` alone as the permanent state would be inaccurate. The durable claim is
+narrower and better: **this pull request cannot be merged while the required check fails, and
+the check does fail.**
 
 ### The failure message names the defect, not a coincidence
 
@@ -184,6 +200,15 @@ test "works":
 
 Red-green verified rather than asserted: 70 assertions green on `main` (`dd031e9`), 2 red on
 the defect branch.
+
+### Reproducing the current state
+
+```bash
+gh pr view 1 --json mergeStateStatus,mergeable       # not mergeable
+gh pr checks 1                                       # Product data and page logic = fail
+gh api repos/706617514-blip/COMM7660-CaoYuquan-ReceptionBaseline/branches/main/protection \
+  --jq '.required_status_checks | {strict, checks: [.checks[].context]}'
+```
 
 ### The branch is left in place
 
