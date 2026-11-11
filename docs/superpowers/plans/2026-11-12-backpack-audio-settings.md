@@ -608,7 +608,9 @@ Expected: FAIL —— `Cannot find module` 或 `L.buyBagPage is not a function`�
 const bi = bagIndexOfId(state, id);
 const lv = bi >= 0 ? (state.meta.bag[bi].level || 1) : 1;
 ```
-（`bagIndexOfId` 需从 `logic.js` 导出；Task 2 已有该函数，确认它在 `API` 里。）
+（**实测：`bagIndexOfId` 定义在 `game/logic.js:465`，但 Task 2 的 `API` 导出块里只有
+`bagAdd, bagRemove, bagAt, bagCount, bagCapacity, bagIndexOfUid, bagEntry, nextUid` ——
+**没有 `bagIndexOfId`**。本任务必须把它加进导出，否则 `hub.js` 拿不到。）
 
 **② `game/logic.js` 三个满包静默吞件**：
 - `buyEquipment`（`:497`）：`if (bagAdd(state, id, 1) === -1) return { ok: false, reason: '背包已满' };`
