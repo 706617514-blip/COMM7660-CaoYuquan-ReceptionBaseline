@@ -814,6 +814,20 @@ const SCRIPT = `
     await wait(200);
     const confirm0 = document.querySelector('#bag .confirm-ok');
     out.batchConfirmDisabledWhenEmpty = !!(confirm0 && confirm0.disabled);
+    // 批量条几何（Task 16）。上一版全绿是因为 .click() 不经过命中测试：
+    // 右栏只有 267px，这条 bar 的内容要 334px，被 #bag{overflow:hidden} 裁掉，
+    // 「确认」「取消」画在面板外，真鼠标点上去命中的是 BODY。
+    // 这里量的是几何与命中，不看 .click() 的返回值。
+    const barZero = document.getElementById('bag-batchbar');
+    const bagZero = document.getElementById('bag').getBoundingClientRect();
+    out.batchBarZero = barZero ? {
+      w: barZero.clientWidth,
+      scroll: barZero.scrollWidth,
+      left: Math.round(barZero.getBoundingClientRect().left),
+      right: Math.round(barZero.getBoundingClientRect().right),
+      panelLeft: Math.round(bagZero.left),
+      panelRight: Math.round(bagZero.right),
+    } : null;
     const pick = document.querySelector('#bag [data-act="pick-dups"]');
     out.pickDupsBtn = !!pick;
     if (pick) { pick.click(); await wait(200); }
@@ -824,7 +838,61 @@ const SCRIPT = `
     out.batchExpectedTotal = Lg.sellValue('ironHelm', 1) + Lg.sellValue('ironHelm', 2);
     out.batchUnitPrice = Lg.sellValue('ironHelm', 1);
     out.batchCells = document.querySelectorAll('#bag .cell').length;
+    // 选中两件之后量：整条 bar 的左右缘、两个按钮的右缘、按钮中心命中谁。
+    const barSel = document.getElementById('bag-batchbar');
+    const bagSel = document.getElementById('bag').getBoundingClientRect();
+    const sumSel = document.getElementById('bag-sum');
+    const okSel = document.querySelector('#bag .confirm-ok');
+    const cancelSel = document.querySelector('#bag [data-act="batch-cancel"]');
+    const barBox = barSel ? barSel.getBoundingClientRect() : null;
+    out.batchBarSel = barSel ? {
+      w: barSel.clientWidth,
+      scroll: barSel.scrollWidth,
+      left: Math.round(barBox.left),
+      right: Math.round(barBox.right),
+      panelLeft: Math.round(bagSel.left),
+      panelRight: Math.round(bagSel.right),
+    } : null;
+    out.batchBarRight = barBox ? Math.round(barBox.right) : null;
+    out.batchBagRight = Math.round(bagSel.right);
+    out.batchSumBox = sumSel ? {
+      scroll: sumSel.scrollWidth,
+      client: sumSel.clientWidth,
+      right: Math.round(sumSel.getBoundingClientRect().right),
+    } : null;
+    // 命中测试用按钮矩形中心。elementFromPoint 只看指针能落到的元素，
+    // 被 overflow:hidden 裁到面板外的部分命中的是 BODY —— 这正是"点不到"。
+    const centerHit = function (el) {
+      if (!el) return { self: false, tag: 'null' };
+      const r = el.getBoundingClientRect();
+      const h = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2);
+      if (!h) return { self: false, tag: 'null' };
+      return { self: h === el || el.contains(h), tag: h.id || h.className || h.tagName };
+    };
+    const okHit = centerHit(okSel);
+    const cnHit = centerHit(cancelSel);
+    out.batchOkHit = okHit.self;
+    out.batchOkHitTag = String(okHit.tag);
+    out.batchCancelHit = cnHit.self;
+    out.batchCancelHitTag = String(cnHit.tag);
+    out.batchOkRight = okSel ? Math.round(okSel.getBoundingClientRect().right) : null;
+    out.batchCancelRight = cancelSel
+      ? Math.round(cancelSel.getBoundingClientRect().right) : null;
+    // 反证：批量态下分页条必须还是隐藏的（两条 bar 占同一个槽位、互斥）。
+    out.batchPageBarDisplay = getComputedStyle(
+      document.getElementById('bag-pagebar')).display;
+    // 不许"修好一条 bar、挤掉一行格子"：第 7 行整行仍在面板内。
+    const cellsSel = document.querySelectorAll('#bag .cell');
+    const lastCellSel = cellsSel[cellsSel.length - 1];
+    out.batchLastRowInside = lastCellSel
+      ? lastCellSel.getBoundingClientRect().bottom <= bagSel.bottom + 0.5 : null;
+    out.batchGridH = Math.round(
+      document.getElementById('bag-grid').getBoundingClientRect().height);
     if (confirm1 && !confirm1.disabled) { confirm1.click(); await wait(250); }
+    out.batchExitPageBar = getComputedStyle(
+      document.getElementById('bag-pagebar')).display;
+    out.batchExitBatchBar = getComputedStyle(
+      document.getElementById('bag-batchbar')).display;
     out.bagCountAfterBatch = bagCountText();
     out.bagAfterBatch = stI.meta.bag.map(function (e) {
       return e.id + '@' + (e.level || 1);
@@ -1786,6 +1854,54 @@ const SMALLSCRIPT = `
      '总价是按每件算的，不是单价 × 件数（否则这条断言区分不出错实现）',
      r.batchUnitPrice + ' x2 vs ' + r.batchExpectedTotal);
   eq(r.batchCells, 35, '选择态下格子数仍然是 35（不能多也不能少）');
+
+  console.log('\n--- 批量条的几何：确认/取消必须真的在面板内（Task 16）---');
+  // 这一段是给"手动用户"的：.click() 走的是合成点击，被裁到面板外的按钮照样
+  // 能触发 click 事件，所以上面那批断言对着坏布局全绿。下面量几何与命中测试。
+  ok(r.batchBarZero && r.batchBarZero.scroll <= r.batchBarZero.w + 1,
+     '批量态零选：批量条内容不溢出（不被面板裁掉）', JSON.stringify(r.batchBarZero));
+  ok(r.batchBarZero && r.batchBarZero.left >= r.batchBarZero.panelLeft - 0.5 &&
+     r.batchBarZero.right <= r.batchBarZero.panelRight + 0.5,
+     '批量态零选：批量条左右缘都在面板内', JSON.stringify(r.batchBarZero));
+  ok(r.batchBarSel && r.batchBarSel.scroll <= r.batchBarSel.w + 1,
+     '批量态选中 2 件：批量条内容不溢出', JSON.stringify(r.batchBarSel));
+  ok(r.batchBarSel && r.batchBarSel.left >= r.batchBarSel.panelLeft - 0.5 &&
+     r.batchBarSel.right <= r.batchBarSel.panelRight + 0.5,
+     '批量态选中 2 件：批量条整条横在面板内', JSON.stringify(r.batchBarSel));
+  ok(typeof r.batchOkRight === 'number' && r.batchOkRight <= r.batchBagRight + 0.5,
+     '「确认」按钮右缘不超出面板右缘', r.batchOkRight + ' vs ' + r.batchBagRight);
+  ok(typeof r.batchCancelRight === 'number' && r.batchCancelRight <= r.batchBagRight + 0.5,
+     '「取消」按钮右缘不超出面板右缘', r.batchCancelRight + ' vs ' + r.batchBagRight);
+  ok(r.batchOkHit === true, '「确认」按钮中心命中的是它自己（真鼠标点得到）',
+     '命中: ' + String(r.batchOkHitTag));
+  ok(r.batchCancelHit === true, '「取消」按钮中心命中的是它自己（真鼠标点得到）',
+     '命中: ' + String(r.batchCancelHitTag));
+  ok(r.batchSumBox && r.batchSumBox.right <= r.batchBarRight + 0.5,
+     '合计文案整段可见（右缘不越过批量条右缘，否则「铜币」被裁）',
+     JSON.stringify(r.batchSumBox) + ' barRight=' + r.batchBarRight);
+  ok(typeof r.batchSumText === 'string' && r.batchSumText.indexOf('铜币') >= 0 &&
+     r.batchSumText.indexOf(String(r.batchExpectedTotal)) >= 0,
+     '合计文案完整：件数 + 总价 + 「铜币」都在', r.batchSumText);
+  ok(r.batchPageBarDisplay === 'none',
+     '批量态下分页条仍是隐藏的（两条 bar 互斥没破）', String(r.batchPageBarDisplay));
+  ok(r.batchExitPageBar === 'flex' && r.batchExitBatchBar === 'none',
+     '退出批量态后分页条回来、批量条收起',
+     String(r.batchExitPageBar) + ' / ' + String(r.batchExitBatchBar));
+  ok(r.batchLastRowInside === true,
+     '批量态下第 7 行整行仍在面板内（修 bar 不许挤掉一行格子）',
+     String(r.batchLastRowInside));
+  ok(r.batchGridH === 394, '批量态下网格高度仍是 394px（面板总高没变）',
+     String(r.batchGridH));
+  console.log('  [读数] 零选 w=' + (r.batchBarZero ? r.batchBarZero.w : '-') +
+    ' scroll=' + (r.batchBarZero ? r.batchBarZero.scroll : '-') +
+    ' | 选中2 件 w=' + (r.batchBarSel ? r.batchBarSel.w : '-') +
+    ' scroll=' + (r.batchBarSel ? r.batchBarSel.scroll : '-') +
+    ' sumW=' + (r.batchSumBox ? r.batchSumBox.scroll : '-') +
+    ' | okRight=' + r.batchOkRight + ' cancelRight=' + r.batchCancelRight +
+    ' bagRight=' + r.batchBagRight +
+    ' | okHit=' + r.batchOkHitTag + ' cancelHit=' + r.batchCancelHitTag +
+    ' | gridH=' + r.batchGridH);
+
   ok(Array.isArray(r.bagAfterBatch) && r.bagAfterBatch.length === 2 &&
      r.bagAfterBatch.indexOf('ironHelm@3') >= 0,
      '每 id 至少留一件，且留的是等级最高的那件', JSON.stringify(r.bagAfterBatch));

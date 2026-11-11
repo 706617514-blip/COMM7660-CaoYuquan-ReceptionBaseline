@@ -244,7 +244,7 @@
   #bag-stats .row{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
   #bag-stats .row b{color:#dfe8f0;font-weight:600;font-variant-numeric:tabular-nums}
 
-  /* 右栏 60%：页签 + 5×7 网格 + 页脚（分页条 / 批量选择条，占同一条 24px） */
+  /* 右栏 60%：页签 + 5×7 网格 + 分页条 */
   #bag-right{position:relative;flex:1;display:flex;flex-direction:column;
     gap:4px;min-width:0;min-height:0}
   /* 七个页签必须一行放得下。面板从 620 收到 470 后右栏只剩约 267px，
@@ -293,10 +293,19 @@
     font-size:10px;line-height:14px;text-align:center;color:#0d131a;pointer-events:none}
   #bag .cell.sel .pick{background:var(--gold);box-shadow:inset 0 0 0 1px #c9a15a}
 
-  /* 页脚条：分页与批量选择共用同一条 24px —— 两套控件各占一行会顶出面板
-     （右栏内容高 = 页签 24 + 网格 + 页脚 24 + 间距）。 */
-  #bag-pagebar,#bag-batchbar{flex:0 0 24px;display:flex;align-items:center;gap:5px;
+  /* 页脚：分页条留在右栏，宽度跟网格走。 */
+  #bag-pagebar{flex:0 0 24px;display:flex;align-items:center;gap:5px;
     padding:0 2px;overflow:hidden}
+  /* 批量条是**面板级**的一条，横跨面板全宽（Task 16）。
+     它原先住在右栏里：右栏只有约 267px，而内容要 334px（零选）/ 362px（选中 2 件），
+     多出来的部分被 #bag 的 overflow:hidden 切掉 —— 「确认」「取消」画在面板外，
+     真鼠标点上去命中的是 BODY。移到 #bag 下之后可用宽度 = 470 - 2x8 = 454 > 362。
+     高度 28 = 按钮 20 + 底部 8 内边距；右栏因此省下原来那条 bar 的 24px 槽位，
+     面板总高 500 与网格高度 394 都保持不变（smoke 的 batchGridH 盯着这一点）。
+     overflow:visible 是故意的：这一层不再负责裁剪，万一还有东西放不下，
+     它会被命中测试当场抓住，而不是悄悄消失。 */
+  #bag-batchbar{flex:0 0 28px;display:flex;align-items:center;gap:5px;
+    padding:0 8px 8px;overflow:visible}
   #bag-pagebar.off,#bag-batchbar{display:none}
   #bag-batchbar.on{display:flex}
   #bag-pagebar .page-n{font-size:11px;color:#93a5b7;font-variant-numeric:tabular-nums}
@@ -486,7 +495,8 @@
   </div>
 
   <!-- 背包浮层：标题栏可拖，左栏 40%（上 70% 角色 + 10 个装备槽 / 下 30% 四项数值），
-       右栏 60%（7 个页签 + 5×7 网格 + 页脚）。所有格子与槽位都是空壳，
+       右栏 60%（7 个页签 + 5×7 网格 + 分页条），底部一条面板级批量出售条。
+       所有格子与槽位都是空壳，
        由 baghud.js 填内容 —— 结构写在这里是因为它是布局，不是数据。 -->
   <div id="bag" aria-hidden="true" role="dialog" aria-modal="true" aria-label="背包">
     <div id="bag-bar">
@@ -517,21 +527,25 @@
           <button class="b" type="button" data-act="expand"
             title="花铜币买下下一页格子（设计 §4.7）">+扩容</button>
         </div>
-        <div id="bag-batchbar">
-          <button class="b" type="button" data-act="pick-dups"
-            title="勾选全部重复件（每个 id 留等级最高的一件）">重复件</button>
-          <button class="b" type="button" data-act="pick-base"
-            title="勾选全部未穿戴的基础装备">基础件</button>
-          <button class="b" type="button" data-act="toggle-all"
-            title="全选 / 全不选（每个 id 仍会强制留一件）">全选</button>
-          <span class="sp"></span>
-          <span class="sum" id="bag-sum">未勾选可卖的装备</span>
-          <button class="b ok confirm-ok" type="button" disabled>确认</button>
-          <button class="b" type="button" data-act="batch-cancel"
-            title="退出批量出售">取消</button>
-        </div>
         <div id="bag-empty"></div>
       </div>
+    </div>
+    <!-- 批量出售条在 #bag-main 之后、作为 #bag 的直接子元素：整条横跨面板全宽。
+         塞进右栏（约 267px）时内容要 334/362px，会被 #bag 的 overflow:hidden 裁掉，
+         「确认」「取消」落到面板外点不到。它与 #bag-pagebar 从不同时可见
+         （baghud 的 paintBatch 一个 toggle on、一个 toggle off），所以仍只占一条槽位。 -->
+    <div id="bag-batchbar">
+      <button class="b" type="button" data-act="pick-dups"
+        title="勾选全部重复件（每个 id 留等级最高的一件）">重复件</button>
+      <button class="b" type="button" data-act="pick-base"
+        title="勾选全部未穿戴的基础装备">基础件</button>
+      <button class="b" type="button" data-act="toggle-all"
+        title="全选 / 全不选（每个 id 仍会强制留一件）">全选</button>
+      <span class="sp"></span>
+      <span class="sum" id="bag-sum">未勾选可卖的装备</span>
+      <button class="b ok confirm-ok" type="button" disabled>确认</button>
+      <button class="b" type="button" data-act="batch-cancel"
+        title="退出批量出售">取消</button>
     </div>
   </div>
   <div id="bag-tip"></div>
