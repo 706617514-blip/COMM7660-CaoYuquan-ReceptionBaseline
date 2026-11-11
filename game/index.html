@@ -166,6 +166,77 @@
   footer a{color:var(--gold)}
   kbd{background:#1b2431;border:1px solid #3a4a5c;border-bottom-width:2px;border-radius:4px;
     padding:1px 6px;font-size:11px;font-family:ui-monospace,Menlo,monospace;color:#dfe8f0}
+  /* ---- 背包浮层（设计 §4.1–§4.3）----
+     620 × 540，约占 960×600 画布的 40%。用 position:fixed 而不是 absolute：
+     #frame 是 960/600 等比缩放的盒子，absolute 坐标会跟着缩放，拖动时
+     指针位移和面板位移对不上（窗口一大一小就明显错位）。 */
+  #bag{position:fixed;left:0;top:0;width:620px;height:540px;display:none;
+    flex-direction:column;z-index:40;border-radius:14px;overflow:hidden;
+    background:linear-gradient(180deg,#18202b,#11171f);color:var(--ink);
+    font-size:12.5px;user-select:none;
+    box-shadow:0 0 0 1px #33455a, 0 26px 60px -20px #000, 0 0 60px -30px var(--ember)}
+  #bag.on{display:flex}
+
+  /* 标题栏整条都是拖动把手 —— 只有标题文字能拖的话，玩家会以为面板卡住了 */
+  #bag-bar{flex:0 0 34px;display:flex;align-items:center;gap:12px;
+    padding:0 8px 0 14px;cursor:grab;touch-action:none;
+    background:linear-gradient(180deg,#1f2937,#16202b);border-bottom:1px solid #26323f}
+  #bag-bar.grabbing{cursor:grabbing}
+  #bag-bar .t{font-size:13.5px;font-weight:700;letter-spacing:.6px}
+  #bag-bar .n{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums}
+  #bag-bar .sp{flex:1}
+  #bag-x{background:#222d3a;border:1px solid #33455a;color:#c9d6e2;width:24px;height:24px;
+    border-radius:7px;cursor:pointer;font-size:12px;line-height:1;font-family:inherit}
+  #bag-x:hover{background:#2c3a4a}
+
+  #bag-main{flex:1;display:flex;min-height:0;padding:8px;gap:10px}
+
+  /* 左栏 40%：上 70% 穿戴槽、下 30% 当前数值（槽位与数值由 Task 8 填） */
+  #bag-left{flex:0 0 calc(40% - 5px);display:flex;flex-direction:column;
+    gap:6px;min-width:0;min-height:0}
+  #bag-wear{height:70%;min-height:0;border-radius:10px;background:#0d131a;
+    box-shadow:inset 0 0 0 1px #24303d;display:flex;align-items:center;
+    justify-content:center;color:#41505f;font-size:11.5px;letter-spacing:.5px}
+  #bag-stats{flex:1;min-height:0;border-radius:10px;background:#0d131a;
+    box-shadow:inset 0 0 0 1px #24303d;display:flex;align-items:center;
+    justify-content:center;color:#41505f;font-size:11.5px;letter-spacing:.5px}
+
+  /* 右栏 60%：页签 + 5×7 网格 */
+  #bag-right{position:relative;flex:1;display:flex;flex-direction:column;
+    gap:4px;min-width:0;min-height:0}
+  #bag-tabs{flex:0 0 24px;display:flex;gap:4px;overflow:hidden}
+  #bag-tabs .tab{background:#161e28;border:1px solid #2a3745;color:#9db0c4;
+    border-radius:7px;padding:0 8px;font-size:11.5px;font-family:inherit;
+    cursor:pointer;white-space:nowrap;line-height:22px}
+  #bag-tabs .tab:hover{color:#d7e4f0;border-color:#3c5064}
+  #bag-tabs .tab.on{background:#2b3a4c;color:var(--gold);border-color:#4a5f77}
+
+  /* 网格：56×64 × 5 列 7 行。空槽也要画出来（暗色凹槽），
+     否则格数随内容变化，玩家没法判断还剩几格。 */
+  #bag-grid{flex:0 0 auto;display:grid;grid-template-columns:repeat(5,56px);
+    grid-template-rows:repeat(7,64px);gap:2px;border-radius:10px;
+    box-shadow:0 0 0 1px #24303d}
+  #bag .cell{position:relative;display:flex;align-items:center;justify-content:center;
+    border-radius:5px;background:#131b24;box-shadow:inset 0 0 0 1px #1d2734;
+    overflow:hidden}
+  #bag .cell.empty{background:#0e141b;box-shadow:inset 0 1px 3px #05080b}
+  #bag .cell.ult{box-shadow:inset 0 0 0 1px #5a4126, 0 0 10px -4px var(--ember)}
+  #bag .cell img{width:40px;height:60px;object-fit:contain;
+    image-rendering:pixelated;pointer-events:none}
+  /* 贴图缺失（还没烘好 / 新装备没画）时的占位：虚线框 + 名字前两字，
+     比一格纯黑好判断 —— 那一格是真的有空，只是没画出来 */
+  #bag .cell.noart{box-shadow:inset 0 0 0 1px #33414f}
+  #bag .cell .ph{font-size:12px;color:#4a5a6a}
+  #bag .cell .lv{position:absolute;right:2px;bottom:1px;font-size:9.5px;
+    color:#c9d6e2;text-shadow:0 1px 2px #000;font-variant-numeric:tabular-nums}
+
+  /* 空分类提示盖在网格上：坐标直接取网格的尺寸（24 页签 + 4 间距），
+     不靠百分比反推 —— 反推出来的位置在窗口尺寸一变就和网格错开。 */
+  #bag-empty{position:absolute;left:0;top:28px;width:288px;height:460px;
+    display:none;align-items:center;justify-content:center;
+    border-radius:10px;background:#0d131ac2;color:#6d7f90;font-size:12px;
+    pointer-events:none}
+  #bag-empty.on{display:flex}
 </style>
 </head>
 <body>
@@ -229,6 +300,28 @@
   </div>
 
   <div id="toast"></div>
+
+  <!-- 背包浮层（Task 7 骨架）：标题栏可拖，左栏 40%（上 70% 穿戴 / 下 30% 数值），
+       右栏 60%（7 个页签 + 5×7 网格）。槽位、悬停浮层、出售按钮由 Task 8 补。 -->
+  <div id="bag" aria-hidden="true" role="dialog" aria-label="背包">
+    <div id="bag-bar">
+      <span class="t">背包</span>
+      <span class="n" id="bag-count">0 / 35</span>
+      <span class="sp"></span>
+      <button id="bag-x" type="button" title="关闭（Esc）">✕</button>
+    </div>
+    <div id="bag-main">
+      <div id="bag-left">
+        <div id="bag-wear">穿戴</div>
+        <div id="bag-stats">当前数值</div>
+      </div>
+      <div id="bag-right">
+        <div id="bag-tabs"></div>
+        <div id="bag-grid"></div>
+        <div id="bag-empty"></div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <footer>
@@ -249,6 +342,7 @@
 <script src="logic.js"></script>
 <script src="profile.js"></script>
 <script src="hub.js"></script>
+<script src="baghud.js"></script>
 <script src="app.js"></script>
 <script>
 (function () {

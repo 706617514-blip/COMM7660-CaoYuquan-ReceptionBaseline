@@ -434,6 +434,40 @@ const SCRIPT = `
   out.hasAgainButton = !!document.getElementById('btn-again') ||
                        document.body.innerHTML.indexOf('再来一局') >= 0;
 
+  // ---- 背包面板（V2 / V4）----
+  // ⚠️ 必须用守卫：实现之前 window.BagHud 是 undefined，裸调会抛异常，
+  //    驱动把它当成 {error} 直接中止整个脚本 —— 45 条既有断言全部消失，
+  //    看起来像"游戏全线崩了"，实际只是新功能还没写。
+  const bagEl = () => document.getElementById('bag');
+  out.bagExists = !!bagEl();
+  out.bagApiExists = !!(window.BagHud && typeof window.BagHud.open === 'function');
+  const stBag = window.EmberfieldApp.__state;
+  if (out.bagApiExists) {
+    window.BagHud.open(stBag);
+    await wait(300);
+    out.bagOpen = window.BagHud.isOpen();
+    out.bagDisplayed = !!(bagEl() && getComputedStyle(bagEl()).display !== 'none');
+  }
+
+  // V2：推到屏幕外，clamp() 之后必须回到可见范围
+  if (out.bagApiExists && bagEl()) {
+    bagEl().style.left = '-9999px';
+    bagEl().style.top = '-9999px';
+    window.BagHud.clamp();
+    out.bagLeft = parseFloat(bagEl().style.left);
+    out.bagTop = parseFloat(bagEl().style.top);
+    out.bagW = bagEl().offsetWidth;
+    out.bagH = bagEl().offsetHeight;
+    out.viewW = window.innerWidth;
+    out.viewH = window.innerHeight;
+    // 只夹左上角是不够的：右下角同样会跑出屏幕，两个角都要验
+    out.bagEndsWithinView =
+      (out.bagLeft + out.bagW <= out.viewW) && (out.bagTop + out.bagH <= out.viewH);
+  }
+
+  // V4：第一页 5 列 × 7 行
+  out.bagCells = document.querySelectorAll('#bag .cell').length;
+
   return out;
 })();
 `;
@@ -571,6 +605,19 @@ const SCRIPT = `
 
   console.log('\n--- 5. 控制台错误 ---');
   ok(errors.length === 0, '页面无控制台错误', errors.slice(0, 2).join(' | '));
+
+  console.log('\n--- 背包面板（V2 / V4）---');
+  ok(r.bagExists === true, '#bag 容器存在');
+  ok(r.bagApiExists === true, 'window.BagHud.open 是可调用函数（API 已接上）');
+  ok(r.bagOpen === true, 'BagHud.open() 后面板处于打开态');
+  ok(r.bagDisplayed === true, '面板真的显示出来了（不是只有 className）');
+  ok(typeof r.bagLeft === 'number' && r.bagLeft >= 0 && r.bagLeft <= r.viewW - 40,
+     '夹边后 left 在可视范围内', r.bagLeft);
+  ok(typeof r.bagTop === 'number' && r.bagTop >= 0 && r.bagTop <= r.viewH - 40,
+     '夹边后 top 在可视范围内', r.bagTop);
+  ok(r.bagW > 0 && r.bagH > 0, '面板有真实尺寸', r.bagW + 'x' + r.bagH);
+  ok(r.bagEndsWithinView === true, '面板右下角也不越界');
+  ok(r.bagCells === 35, '第一页 5×7 = 35 格', r.bagCells);
 
   console.log('\n' + '='.repeat(56));
   if (fail === 0) {

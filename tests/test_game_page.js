@@ -112,7 +112,8 @@ section('1. 脚本按序加载且不抛异常');
 const html = fs.readFileSync(HTML, 'utf-8');
 const srcs = [...html.matchAll(/<script src="([^"]+)"/g)].map(m => m[1]);
 eq(JSON.stringify(srcs), JSON.stringify([
-  'vendor/phaser.min.js', 'config.js', 'logic.js', 'profile.js', 'hub.js', 'app.js',
+  'vendor/phaser.min.js', 'config.js', 'logic.js', 'profile.js', 'hub.js', 'baghud.js',
+  'app.js',
 ]), '脚本加载顺序正确（Phaser 先于 app.js）');
 
 let bootErr = null;
@@ -121,6 +122,7 @@ try {
   loadModule('game/logic.js');
   loadModule('game/profile.js');
   loadModule('game/hub.js');
+  loadModule('game/baghud.js');
   loadModule('game/app.js');
 } catch (e) { bootErr = e; }
 ok(!bootErr, '模块加载不抛异常', bootErr && bootErr.message);
