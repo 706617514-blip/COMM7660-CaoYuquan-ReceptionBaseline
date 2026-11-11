@@ -1303,41 +1303,60 @@ ok(C.POTION_ORDER.join(',') === 'heal,strength,wall', 'id 顺序不变（存档�
 
 **V14：兵器架按钮文案三段变化（原稿没有这条断言，只在 Step 3 描述了口径）**
 
+> **两处原稿错误，已实测（`game/hub.js:89`）**：
+> 1. `zoneActions(state, zoneId)` 的第二个参数是**字符串 id**，不是 zone 对象 ——
+>    传 `H.zoneById('forgewear')` 会静默返回空数组（实测 `[]`，不报错），
+>    于是原稿的每条断言都因 `notOwned` 是 `undefined` 而失败，且失败理由看起来像"功能没做"。
+> 2. `a.label` 是**物品名**（`角盔`），**不是按钮文案**。按钮文案现在由
+>    `game/index.html:445-447` 的内联阶梯决定（`挑战` / `出发` / `执行` / 价格）——
+>    逻辑层根本拿不到它，所以原稿的 `owned.label === '穿戴'` 永远不可能成立。
+>
+> 修法：给每个 action 增加一个 **`verb` 字段**（按钮上写的动作词），
+> UI 优先渲染 `a.verb`，`verb` 缺失时退回现有阶梯（不影响 boss「挑战」/ 远征「出发」）。
+
 ```js
-// 逻辑层先给出"这个按钮现在该写什么"，UI 只负责渲染这个字符串。
-// 这样文案变化可以在纯逻辑测试里断言，不必依赖浏览器。
 const s = L.createState(31);
-const rich = Object.assign({}, s, { meta: Object.assign({}, s.meta, { coins: 99999 }) });
-H.ensureHub(rich);
+s.meta.coins = 99999;
+H.ensureHub(s);
+const pick = function (state, id) {
+  return H.zoneActions(state, 'forgewear')
+    .filter(function (a) { return a.payload && a.payload.id === id; });
+};
 
-const notOwned = H.zoneActions(rich, H.zoneById('forgewear'))
-  .filter(function (a) { return a.payload && a.payload.id === 'hornHelm'; })[0];
-ok(notOwned && notOwned.kind === 'equip-buy', '没买过时是"购买"');
-ok(notOwned && notOwned.label && notOwned.label !== '卸掉', '没买过时不显示"卸掉"');
+// 未买：购买
+const before = pick(s, 'hornHelm')[0];
+ok(before && before.kind === 'equip-buy', '没买过时 kind 是 equip-buy（买）', before && before.kind);
+ok(before && before.verb === '购买', '按钮文案"购买"', before && before.verb);
+ok(before && before.label === '角盔', 'label 仍是物品名，不被挪用成按钮文案', before && before.label);
 
-L.buyEquipment(rich, 'hornHelm');
-const owned = H.zoneActions(rich, H.zoneById('forgewear'))
-  .filter(function (a) { return a.payload && a.payload.id === 'hornHelm'; })[0];
-ok(owned && owned.kind === 'equip-wear', '买过未穿时是"穿戴"');
-ok(owned && owned.label === '穿戴', '按钮文案是"穿戴"（不再是"执行"）');
+// 已买未穿：穿戴（不再是"执行"）
+L.buyEquipment(s, 'hornHelm');
+const owned = pick(s, 'hornHelm')[0];
+ok(owned && owned.kind === 'equip-wear', '买过未穿时 kind 是 equip-wear', owned && owned.kind);
+ok(owned && owned.verb === '穿戴', '按钮文案是"穿戴"（不是"执行"）', owned && owned.verb);
 
-L.equipItem(rich, 'hornHelm');
-const worn = H.zoneActions(rich, H.zoneById('forgewear'))
-  .filter(function (a) { return a.payload && a.payload.id === 'hornHelm'; })[0];
-ok(worn && worn.kind === 'equip-upgrade', '穿上后是"升级"这一档');
-ok(worn && worn.label !== '穿戴', '穿上后不再显示"穿戴"');
+// 已穿：出现"卸掉"，且升级入口仍在（两个动作）
+L.equipItem(s, 'hornHelm');
+const worn = pick(s, 'hornHelm');
+ok(worn.length === 2, '穿上后有两个动作：升级 + 卸掉', JSON.stringify(worn.map(function (a) { return a.verb; })));
+const upg = worn.filter(function (a) { return a.kind === 'equip-upgrade'; })[0];
+const uneq = worn.filter(function (a) { return a.kind === 'equip-unequip'; })[0];
+ok(!!upg, '升级入口没丢（否则玩家无法强化已穿戴的装备）');
+ok(!!uneq, '有"卸掉"入口');
+ok(uneq && uneq.verb === '卸掉', '卸掉的按钮文案是"卸掉"', uneq && uneq.verb);
+ok(uneq && uneq.cost === 0, '卸掉不收费', uneq && uneq.cost);
+ok(upg && upg.verb === '升级', '升级的按钮文案是"升级"', upg && upg.verb);
+ok(upg && typeof upg.cost === 'number' && upg.cost > 0, '升级带价格', upg && upg.cost);
 
-// 卸掉：已穿戴的件必须有独立的"卸掉"入口，且穿上后按钮不再是"穿戴"
-const actions = H.zoneActions(rich, H.zoneById('forgewear'));
-const hasUnequip = actions.some(function (a) {
-  return a.kind === 'equip-unequip' || (a.label || '') === '卸掉';
-});
-ok(hasUnequip, '已穿戴的件能看出怎么卸掉（文案"卸掉"或等价动作）');
+// 卸掉之后回到"穿戴"
+H.perform(s, uneq);
+const afterUneq = pick(s, 'hornHelm')[0];
+ok(afterUneq && afterUneq.kind === 'equip-wear', '卸掉后回到 equip-wear', afterUneq && afterUneq.kind);
 ```
 
-> 若实现把「卸掉」放在背包面板而不是兵器架，**这条断言要跟着换成那个位置**——
-> 但无论放哪，**"穿上之后存在一个可点到的卸下入口"必须有断言**，
-> 否则 V14 描述的"执行→穿戴→卸掉"三段变化没有任何测试覆盖。
+> **口径变更（记入 ledger，需要 PM 醒来确认）**：用户原话是「穿上后按钮变卸掉」。
+> 但若按钮**只能**是卸掉，升级就没了入口（现有 UI 正是靠这个按钮升级）。
+> 这里采用「已穿戴的件给两个动作：`升级` + `卸掉`」，既满足"看得见卸掉"，也不丢功能。
 
 - [ ] **Step 2: 跑测试确认失败**
 
@@ -1349,6 +1368,32 @@ Expected: FAIL —— 名字仍是旧的。
 只改 `.name` / `.short`，**不碰 id**。同时改 `index.html:238` 的 `<kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> 喝药水（回春／力量／坚壁）` → `（治疗／力量／护盾）`。
 
 兵器架：加页签 `全部/未拥有/已拥有/已穿戴/特殊`，每条显示贴图；按钮 `执行` → **`穿戴`**，已穿戴时变 **`卸掉`**。
+
+**实现契约（照着写，测试已按此断言）**：
+
+1. **每个 action 增加 `verb` 字段**（按钮上写的动作词）：
+   `equip-buy → '购买'`、`equip-wear → '穿戴'`、`equip-upgrade → '升级'`、`equip-unequip → '卸掉'`、
+   `equip-owned → '切换'`。**`label` 保持物品名不变**，不要把它挪用成按钮文案。
+2. **已穿戴的件要出两个动作**（顺序：升级在前、卸掉在后）：
+   ```js
+   // hub.js 现有的 equip-upgrade 分支后面补一条：
+   out.push({ kind: 'equip-unequip', label: def.name, verb: '卸掉', cost: 0,
+              enabled: true, payload: { id: id, slot: def.slot, uid: uid } });
+   ```
+3. **`payload` 必须带 `uid`**（`hub.js:195` 现在是 `{ id, slot }`）。Task 3 给
+   `equipItem` / `equipUpgradeCost` / `upgradeEquipment` 加了第三个可选 `uid` 参数，
+   但 UI 侧一直没传，**所以那条修复从玩家路径根本不可达**（Task 3 复审实测）。
+   本次一并接上：`payload: { id: id, slot: slot, uid: bagEntryUid }`。
+4. **`perform` 增加分支**：`if (action.kind === 'equip-unequip') return L.unequipSlot(state, action.payload.slot);`
+5. **`game/index.html:445-447` 的按钮文案阶梯改为优先用 `a.verb`**：
+   ```js
+   btn.textContent = a.verb ? a.verb
+     : (isBoss ? '挑战' : (a.kind === 'run' ? '出发'
+       : ((a.cost === null || a.cost === undefined || a.cost === 0) ? '执行' : a.cost)));
+   ```
+   —— 这样 boss「挑战」、远征「出发」等既有文案完全不受影响，只有显式给了 `verb` 的装备行变化。
+6. **页签过滤**：`zoneActions` 接受可选第三参 `filter`（`'all' | 'unowned' | 'owned' | 'worn' | 'special'`），
+   或在 `index.html` 侧过滤。二选一，但**必须有至少一条断言证明「未拥有」页签真的只剩没买的件**。
 
 > **全仓 grep 确认无旧名残留**：`grep -rn '回春\|坚壁' game/ tests/` 改完后必须**无输出**。
 >
