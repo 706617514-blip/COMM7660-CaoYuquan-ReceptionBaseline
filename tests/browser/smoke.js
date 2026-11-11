@@ -237,7 +237,7 @@ const SCRIPT = `
       const r2 = window.EmberfieldApp.__state.run;
       out.potionSnapshot = r2 ? JSON.stringify(r2.potions) : null;
 
-      // 掉血，才能看出回春真的回了
+      // 掉血，才能看出治疗真的回了
       const before = r2.player.hp;
       r2.player.hp = Math.max(10, before - 30);
       const damaged = r2.player.hp;
@@ -372,26 +372,70 @@ const SCRIPT = `
       await wait(300);
       hub.showPanel({ id: 'forgewear' });
       await wait(120);
-      const rows = Array.prototype.slice.call(
-        document.querySelectorAll('#panelBody .act'));
-      const rowFor = function (label) {
-        return rows.filter(function (r) {
+      // V14 页签：全部 / 未拥有 / 已拥有 / 已穿戴 / 特殊。
+      const tabBtns = function () {
+        return Array.prototype.slice.call(
+          document.querySelectorAll('#panelBody .tabs button'));
+      };
+      const actRows = function () {
+        return Array.prototype.slice.call(
+          document.querySelectorAll('#panelBody .act'));
+      };
+      const tabByText = function (label) {
+        return tabBtns().filter(function (b) { return b.textContent === label; })[0];
+      };
+      const rowsFor = function (label, list) {
+        return list.filter(function (r) {
           const t = r.querySelector('.t');
           return t && t.textContent.trim() === label;
-        })[0];
+        });
       };
-      const helmRow = rowFor('角盔');
+      const btnText = function (r) {
+        const b = r.querySelector('button');
+        return b ? b.textContent : null;
+      };
+
+      out.tabLabels = tabBtns().map(function (b) { return b.textContent; }).join('/');
+      out.tabRowsAll = actRows().length;
+      // 穿戴中的件有两条动作（升级 + 卸掉），所以"全部"页签的行数不是件数，
+      // 要按当前穿戴状态现算 —— 写死 35 会把这条正确行为判成失败。
+      out.tabExpectedRowsAll = Object.keys(window.GameConfig.ALL_EQUIPMENT)
+        .reduce(function (n, id) {
+          return n + (window.GameLogic.equipOwned(hub.state, id) === 'equipped' ? 2 : 1);
+        }, 0);
+      out.tabWornCount = Object.keys(window.GameConfig.ALL_EQUIPMENT)
+        .filter(function (id) {
+          return window.GameLogic.equipOwned(hub.state, id) === 'equipped';
+        }).length;
+
+      // 点「未拥有」：只剩没买的件。期望值在页面里按 equipOwned 现算，
+      // 不写死数字 —— 前一段已经买过、穿过几件，写死就变成猜。
+      const unownedTab = tabByText('未拥有');
+      if (unownedTab) unownedTab.click();
+      await wait(60);
+      out.tabRowsUnowned = actRows().length;
+      out.tabExpectedUnowned = Object.keys(window.GameConfig.ALL_EQUIPMENT)
+        .filter(function (id) {
+          return window.GameLogic.equipOwned(hub.state, id) === null;
+        }).length;
+      out.tabUnownedHasHelm = rowsFor('角盔', actRows()).length > 0;
+      const allTab = tabByText('全部');
+      if (allTab) allTab.click();
+      await wait(60);
+
+      const helmRow = rowsFor('角盔', actRows())[0];
       out.panelFoundHelmRow = !!helmRow;
       if (helmRow) {
-        helmRow.querySelector('button').click();     // 买下（变背包中）
+        out.helmBtnBuy = btnText(helmRow);            // 未买：应写"购买"
+        helmRow.querySelector('button').click();      // 买下（变背包中）
         await wait(80);
-        const rows2 = Array.prototype.slice.call(
-          document.querySelectorAll('#panelBody .act'));
-        const helmRow2 = rows2.filter(function (r) {
-          const t = r.querySelector('.t');
-          return t && t.textContent.trim() === '角盔';
-        })[0];
-        if (helmRow2) helmRow2.querySelector('button').click();   // 穿上
+        const helmRow2 = rowsFor('角盔', actRows())[0];
+        if (helmRow2) {
+          out.helmBtnWear = btnText(helmRow2);        // 买了没穿：应写"穿戴"
+          helmRow2.querySelector('button').click();   // 穿上（onAction 同步刷面板）
+          // 这里刻意不 await：下面要验"同一 tick 内贴图就已换好"。
+          out.helmWornBtns = rowsFor('角盔', actRows()).map(btnText).join('|');
+        }
       }
       // 只在同一 tick 内取样，不 await —— 任何 await 都会放过一个 update 帧
       const headLayer = hub.hero && hub.hero.layers_ ? hub.hero.layers_.head : null;
@@ -834,15 +878,15 @@ const SCRIPT = `
   console.log('\n--- 3c. 药水：按键 → 消耗 → 生效 → HUD ---');
   ok(r.potionSnapshot === '{"heal":2,"strength":2,"wall":2}',
      '开局把 meta 里的药水快照进本局', r.potionSnapshot);
-  ok(r.hpAfterHeal > r.hpDamaged, '按 1 后血量回升（回春真的回了血）',
+  ok(r.hpAfterHeal > r.hpDamaged, '按 1 后血量回升（治疗真的回了血）',
      `${r.hpDamaged} -> ${r.hpAfterHeal}`);
-  eq(r.potionAfterHeal, 1, '回春消耗掉一瓶');
+  eq(r.potionAfterHeal, 1, '治疗消耗掉一瓶');
   eq(r.potionBuff, 'strength', '按 2 挂上了力量 buff');
   eq(r.potionAfterStrength, 1, '力量消耗掉一瓶');
   ok(r.potionBarVisible === true, '药水栏在战斗中可见');
-  eq(r.potionBarSlots, 3, '药水栏有三个槽位（回春/力量/坚壁）');
+  eq(r.potionBarSlots, 3, '药水栏有三个槽位（治疗/力量/护盾）');
   ok(r.potionBarHasActive === true, 'buff 生效时对应槽位有 active 标记');
-  ok(typeof r.potionBarText === 'string' && r.potionBarText.indexOf('回春') >= 0,
+  ok(typeof r.potionBarText === 'string' && r.potionBarText.indexOf('治疗') >= 0,
      '药水栏写出了药水名', r.potionBarText);
 
   console.log('\n--- 3d. 装备：穿上后主角分层渲染 ---');
@@ -864,6 +908,24 @@ const SCRIPT = `
      '面板开着换装也当场换贴图（不能等关面板才变）');
   ok(r.headVisibleWhilePanelOpen === true, '面板开着换上的头盔当场可见',
      String(r.headVisibleWhilePanelOpen));
+
+  console.log('\n--- 3d-2. 兵器架三态与页签（V14）---');
+  eq(r.tabLabels, '全部/未拥有/已拥有/已穿戴/特殊', '兵器架有五个页签');
+  ok(r.tabRowsAll === r.tabExpectedRowsAll,
+     '全部页签一件不少（穿戴件两条动作，行数按状态现算）',
+     r.tabRowsAll + ' vs ' + r.tabExpectedRowsAll + '，穿戴中 ' + r.tabWornCount + ' 件');
+  ok(r.tabRowsUnowned === r.tabExpectedUnowned,
+     '点「未拥有」后只剩没买的件（逐件按 equipOwned 现算）',
+     r.tabRowsUnowned + ' vs ' + r.tabExpectedUnowned);
+  ok(r.tabUnownedHasHelm === true, '没买过的角盔出现在未拥有页签（否则上一条是空跑）',
+     String(r.tabUnownedHasHelm));
+  ok(typeof r.helmBtnBuy === 'string' && r.helmBtnBuy.indexOf('购买') === 0,
+     '未买时按钮写"购买"（不是物品名、不是"执行"）', r.helmBtnBuy);
+  ok(typeof r.helmBtnWear === 'string' && r.helmBtnWear.indexOf('穿戴') === 0,
+     '买完未穿按钮写"穿戴"', r.helmBtnWear);
+  ok(typeof r.helmWornBtns === 'string' && r.helmWornBtns.split('|').length === 2 &&
+     r.helmWornBtns.indexOf('升级') === 0 && r.helmWornBtns.indexOf('|卸掉') > 0,
+     '穿上后同一件出现两个按钮：升级 + 卸掉', r.helmWornBtns);
 
   console.log('\n--- 3e. 按 J 进田地：不能卡在黑屏 ---');
   eq(r.fieldZoneId, 'field', '站在田地区域上（不然按 J 进不去）');

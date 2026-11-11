@@ -1176,7 +1176,7 @@ section('22. 药水（消耗品）');
   const ids = Object.keys(P);
   ok(ids.length === 3, '配置了 3 种药水', ids.join(','));
   ok(ids.indexOf('heal') >= 0 && ids.indexOf('strength') >= 0 && ids.indexOf('wall') >= 0,
-    '三种药水分别是回春/力量/坚壁');
+    '三种药水分别是治疗/力量/护盾');
 
   // 键位：用户明确指定 1/2/3
   const keys = ids.map(k => P[k].key);
@@ -1191,18 +1191,34 @@ section('22. 药水（消耗品）');
   ok(hp_.carry === 3 && sp_.carry === 2 && wp_.carry === 2,
     '携带上限为 3 / 2 / 2', [hp_.carry, sp_.carry, wp_.carry].join('/'));
 
-  // ---- 回春药：立刻回血 ----
+  /*
+   * 三件药水的**显示名**统一成"…药水"（V14）。
+   *
+   * 只改 name / short，绝不改 key（heal / strength / wall）：
+   * 存档里的药水栏是按 key 记的（meta.potions.heal 之类），
+   * 改 key 等于把所有旧存档的药水栏清空 —— 那不是改名，那是删档。
+   */
+  ok(hp_.name === '治疗药水', '治疗药水显示名统一成"治疗药水"', hp_.name);
+  ok(hp_.short === '治疗', '治疗药水短名是"治疗"', hp_.short);
+  ok(sp_.name === '力量药水', '力量药水显示名统一成"力量药水"', sp_.name);
+  ok(sp_.short === '力量', '力量药水短名是"力量"', sp_.short);
+  ok(wp_.name === '护盾药水', '护盾药水显示名统一成"护盾药水"', wp_.name);
+  ok(wp_.short === '护盾', '护盾药水短名是"护盾"', wp_.short);
+  ok(C.POTION_ORDER.join(',') === 'heal,strength,wall',
+    '药水 key 与顺序一个字都没改（旧存档的药水栏才不空）', C.POTION_ORDER.join(','));
+
+  // ---- 治疗药水：立刻回血 ----
   const a = armedRunWithPotions({ heal: 1 });
   a.run.player.hp = 30;
   L.usePotion(a.s, 'heal');
-  ok(a.run.player.hp === 55, '回春药立刻回 25 血', `30 -> ${a.run.player.hp}`);
-  ok(a.run.potions.heal === 0, '回春药用掉后本局携带数减 1', String(a.run.potions.heal));
+  ok(a.run.player.hp === 55, '治疗药水立刻回 25 血', `30 -> ${a.run.player.hp}`);
+  ok(a.run.potions.heal === 0, '治疗药水用掉后本局携带数减 1', String(a.run.potions.heal));
 
   // 回血不得超过上限
   const b = armedRunWithPotions({ heal: 1 });
   b.run.player.hp = b.run.player.maxHp - 5;
   L.usePotion(b.s, 'heal');
-  ok(b.run.player.hp === b.run.player.maxHp, '回春药不会超过血量上限', String(b.run.player.hp));
+  ok(b.run.player.hp === b.run.player.maxHp, '治疗药水不会超过血量上限', String(b.run.player.hp));
 
   // ---- 力量药：限时增伤 ----
   const c = armedRunWithPotions({ strength: 1 });
@@ -1213,13 +1229,13 @@ section('22. 药水（消耗品）');
   ok(c.run.player.potionBuff.timer > 14 && c.run.player.potionBuff.timer <= 15.01,
     '力量药持续 15 秒', String(c.run.player.potionBuff.timer));
 
-  // ---- 坚壁药：限时减伤 ----
+  // ---- 护盾药水：限时减伤 ----
   const d = armedRunWithPotions({ wall: 1 });
   L.usePotion(d.s, 'wall');
   ok(d.run.player.potionBuff && d.run.player.potionBuff.hurtMul < 1,
-    '坚壁药设置减伤倍率', JSON.stringify(d.run.player.potionBuff));
+    '护盾药水设置减伤倍率', JSON.stringify(d.run.player.potionBuff));
   ok(d.run.player.potionBuff.timer > 7 && d.run.player.potionBuff.timer <= 8.01,
-    '坚壁药持续 8 秒', String(d.run.player.potionBuff.timer));
+    '护盾药水持续 8 秒', String(d.run.player.potionBuff.timer));
 
   // ---- 用掉就没了：没有携带时按了不生效 ----
   const e = armedRunWithPotions({});
@@ -1236,8 +1252,8 @@ section('22. 药水（消耗品）');
   const f = armedRunWithPotions({ heal: 1, strength: 1, wall: 1 });
   f.run.player.hp = 40;
   L.step(f.s, { left: false, right: false, up: false, down: false, potion1: true }, 1 / 60);
-  ok(f.run.player.hp === 65, '按 1 喝回春药', `40 -> ${f.run.player.hp}`);
-  ok(f.run.potions.heal === 0, '按 1 后本局回春药减少');
+  ok(f.run.player.hp === 65, '按 1 喝治疗药水', `40 -> ${f.run.player.hp}`);
+  ok(f.run.potions.heal === 0, '按 1 后本局治疗药水减少');
 
   const g = armedRunWithPotions({ heal: 1, strength: 1, wall: 1 });
   L.step(g.s, { left: false, right: false, up: false, down: false, potion2: true }, 1 / 60);
@@ -1247,7 +1263,7 @@ section('22. 药水（消耗品）');
   const h = armedRunWithPotions({ heal: 1, strength: 1, wall: 1 });
   L.step(h.s, { left: false, right: false, up: false, down: false, potion3: true }, 1 / 60);
   ok(h.run.potions.wall === 0 && h.run.player.potionBuff,
-    '按 3 喝坚壁药');
+    '按 3 喝护盾药水');
 
   // ---- 持续药水到期后效果消失 ----
   const i2 = armedRunWithPotions({ strength: 1 });
@@ -1313,11 +1329,11 @@ section('22. 药水（消耗品）');
   L.usePotion(k2.s, 'heal');
   L.usePotion(k2.s, 'strength');
   L.endRun(k2.s, false);
-  ok(k2.s.meta.potions.heal === 2, '结算后 meta 回写剩余回春药', String(k2.s.meta.potions.heal));
+  ok(k2.s.meta.potions.heal === 2, '结算后 meta 回写剩余治疗药水', String(k2.s.meta.potions.heal));
   ok(k2.s.meta.potions.strength === 0, '喝掉的力量药不会退回', String(k2.s.meta.potions.strength));
   ok(k2.s.meta.potions.wall === 2, '没喝的药水原样保留', String(k2.s.meta.potions.wall));
 
-  // ---- 坚壁药真的减半伤害 ----
+  // ---- 护盾药水真的减半伤害 ----
   const plain = armedRunWithPotions({});
   L.hurtPlayer(plain.s, plain.s.run, plain.run.player, 40);
   const plainHp = plain.run.player.hp;
@@ -1326,9 +1342,9 @@ section('22. 药水（消耗品）');
   L.usePotion(tank.s, 'wall');
   L.hurtPlayer(tank.s, tank.s.run, tank.run.player, 40);
   const tankHp = tank.run.player.hp;
-  ok(tankHp > plainHp, '坚壁药后同样伤害掉血更少', `无药 ${plainHp} vs 有药 ${tankHp}`);
+  ok(tankHp > plainHp, '护盾药水后同样伤害掉血更少', `无药 ${plainHp} vs 有药 ${tankHp}`);
   ok(plain.run.player.maxHp - tankHp === 20,
-    '坚壁药把 40 点伤害减半成 20', String(plain.run.player.maxHp - tankHp));
+    '护盾药水把 40 点伤害减半成 20', String(plain.run.player.maxHp - tankHp));
 
   // ---- 力量药真的提升伤害 ----
   const weak = armedRunWithPotions({});
@@ -1348,7 +1364,7 @@ section('22. 药水（消耗品）');
   const shopper = L.createState(555);
   shopper.meta.coins = 500;
   const buy1 = L.buyPotion(shopper, 'heal', 2);
-  ok(buy1.ok && shopper.meta.potions.heal === 2, '买 2 瓶回春药', JSON.stringify(buy1));
+  ok(buy1.ok && shopper.meta.potions.heal === 2, '买 2 瓶治疗药水', JSON.stringify(buy1));
   ok(shopper.meta.coins === 500 - 120, '买 2 瓶扣 120 铜币', String(shopper.meta.coins));
   const buy2 = L.buyPotion(shopper, 'heal', 5);
   ok(buy2.ok && shopper.meta.potions.heal === 3, '买到携带上限就停', JSON.stringify(shopper.meta.potions));

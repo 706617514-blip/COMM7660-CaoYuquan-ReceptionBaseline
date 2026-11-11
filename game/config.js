@@ -207,9 +207,9 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
    * 能让铜币始终有去处，玩家的选择也始终有效。
    *
    * 三条效果刻意选在**不同维度**上，避免互相替代：
-   *   回春 = 立刻回血（换血量）
+   *   治疗 = 立刻回血（换血量）
    *   力量 = 15 秒增伤（换输出窗口）
-   *   坚壁 = 8 秒减伤（换容错）
+   *   护盾 = 8 秒减伤（换容错）
    * 前两个是"增量"，第三个是"抗压"，对应三种不同的翻盘场景。
    *
    * 键位 1/2/3 由 PM 指定（设计文档 4.5 曾把键位列为实现者决定，
@@ -217,21 +217,21 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
    */
   const POTIONS = {
     heal: {
-      key: '1', name: '回春药', short: '回春',
+      key: '1', name: '治疗药水', short: '治疗',
       desc: '立刻恢复 25 点生命',
       price: 60, carry: 3,
       kind: 'instant', heal: 25,
       color: 0x7fe08a,
     },
     strength: {
-      key: '2', name: '力量药', short: '力量',
+      key: '2', name: '力量药水', short: '力量',
       desc: '15 秒内伤害提升 25%',
       price: 80, carry: 2,
       kind: 'buff', duration: 15.0, damageMul: 1.25,
       color: 0xff9a6c,
     },
     wall: {
-      key: '3', name: '坚壁药', short: '坚壁',
+      key: '3', name: '护盾药水', short: '护盾',
       desc: '8 秒内受到的伤害减半',
       price: 90, carry: 2,
       kind: 'buff', duration: 8.0, hurtMul: 0.5,

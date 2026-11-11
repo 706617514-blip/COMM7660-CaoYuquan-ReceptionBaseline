@@ -216,15 +216,15 @@ section('6b. 药水铺（新增的第四个建筑）');
   ok(acts2.every((a) => a.enabled), '钱够时都能买');
   const buyHeal = acts2.find((a) => a.payload.id === 'heal');
   const r = H.perform(rich, buyHeal);
-  ok(r.ok, '通过 perform 买回春药成功', JSON.stringify(r));
-  eq(rich.meta.potions.heal, 1, '回春药携带数 +1');
+  ok(r.ok, '通过 perform 买治疗药水成功', JSON.stringify(r));
+  eq(rich.meta.potions.heal, 1, '治疗药水携带数 +1');
   eq(rich.meta.coins, 300 - C.POTIONS.heal.price, '扣掉对应铜币');
 
   // 带满后按钮要变灰并说明原因（而不是点了没反应）
   rich.meta.potions.heal = C.POTIONS.heal.carry;
   const acts3 = H.zoneActions(rich, 'shop');
   const full = acts3.find((a) => a.payload.id === 'heal');
-  ok(!full.enabled, '带满后回春药不可再买');
+  ok(!full.enabled, '带满后治疗药水不可再买');
   ok(full.disabledReason && full.disabledReason.length > 0,
      '带满后写明原因', full.disabledReason);
 
@@ -373,8 +373,141 @@ section('兵器架：买 → 穿 → 升级 → 换装');
   eq(maxed.meta.equipment.feet.level, maxLv, '基础装备升到满级 ' + maxLv);
   const maxedActions = H.zoneActions(maxed, 'forgewear')
     .filter(function (a) { return a.payload.id === 'strawShoes'; });
-  eq(maxedActions.length, 1, '满级后只剩一个条目（没有可点的升级）');
-  eq(maxedActions[0].kind, 'equip-owned', '满级条目的种类是"已拥有"');
+  eq(maxedActions.length, 2, '满级后仍有两个条目：满级状态 + 卸掉');
+  ok(!maxedActions.some(function (a) { return a.kind === 'equip-upgrade'; }),
+     '满级后没有可点的升级动作（不是留一个按不动的升级）');
+  eq(maxedActions[0].kind, 'equip-owned', '第一条是"已满级"状态条目');
+  ok(!maxedActions[0].enabled, '满级条目不可点');
+  eq(maxedActions[0].disabledReason, '已满级 Lv.' + maxLv, '写明已满级');
+  eq((maxedActions[1] || {}).kind, 'equip-unequip', '第二条是卸掉（满级的件也能卸）');
+}
+
+// ---------------------------------------------------------------- 兵器架三态（V14）
+section('兵器架三态：购买 / 穿戴 / 升级 + 卸掉（V14）');
+{
+  const s = L.createState(4324);
+  H.ensureHub(s);
+  s.meta.coins = 5000;
+  const rowsFor = function (id, filter) {
+    return H.zoneActions(s, 'forgewear', filter).filter(function (a) {
+      return a.payload && a.payload.id === id;
+    });
+  };
+
+  // ① 没买：一个「购买」动作，label 仍是物品名
+  const unowned = rowsFor('hornHelm');
+  eq(unowned.length, 1, '没买的件只有一个动作');
+  eq(unowned[0].kind, 'equip-buy', '没买的件动作是购买');
+  eq(unowned[0].verb, '购买', '没买时按钮写"购买"');
+  eq(unowned[0].label, C.equipDef('hornHelm').name, 'label 是物品名，不是按钮文案');
+
+  // ② 买了没穿：一个「穿戴」动作，不花钱
+  eq(H.perform(s, unowned[0]).ok, true, '买下角盔');
+  const owned = rowsFor('hornHelm');
+  eq(owned.length, 1, '买了没穿仍只有一个动作');
+  eq(owned[0].kind, 'equip-wear', '买了没穿的动作是穿戴');
+  eq(owned[0].verb, '穿戴', '买了没穿按钮写"穿戴"（旧实现只能写"执行"）');
+  eq(owned[0].cost, 0, '穿戴不花钱');
+  eq(owned[0].label, C.equipDef('hornHelm').name, '穿戴行 label 仍是物品名');
+
+  // ③ 穿上：升级 + 卸掉 两条都要在（只给"卸掉"会让升级失去入口）
+  eq(H.perform(s, owned[0]).ok, true, '穿上角盔');
+  const worn = rowsFor('hornHelm');
+  eq(worn.length, 2, '穿上后有两个动作（升级 + 卸掉）');
+  eq(worn[0].kind, 'equip-upgrade', '第一条是升级');
+  eq(worn[0].verb, '升级', '升级按钮写"升级"');
+  ok(worn[0].cost > 0, '升级带价格（否则点下去不知道花多少）', String(worn[0].cost));
+  eq((worn[1] || {}).kind, 'equip-unequip', '第二条是卸掉');
+  eq((worn[1] || {}).verb, '卸掉', '卸掉按钮写"卸掉"');
+  eq((worn[1] || {}).cost, 0, '卸掉不花钱');
+  eq(worn[1] && worn[1].payload ? worn[1].payload.slot : null,
+     C.equipDef('hornHelm').slot, '卸掉动作知道卸哪个部位');
+  ok(worn.every(function (a) { return a.label === C.equipDef('hornHelm').name; }),
+     '两条动作的 label 都是物品名');
+
+  // ④ 卸掉真的落地：部位清空、件回背包、等级跟着走
+  const lvBefore = s.meta.equipment.head.level;
+  const un = H.perform(s, worn[1]);
+  ok(un.ok, '通过 perform 执行「卸掉」', JSON.stringify(un));
+  eq(s.meta.equipment.head, null, '卸掉后头部槽空了');
+  eq(L.equipOwned(s, 'hornHelm'), 'owned', '卸下来的件回到背包（没有消失）');
+  const bagHelm = s.meta.bag.filter(function (e) { return e.id === 'hornHelm'; })[0];
+  eq(bagHelm && bagHelm.level, lvBefore, '等级跟着条目回背包');
+  eq(rowsFor('hornHelm')[0].verb, '穿戴', '卸掉后又回到"穿戴"（三态真的闭环）');
+}
+
+section('兵器架动作带 uid：同名两件各穿各的（Task 3 三参修复从 UI 可达）');
+{
+  const s = L.createState(4325);
+  H.ensureHub(s);
+  s.meta.coins = 999999;
+  s.meta.bag.length = 0;
+  const i1 = L.bagAdd(s, 'hornHelm', 1);
+  const i2 = L.bagAdd(s, 'hornHelm', C.equipMaxLevel('hornHelm'));
+  const uid1 = s.meta.bag[i1].uid;
+  const uid2 = s.meta.bag[i2].uid;
+  ok(typeof uid1 === 'string' && uid1.length > 0 &&
+     typeof uid2 === 'string' && uid2.length > 0 && uid1 !== uid2,
+     '背包里两件同名装备各有 uid（logic 层的 uid 是字符串 u<n>）',
+     JSON.stringify([uid1, uid2]));
+
+  const rows = H.zoneActions(s, 'forgewear').filter(function (a) {
+    return a.payload && a.payload.id === 'hornHelm';
+  });
+  eq(rows.length, 1, '兵器架按 id 出行（重复件不额外占一行）');
+  eq((rows[0] || {}).kind, 'equip-wear', '背包里的件给穿戴动作');
+  ok(rows[0] && rows[0].payload && rows[0].payload.uid !== undefined,
+     '动作 payload 带 uid（旧实现只有 id/slot）');
+  eq(rows[0] && rows[0].payload ? rows[0].payload.uid : null, uid2,
+     'uid 指向等级最高的那件（sub 写满级就得穿满级那件）');
+  ok(!!rows[0] && String(rows[0].sub).indexOf('Lv.' + C.equipMaxLevel('hornHelm')) >= 0,
+     'sub 写的也是满级（显示与动作指向同一件）', rows[0].sub);
+
+  eq(rows[0] ? H.perform(s, rows[0]).ok : false, true, '穿上');
+  eq(s.meta.equipment.head.level, C.equipMaxLevel('hornHelm'),
+     '穿上的确实是满级那件（uid 真的透传到 equipItem）');
+  ok(L.bagIndexOfUid(s, uid1) >= 0, '1 级那件还在背包里（没被顺手穿走）');
+}
+
+section('兵器架页签：全部 / 未拥有 / 已拥有 / 已穿戴 / 特殊');
+{
+  const s = L.createState(4326);
+  H.ensureHub(s);
+  s.meta.coins = 5000;
+  const total = Object.keys(C.ALL_EQUIPMENT).length;
+  const specials = Object.keys(C.ALL_EQUIPMENT).filter(function (id) {
+    return C.equipDef(id).kind === 'special';
+  }).length;
+  eq(H.zoneActions(s, 'forgewear').length, total, '不带 filter 时列全部（老调用不受影响）');
+  eq(H.zoneActions(s, 'forgewear', 'all').length, total, '页签 all 也是全部');
+  eq(H.zoneActions(s, 'forgewear', 'unowned').length, total, '新档全是未拥有');
+  eq(H.zoneActions(s, 'forgewear', 'owned').length, 0, '新档没有已拥有');
+  eq(H.zoneActions(s, 'forgewear', 'worn').length, 0, '新档没有已穿戴');
+  eq(H.zoneActions(s, 'forgewear', 'special').length, specials, '特殊页签只列特效装备');
+
+  L.buyEquipment(s, 'hornHelm');
+  L.buyEquipment(s, 'ironHelm');
+  L.equipItem(s, 'ironHelm');
+  const unowned = H.zoneActions(s, 'forgewear', 'unowned');
+  eq(unowned.length, total - 2, '未拥有页签只剩没买的件（买过的两件都消失）');
+  eq(unowned.some(function (a) { return a.payload.id === 'hornHelm'; }), false,
+     '已买(未穿)的角盔不在"未拥有"页签里');
+  eq(unowned.some(function (a) { return a.payload.id === 'ironHelm'; }), false,
+     '"已穿戴"的铁盔也不在"未拥有"页签里');
+  ok(unowned.every(function (a) { return a.kind === 'equip-buy'; }),
+     '未拥有页签里每一条都是购买动作（页签不改变三态）');
+  // 注意口径：已拥有的件不是固定 1 行 —— 身上那件给"升级 + 卸掉"两行。
+  const ownedTab = H.zoneActions(s, 'forgewear', 'owned');
+  eq(ownedTab.length, 3, '已拥有页签=背包那件 1 行 + 身上那件 2 行');
+  eq(ownedTab.filter(function (a) { return a.payload.id === 'hornHelm'; }).length, 1,
+     '背包里的角盔只有 1 行（穿戴）');
+  eq(ownedTab.filter(function (a) { return a.payload.id === 'ironHelm'; }).length, 2,
+     '身上的铁盔有 2 行（升级 + 卸掉）');
+  const wornTab = H.zoneActions(s, 'forgewear', 'worn');
+  eq(wornTab.length, 2, '已穿戴页签只有身上那件的两条动作（升级 + 卸掉）');
+  ok(wornTab.every(function (a) { return a.payload.id === 'ironHelm'; }), '已穿戴页签只含铁盔');
+  eq(H.zoneActions(s, 'forgewear', '不存在').length,
+     H.zoneActions(s, 'forgewear').length, '未知页签退化为不过滤（不白屏）');
 }
 
 // ---------------------------------------------------------------- 汇总

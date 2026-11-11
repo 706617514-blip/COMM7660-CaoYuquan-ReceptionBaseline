@@ -256,6 +256,122 @@ ok(altarRows[altarRows.length - 1].className.indexOf('ult') >= 0, '大招条目�
 getEl('panelX').click();
 eq(getEl('panel').className, 'overlay', '点 ✕ 关闭面板');
 
+// ---------------------------------------------------------------- 兵器架三态（V14）
+section('4b. 兵器架：按钮写动作 + 页签只筛行');
+{
+  /*
+   * 这一节钉两件玩家一眼就能看见的事：
+   *   1. 按钮文案来自动作本身（购买 / 穿戴 / 升级 / 卸掉），
+   *      而不是物品名，也不是旧的 "cost 为 0 就写执行" 阶梯；
+   *   2. 页签（全部/未拥有/已拥有/已穿戴/特殊）只决定"这一屏显示哪一类"，
+   *      不改变每一行给的是哪个动作 —— 否则"未拥有"页签里的件会丢掉购买动作。
+   */
+  const forgewear = sandbox.GameHub.ZONES.find(z => z.id === 'forgewear');
+  const smith = L.createState(777);
+  sandbox.GameHub.ensureHub(smith);
+  smith.meta.coins = 3000;
+
+  const panelRows = () => getEl('panelBody').children.filter(c => c.className.indexOf('act') >= 0);
+  const tabsEl = () => getEl('panelBody').children.filter(c => c.className === 'tabs')[0];
+  const tabByLabel = (label) => (tabsEl() ? tabsEl().children.filter(b => b.textContent === label)[0] : null);
+  // 取不到就记一条失败并在空白元素上继续：崩掉整个文件会把后面的断言全藏起来。
+  const mustTab = (label) => {
+    const t = tabByLabel(label);
+    ok(!!t, '页签「' + label + '」存在');
+    return t || { click() {}, className: '', children: [] };
+  };
+  // 从 .txt 的 innerHTML 里精确取物品名（不能用 indexOf：'雷鸣角盔' 也含 '角盔'）
+  const labelOf = (r) => {
+    const m = /<div class="t">([^<]*)<\/div>/.exec(r.children[0].innerHTML);
+    return m ? m[1] : '';
+  };
+  const rowsWithLabel = (label) => panelRows().filter(r => labelOf(r) === label);
+  const btnOf = (row) => (row && row.children[1]) || { click() {}, textContent: '', disabled: true };
+  const textOf = (row) => String(btnOf(row).textContent);
+
+  sandbox.EmberfieldUI.openPanel(forgewear, smith, () => {}, (a) => {
+    sandbox.GameHub.perform(smith, a);
+    sandbox.EmberfieldUI.refreshPanel(forgewear, smith);
+  });
+
+  const total = Object.keys(C.ALL_EQUIPMENT).length;
+  const tabs0 = tabsEl() || { children: [] };
+  ok(!!tabsEl(), '兵器架有页签条');
+  eq(tabs0.children.length, 5, '五个页签');
+  eq(tabs0.children.map(b => b.textContent).join('/'), '全部/未拥有/已拥有/已穿戴/特殊',
+     '页签文案与顺序（全部 / 未拥有 / 已拥有 / 已穿戴 / 特殊）');
+  eq(tabs0.children[0] && tabs0.children[0].className, 'tab on', '默认停在"全部"页签');
+  eq(panelRows().length, total, '全部页签列出 ' + total + ' 行');
+  ok(panelRows().every(r => textOf(r).length > 0),
+     '每行按钮都有文案（不会出现空按钮）');
+
+  // ① 没买 → 按钮写"购买"，价格还在（改名不能把价格吞掉）
+  const before = rowsWithLabel('角盔');
+  eq(before.length, 1, '没买时角盔只有一行');
+  const firstHelm = before[0] || { children: [{ innerHTML: '' }, { click() {}, textContent: '' }] };
+  eq(textOf(firstHelm).indexOf('购买'), 0, '未买时按钮写"购买"',
+     textOf(firstHelm));
+  ok(textOf(firstHelm).indexOf(String(C.equipDef('hornHelm').price)) > 0,
+     '按钮上仍写着价格', btnOf(before[0]).textContent);
+
+  // ② 买下 → 当场变"穿戴"
+  btnOf(firstHelm).click();
+  eq(rowsWithLabel('角盔').length, 1, '买完仍是一行（没有多出副本行）');
+  eq(String(btnOf(rowsWithLabel('角盔')[0]).textContent), '穿戴', '买完按钮当场变"穿戴"');
+
+  // ③ 穿上 → 两个按钮：升级（带价）+ 卸掉
+  btnOf(rowsWithLabel('角盔')[0]).click();
+  const worn = rowsWithLabel('角盔');
+  eq(worn.length, 2, '穿上后同一件出现两行');
+  eq(textOf(worn[0]).indexOf('升级'), 0, '第一个按钮写"升级"',
+     textOf(worn[0]));
+  ok(textOf(worn[0]).indexOf(String(C.equipPrice('hornHelm', 2))) > 0,
+     '升级按钮写着下一级价格', textOf(worn[0]));
+  eq(textOf(worn[1]), '卸掉', '第二个按钮写"卸掉"');
+
+  // ④ 点"卸掉"真的落地
+  btnOf(worn[1]).click();
+  eq(smith.meta.equipment.head, null, '点"卸掉"后头部槽空了');
+  eq(rowsWithLabel('角盔').length, 1, '卸掉后又只剩一行');
+  eq(String(btnOf(rowsWithLabel('角盔')[0]).textContent), '穿戴', '卸掉后按钮回到"穿戴"');
+
+  // ⑤ 页签：未拥有只剩没买的件
+  mustTab('未拥有').click();
+  eq((tabsEl() ? tabsEl().children : []).filter(b => b.className.indexOf('on') >= 0).length, 1,
+     '同时只有一个页签选中');
+  eq(mustTab('未拥有').className, 'tab on', '点中的页签变成选中态');
+  eq(panelRows().length, total - 1, '未拥有页签少掉已买的角盔');
+  ok(!panelRows().some(r => labelOf(r) === '角盔'),
+     '已买的角盔不在"未拥有"页签里');
+  ok(panelRows().every(r => textOf(r).indexOf('购买') === 0),
+     '未拥有页签里每行都是"购买"动作');
+
+  // ⑥ 已穿戴页签只有身上那件的两条动作
+  mustTab('全部').click();
+  btnOf(rowsWithLabel('角盔')[0]).click();      // 再穿上（上一步卸掉了）
+  mustTab('已穿戴').click();
+  eq(panelRows().length, 2, '已穿戴页签只有角盔那两条动作');
+  eq(String(btnOf(panelRows()[0]).textContent).indexOf('升级'), 0, '已穿戴页签第一条是升级');
+  eq(String(btnOf(panelRows()[1]).textContent), '卸掉', '已穿戴页签第二条是卸掉');
+
+  // ⑦ 特殊页签只列特效装备
+  const specials = Object.keys(C.ALL_EQUIPMENT).filter(id => C.equipDef(id).kind === 'special');
+  mustTab('特殊').click();
+  eq(panelRows().length, specials.length, '特殊页签只列特效装备');
+  ok(panelRows().every(r => r.className.indexOf('ult') >= 0), '特殊页签每行都是特效样式');
+
+  mustTab('全部').click();
+  // 注意：此刻角盔穿在身上，"全部"是 35 件 + 身上那件多出的 1 行（升级+卸掉）＝ 36 行。
+  // 用"与不过滤时逐行一致"来断言，而不是写死 35 —— 后者会把'穿戴件两行'这个
+  // 新口径误判成页签失效。
+  const allRows = panelRows();
+  eq(allRows.length, sandbox.GameHub.zoneActions(smith, 'forgewear').length,
+     '切回"全部"与不过滤时的行数一致');
+  const names = {};
+  allRows.forEach(r => { names[labelOf(r)] = true; });
+  eq(Object.keys(names).length, total, '切回"全部"件数仍为 ' + total + '（一件不少）');
+}
+
 // ---------------------------------------------------------------- 结算
 section('5. 结算界面');
 L.startRun(bootedState, 'wood');

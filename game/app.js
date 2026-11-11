@@ -918,7 +918,7 @@
       return now && !was;
     };
 
-    // 药水是**边沿触发**：长按 1 不能把三瓶回春一次喝光。
+    // 药水是**边沿触发**：长按 1 不能把三瓶治疗一次喝光。
     // 这里在 read() 内部消费边沿，read() 每帧只调一次，语义与"按一下喝一瓶"一致。
     const potionEdge = (name) => {
       const now = !!down[name];
@@ -1571,8 +1571,12 @@
         global.EmberfieldUI.refreshPanel(zone, this.state);
         this.refreshPlots();
         global.EmberfieldUI.save(this.state);
-        global.EmberfieldUI.toast(r.ok ? (isPlant ? '已播种' : '已购买') : (r.reason || '无法执行'),
-                                  r.ok);
+        // toast 要说出"这次点了什么"。兵器架的动作自带 verb，直接沿用
+        // （已购买 / 已穿戴 / 已升级 / 已卸掉）；没有 verb 的老动作退回"已购买"。
+        const verb = action.verb;
+        const okText = isPlant ? '已播种'
+          : (verb ? (verb.charAt(0) === '已' ? verb : '已' + verb) : '已购买');
+        global.EmberfieldUI.toast(r.ok ? okText : (r.reason || '无法执行'), r.ok);
       });
     }
 

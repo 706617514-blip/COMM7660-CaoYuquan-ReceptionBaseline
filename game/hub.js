@@ -86,8 +86,27 @@
    * 某个区域当前能做什么。返回动作清单供 UI 渲染，
    * 每个动作自带 enabled 与原因，UI 不需要自己判断能不能买。
    */
-  function zoneActions(state, zoneId) {
-    const out = [];
+  /**
+   * 背包里该 id 等级最高的那一条的下标（并列时取靠前的），没有返回 -1。
+   *
+   * 兵器架按 id 出一行，可背包里可能有重复件（掉落会带重复品）。
+   * 这一行显示的 Lv. 和点下去真正穿上的那一件必须是同一条 —— 所以先选出
+   * "玩家手里最好的那件"，再把它自己的 level 与 uid 一起写进动作。
+   * 只写 id 不写 uid 时，logic 层只能退回"第一件同 id"：
+   * 面板上写着 Lv.3，点下去穿的却是 Lv.1，而玩家完全看不出来。
+   */
+  function bestBagIndex(state, id) {
+    const bag = state.meta.bag || [];
+    let best = -1;
+    for (let i = 0; i < bag.length; i++) {
+      if (bag[i].id !== id) continue;
+      if (best < 0 || (bag[i].level || 1) > (bag[best].level || 1)) best = i;
+    }
+    return best;
+  }
+
+  function zoneActions(state, zoneId, filter) {
+    let out = [];
     if (zoneId === 'field') {
       // 田地不再在这里出面板：HubScene 会让 J 直接进入农场场景，
       // 这里保留一个显式空清单，说明"这个区域没有可列的动作"。
@@ -137,7 +156,7 @@
     } else if (zoneId === 'shop') {
       // 药水铺：三种消耗品，价格固定、每局都要重新买。
       // 全部列出（包括买不起/已带满的），因为这里同时承担"展示效果"的功能 ——
-      // 玩家要先看到"坚壁药能减伤"才知道下局该带什么。
+      // 玩家要先看到"护盾药水能减伤"才知道下局该带什么。
       C.POTION_ORDER.forEach(function (id) {
         const def = C.POTIONS[id];
         const held = (state.meta.potions && state.meta.potions[id]) || 0;
@@ -157,6 +176,13 @@
       // 全列出来是有意的 —— 这里是玩家唯一能看到"还有什么装备、
       // 特效是什么"的地方，只列可买的会让构筑无从规划。
       // 排序：先按部位（头/身/背/武器/脚），再按档位/价格。
+      //
+      // 每一行给的是一条**动作**，不是"一个按钮的位置"：
+      //   label = 物品名（让玩家认出是哪件），
+      //   verb  = 动作本身（让按钮写得出来：购买 / 穿戴 / 升级 / 卸掉），
+      //   cost  = 这条动作要花的铜币（0 = 不花钱）。
+      // 早先这三件事挤在 label 与 cost 里，UI 只能靠硬编码阶梯去猜按钮写什么，
+      // 于是"穿上"被写成"执行"、满级条目也是"执行"。
       C.EQUIP_SLOTS.forEach(function (slot) {
         const ids = Object.keys(C.ALL_EQUIPMENT).filter(function (id) {
           return C.equipDef(id).slot === slot;
@@ -166,42 +192,74 @@
         ids.forEach(function (id) {
           const def = C.equipDef(id);
           const owned = L.equipOwned(state, id);
-          const poor = state.meta.coins < def.price;
           const slotName = C.EQUIP_SLOT_NAMES[slot] || slot;
-          let label = def.name;
-          let kind = 'equip-buy';
-          let cost = def.price;
-          let enabled = !owned && !poor;
-          let reason = owned === 'equipped' ? '已装备'
-                     : (owned === 'owned' ? '背包中' : (poor ? '铜币不够' : ''));
-          let sub = slotName + ' · ' + def.desc;
-          // 已有的话直接给"装备/升级"两个后续动作，而不是让玩家
-          // 买完还得去别处找 —— 商店与背包含在同一个面板里。
+          const maxLv = C.equipMaxLevel(id);
+          const ult = def.kind === 'special';
           if (owned === 'equipped') {
-            const up = L.equipUpgradeCost(state, id);
+            // 穿在身上：升级 + 卸掉，两条都要在。
+            // 只留"卸掉"会让升级失去入口（现在升级本来就靠这个按钮）；
+            // 只留"升级"则玩家没法把身上这件换下来。
             const lv = (state.meta.equipment[slot] || {}).level || 1;
-            kind = up === null ? 'equip-owned' : 'equip-upgrade';
-            cost = up;
-            enabled = up !== null && state.meta.coins >= up;
-            reason = up === null ? '已满级 Lv.' + lv : (state.meta.coins < up ? '铜币不够' : '');
-            sub = slotName + ' · Lv.' + lv + '/' + C.equipMaxLevel(id) + ' · ' + def.desc;
+            const up = L.equipUpgradeCost(state, id);
+            const poor = up !== null && state.meta.coins < up;
+            out.push({
+              kind: up === null ? 'equip-owned' : 'equip-upgrade',
+              id: 'eq-' + id,
+              label: def.name,
+              // 满级时按钮不写"升级"（点了也不会涨级），写"已满级"并禁用。
+              verb: up === null ? '已满级' : '升级',
+              sub: slotName + ' · Lv.' + lv + '/' + maxLv + ' · ' + def.desc,
+              cost: up === null ? 0 : up,
+              enabled: up !== null && !poor,
+              disabledReason: up === null ? '已满级 Lv.' + lv : (poor ? '铜币不够' : ''),
+              ultimate: ult,
+              payload: { id: id, slot: slot },
+            });
+            out.push({
+              kind: 'equip-unequip',
+              id: 'eq-' + id + '-off',
+              label: def.name,
+              verb: '卸掉',
+              sub: slotName + ' · 放回背包，等级保留 · ' + def.desc,
+              cost: 0,
+              enabled: true,
+              disabledReason: '',
+              ultimate: ult,
+              payload: { id: id, slot: slot },
+            });
           } else if (owned === 'owned') {
-            kind = 'equip-wear';
-            // 等级存在背包条目上（v6 起），按 id 找回那一条读它的 level。
-            // 以前读的是 meta.inventoryLevels —— 那个字段在 v5→v6 迁移里
-            // 已被删除，于是背包里任何装备在兵器架上都永远显示 Lv.1。
-            const bi = L.bagIndexOfId(state, id);
-            const lv = bi >= 0 ? (state.meta.bag[bi].level || 1) : 1;
-            cost = 0;
-            enabled = true;
-            sub = slotName + ' · Lv.' + lv + ' · ' + def.desc;
+            // 在背包里：穿戴，并把**那一条**的 uid 一起带出去。
+            const bi = bestBagIndex(state, id);
+            const entry = bi >= 0 ? state.meta.bag[bi] : null;
+            const lv = (entry && entry.level) || 1;
+            out.push({
+              kind: 'equip-wear',
+              id: 'eq-' + id,
+              label: def.name,
+              verb: '穿戴',
+              sub: slotName + ' · Lv.' + lv + ' · ' + def.desc,
+              cost: 0,
+              enabled: true,
+              disabledReason: '',
+              ultimate: ult,
+              payload: { id: id, slot: slot, uid: entry ? entry.uid : undefined },
+            });
+          } else {
+            // 还没有：购买。买了自然进背包，下一屏就会变成"穿戴"。
+            const poor = state.meta.coins < def.price;
+            out.push({
+              kind: 'equip-buy',
+              id: 'eq-' + id,
+              label: def.name,
+              verb: '购买',
+              sub: slotName + ' · ' + def.desc,
+              cost: def.price,
+              enabled: !poor,
+              disabledReason: poor ? '铜币不够' : '',
+              ultimate: ult,
+              payload: { id: id, slot: slot },
+            });
           }
-          out.push({
-            kind: kind, id: 'eq-' + id, label: label, sub: sub,
-            cost: cost, enabled: enabled, disabledReason: reason,
-            ultimate: def.kind === 'special',
-            payload: { id: id, slot: slot },
-          });
         });
       });
     } else if (zoneId === 'gate') {
@@ -226,6 +284,22 @@
         });
       });
     }
+    // 兵器架页签：全部 / 未拥有 / 已拥有 / 已穿戴 / 特殊。
+    // 过滤放在动作生成**之后**：三态（购买 / 穿戴 / 升级+卸掉）由装备状态决定，
+    // 页签只决定"这一屏显示哪一类"，两者互不影响 ——
+    // 反过来做就会让"未拥有"页签里的件丢掉购买动作。
+    if (zoneId === 'forgewear' && filter && filter !== 'all') {
+      out = out.filter(function (a) {
+        const def = a.payload && C.equipDef(a.payload.id);
+        if (!def) return false;
+        if (filter === 'special') return def.kind === 'special';
+        const held = L.equipOwned(state, a.payload.id);
+        if (filter === 'unowned') return !held;
+        if (filter === 'owned') return !!held;
+        if (filter === 'worn') return held === 'equipped';
+        return true;   // 未知页签退化为不过滤：宁可多显示，也别给一片空白
+      });
+    }
     return out;
   }
 
@@ -248,8 +322,16 @@
     }
     if (action.kind === 'potion') return L.buyPotion(state, action.payload.id, 1);
     if (action.kind === 'equip-buy') return L.buyEquipment(state, action.payload.id);
-    if (action.kind === 'equip-wear') return L.equipItem(state, action.payload.id);
-    if (action.kind === 'equip-upgrade') return L.upgradeEquipment(state, action.payload.id);
+    // uid 必须一路透传：同 id 的重复件各是各的，掉了 uid 就只能退回
+    // "第一件同 id"，于是面板写的等级和实际穿/升的那件对不上。
+    if (action.kind === 'equip-wear') {
+      return L.equipItem(state, action.payload.id, action.payload.uid);
+    }
+    if (action.kind === 'equip-upgrade') {
+      return L.upgradeEquipment(state, action.payload.id, action.payload.uid);
+    }
+    // 卸掉不需要 uid：身上某个部位只有一件。
+    if (action.kind === 'equip-unequip') return L.unequipSlot(state, action.payload.slot);
     if (action.kind === 'equip-owned') return L.equipItem(state, action.payload.id);
     if (action.kind === 'upgrade') return L.buyUpgrade(state, action.payload.key);
     if (action.kind === 'skill') return L.buySkill(state, action.payload.key);

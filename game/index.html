@@ -107,6 +107,13 @@
   .act .t{font-size:13.5px;color:#e6eef6}
   .act .s{font-size:11px;color:var(--dim);margin-top:3px;line-height:1.45}
   .act .why{font-size:11px;color:var(--red);margin-top:3px}
+  /* 兵器架页签：一排小胶囊，选中态靠底色+描边区分（不靠颜色单一维度） */
+  .tabs{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+  .tab{padding:5px 11px;border-radius:8px;border:1px solid #2b3a49;
+    background:#151d26;color:#9fb2c4;font-size:12px;font-family:inherit;
+    cursor:pointer;transition:background .15s,color .15s,border-color .15s}
+  .tab:hover{background:#1d2833;color:#dbe6f0}
+  .tab.on{background:#26384a;border-color:#4a6a86;color:#eaf3fb}
   .buy{flex:0 0 auto;min-width:78px;padding:8px 12px;border-radius:9px;
     border:1px solid #3a6b46;background:linear-gradient(180deg,#2f6b3c,#24512f);
     color:#eaf7ee;font-size:12.5px;cursor:pointer;font-family:inherit;
@@ -425,7 +432,7 @@
   <kbd>A</kbd><kbd>D</kbd> 左右　<kbd>W</kbd><kbd>S</kbd> 前后（景深）　
   <kbd>Shift</kbd> 加速跑　<kbd>空格</kbd> 跳　<kbd>J</kbd> 攻击／基地互动　
   <kbd>U</kbd> 裂风斩　<kbd>I</kbd> 闪现　<kbd>O</kbd> 震地　<kbd>K</kbd> 战吼　<kbd>L</kbd> 大招　
-  <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> 喝药水（回春／力量／坚壁）
+  <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> 喝药水（治疗／力量／护盾）
   <br>
   玩法：在基地走到设施前按 <kbd>J</kbd> 使用（田地会进入农场场景）；走到远征之门选难度出发。
   打怪攒种子与铜币；种田后作物 <b>2 局成熟</b>，成熟后<b>每局结算自动入账</b>（不需要手动收取）；收益用来升级强化与技能。
@@ -599,11 +606,63 @@
     $('panel').className = 'overlay on';
   }
 
+  // ---------------------------------------------------------------
+  // 兵器架页签（V14）：全部 / 未拥有 / 已拥有 / 已穿戴 / 特殊
+  //
+  // 为什么要有：改造前"买过的"和"没买的"、"穿着的"和"躺背包的"全混在
+  // 一屏 35 行里，玩家想找"我还能买什么"得从头滑到尾。页签只影响显示，
+  // 不改变下面每一行的动作（三态仍由装备状态决定）。
+  // ---------------------------------------------------------------
+  const PANEL_TABS = [
+    { id: 'all', label: '全部' },
+    { id: 'unowned', label: '未拥有' },
+    { id: 'owned', label: '已拥有' },
+    { id: 'worn', label: '已穿戴' },
+    { id: 'special', label: '特殊' },
+  ];
+  const panelTab = {};          // zoneId -> 当前页签 id
+
+  function currentTab(zoneId) {
+    return panelTab[zoneId] || 'all';
+  }
+
+  function makeTabs(zone, s) {
+    const bar = document.createElement('div');
+    bar.className = 'tabs';
+    const cur = currentTab(zone.id);
+    PANEL_TABS.forEach(function (t) {
+      const b = document.createElement('button');
+      b.className = 'tab' + (t.id === cur ? ' on' : '');
+      b.textContent = t.label;
+      b.addEventListener('click', function () {
+        panelTab[zone.id] = t.id;
+        refreshPanel(zone, s);
+      });
+      bar.appendChild(b);
+    });
+    return bar;
+  }
+
+  /**
+   * 面板按钮上写什么。
+   *
+   * 动作自带 verb 时以它为准（购买 / 穿戴 / 升级 / 卸掉 …）：
+   * 按钮该回答的是"点了会发生什么"，而 label 是物品名，两者不是一回事。
+   * cost 大于 0 时把价格接在后面 —— 换成动词不能把价格藏掉。
+   * 没有 verb 的动作（铁匠铺 / 祭坛 / 远征）沿用原来的阶梯：挑战 / 出发 / 执行。
+   */
+  function panelButtonText(a) {
+    if (a.verb) return a.cost > 0 ? a.verb + ' · ' + a.cost : a.verb;
+    if (a.kind === 'boss') return '挑战';
+    if (a.kind === 'run') return '出发';
+    return (a.cost === null || a.cost === undefined || a.cost === 0) ? '执行' : String(a.cost);
+  }
+
   function refreshPanel(zone, s) {
     if (!panelCallback) return;
     const body = $('panelBody');
     body.innerHTML = '';
-    const actions = H.zoneActions(s, zone.id);
+    const actions = H.zoneActions(s, zone.id, currentTab(zone.id));
 
     const res = document.createElement('div');
     res.style.cssText = 'display:flex;gap:16px;font-size:12px;color:#8fa3b8;' +
@@ -613,6 +672,9 @@
       '　成熟田 <b style="color:#e8b04b">' + L.maturePlots(s) + '</b>/9' +
       '　被动 <b style="color:#e8b04b">+' + L.passiveIncome(s) + '</b>/局';
     body.appendChild(res);
+
+    // 兵器架才有"拥有 / 穿戴"这个维度，别的区域挂页签只会多一层噪音
+    if (zone.id === 'forgewear') body.appendChild(makeTabs(zone, s));
 
     actions.forEach(function (a) {
       const row = document.createElement('div');
@@ -630,9 +692,7 @@
       const isBoss = a.kind === 'boss';
       btn.className = 'buy' + (a.ultimate ? ' ult' : '')
         + (a.kind === 'run' ? ' free' : '') + (isBoss ? ' danger' : '');
-      btn.textContent = isBoss ? '挑战'
-        : (a.kind === 'run' ? '出发'
-        : ((a.cost === null || a.cost === undefined || a.cost === 0) ? '执行' : a.cost));
+      btn.textContent = panelButtonText(a);
       btn.disabled = !a.enabled;
       btn.addEventListener('click', function () { panelCallback.onAction(a); });
 
