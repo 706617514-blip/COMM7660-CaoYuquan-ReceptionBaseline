@@ -1063,6 +1063,66 @@ const SCRIPT = `
     });
   }
 
+  // ---- 名字胶囊必须挂在各自设施美术的顶边上方（Task 11b）----
+  // 判据全部用真实包围盒：容器 getBounds() 含缩放，文字 getBounds() 含 padding。
+  // 胶囊按 ZONES 里的名字精确匹配 —— 场景里还有别的 Text，按"第几个"取位会随
+  // 别人的改动错位，那时断言的是一张完全不相干的标签。
+  const zoneTexts = (hubZ && hubZ.children ? hubZ.children.list : [])
+    .filter(function (c) { return c && c.type === 'Text'; });
+  const labelOf = function (z) {
+    return zoneTexts.filter(function (t) {
+      return String(t.text) === z.name;
+    })[0] || null;
+  };
+  out.zoneLabels = {};
+  if (hubZ && hubZ.zoneArt) {
+    (window.GameHub.ZONES || []).forEach(function (z) {
+      const art = hubZ.zoneArt[z.id];
+      const lb = labelOf(z);
+      if (!art || !lb) return;
+      const ab = art.getBounds();
+      const tb = lb.getBounds();
+      out.zoneLabels[z.id] = {
+        artTop: Math.round(ab.top * 10) / 10,
+        artBottom: Math.round(ab.bottom * 10) / 10,
+        labelTop: Math.round(tb.top * 10) / 10,
+        labelBottom: Math.round(tb.bottom * 10) / 10,
+        originY: lb.originY,
+      };
+    });
+  }
+
+  // 反证的核心：角色站在该设施正前方（z = 0，画面最前排）时，
+  // 胶囊矩形与角色矩形不许相交。胶囊原先在设施底边下方 y + 14，
+  // 那时正好落在脑袋高度，被头盔切成两片残字。
+  out.labelHeroHits = [];
+  {
+    const zonesForLabel = (window.GameHub.ZONES || []).slice();
+    for (let i = 0; i < zonesForLabel.length; i++) {
+      const z = zonesForLabel[i];
+      stZ.hub.x = z.x;
+      stZ.hub.z = 0;
+      stZ.hub.facing = 1;
+      await wait(220);
+      const lb = labelOf(z);
+      const hero = hubZ && hubZ.hero;
+      if (!lb || !hero) { out.labelHeroHits.push({ id: z.id, missing: true }); continue; }
+      const tb = lb.getBounds();
+      const hb = hero.getBounds();
+      const overlapX = Math.min(tb.right, hb.right) - Math.max(tb.left, hb.left);
+      const overlapY = Math.min(tb.bottom, hb.bottom) - Math.max(tb.top, hb.top);
+      out.labelHeroHits.push({
+        id: z.id,
+        hit: overlapX > 0 && overlapY > 0,
+        overlapX: Math.round(overlapX * 10) / 10,
+        overlapY: Math.round(overlapY * 10) / 10,
+        labelBottom: Math.round(tb.bottom * 10) / 10,
+        heroTop: Math.round(hb.top * 10) / 10,
+        heroX: Math.round(hb.centerX * 10) / 10,
+      });
+    }
+  }
+
   // 远离点位：x=500 落在 shop 与 forgewear 的横向容差之外，z 取默认中线。
   stZ.hub.x = 500;
   stZ.hub.z = 105;
@@ -1638,6 +1698,35 @@ const SMALLSCRIPT = `
     ok(r.zoneArtScale && r.zoneArtScale.anvil < r.zoneArtScale.field,
        '靠后的设施按景深略小一点（不是平铺同一尺寸）',
        JSON.stringify(r.zoneArtScale));
+  }
+
+  console.log('\n--- 名字胶囊挂在设施顶边上方，不再被角色穿头（Task 11b）---');
+  {
+    const zl = r.zoneLabels || {};
+    const ids = Object.keys(zl);
+    eq(ids.length, 6, '六个点位的胶囊与设施包围盒都量到了');
+    const notAbove = ids.filter(function (id) {
+      return !(zl[id].labelBottom <= zl[id].artTop + 0.5);
+    });
+    ok(notAbove.length === 0,
+       '每颗胶囊的下边缘都在对应设施包围盒的顶边之上（文字向上长，不再压进美术）',
+       JSON.stringify(notAbove.map(function (id) {
+         return id + ': labelBottom ' + zl[id].labelBottom +
+           ' vs artTop ' + zl[id].artTop;
+       })));
+    const originOk = ids.filter(function (id) { return zl[id].originY === 1; });
+    eq(originOk.length, 6, '六颗胶囊的原点都是 (0.5, 1)（文字往上长，不是往下堆）');
+    // 错落必须还在：胶囊跟着各自设施的 y 走，不是又被拉成一条直线。
+    const tops = ids.map(function (id) { return zl[id].labelTop; });
+    const distinctTops = tops.filter(function (v, i, a) { return a.indexOf(v) === i; });
+    ok(distinctTops.length >= 3, '六颗胶囊仍然至少三档高低（没有退回一条直线）',
+       JSON.stringify(zl));
+    const hits = r.labelHeroHits || [];
+    eq(hits.length, 6, '六个点位都试了一遍「角色站正前方」');
+    const bad = hits.filter(function (h) { return h.missing === true || h.hit === true; });
+    ok(bad.length === 0,
+       '反证：角色站在每个设施正前方（z = 0）时，胶囊矩形与角色矩形都不相交',
+       JSON.stringify(bad));
   }
 
   console.log('\n--- 头顶键帽（Task 11 V17）---');

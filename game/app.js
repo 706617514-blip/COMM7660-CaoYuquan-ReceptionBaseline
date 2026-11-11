@@ -1476,12 +1476,18 @@
         this.zoneArt[z.id] = img;
 
         // 标签做成胶囊，比裸文字清楚。
-        // 位置跟着这一行自己的 y 走：错落之后还写死一个 y，名字就会浮在设施上方
-        // 或压进土里（上排和下排差 35px，足够看出来）。
-        const label = this.add.text(z.x, y + 14, z.name, {
+        // 位置挂在**这座设施自己包围盒的顶边之上**，不写死 y、也不写死高度表：
+        // 容器 getBounds() 已经含缩放，六个设施高度差别很大，手写一张高度表
+        // 只要改一次美术就整批失准。
+        // 为什么不放设施底边下方（原实现是 y + 14）：角色走到设施**前方**时，
+        // 胶囊正好落在脑袋高度，被头盔切成两片残字，看起来像乱码 —— 而且沿画面
+        // 最前排走动时每个点位都有这么一条带，离得越近越难看。
+        // 原点改 (0.5, 1)：文字从顶边往上长，胶囊底边永远贴着自己的美术。
+        const artBounds = img.getBounds();
+        const label = this.add.text(z.x, artBounds.top - 6, z.name, {
           fontSize: '12px', color: '#e6eef6', fontFamily: 'sans-serif',
           backgroundColor: '#0b1117cc', padding: { x: 9, y: 4 },
-        }).setOrigin(0.5, 0).setDepth(20).setAlpha(0.92);
+        }).setOrigin(0.5, 1).setDepth(20).setAlpha(0.92);
         label.setStroke('#00000088', 2);
       });
 
