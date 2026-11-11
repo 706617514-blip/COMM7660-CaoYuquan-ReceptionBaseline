@@ -304,23 +304,6 @@ git commit -m "feat(bag): 库存改为条目数组，STATE_VERSION 5->6 顺序�
   - `upgradeEquipment(state, id, uid?)` —— 有 `uid` 时升指定的那一件
   - `equipOwned(state, id) -> 'equipped' | 'owned' | null` **签名不变**
 
-`rollEquipDrop` 里 Task 1 留下的 `state.meta.inventory.push(id)` 必须改成落位逻辑，
-否则第 211 件要么越界要么静默消失（设计 §4.7 明确要求"不丢装备"）：
-
-```js
-const idx = bagAdd(state, id, 1);            // 容量内：正常入格
-if (idx === -1) {
-  // 全满：不丢、也不越界 —— 落进最后已解锁页的末格，由 UI 提示"背包已满"
-  const last = bagCapacity(state) - 1;
-  state.meta.bag[last] = { id: id, level: 1, uid: nextUid(state) };
-  return { id: id, duplicate: duplicate, bagFull: true };
-}
-return { id: id, duplicate: duplicate, bagFull: false };
-```
-
-**并加一条断言**：连掉 `bagCapacity + 5` 次之后，
-`state.meta.bag.length <= L.bagCapacity(state)`（没越界）且每次返回都非 null（没丢）。
-
 - [ ] **Step 1: 写测试（覆盖 Review Focus #3）**
 
 ```js
