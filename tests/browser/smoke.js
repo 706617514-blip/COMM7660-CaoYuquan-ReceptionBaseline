@@ -109,8 +109,12 @@ const SCRIPT = `
 (async function () {
   const out = {};
   const wait = (ms) => new Promise(r => setTimeout(r, ms));
-  const key = (t, code, kc) => window.dispatchEvent(new KeyboardEvent(t,
-    { code: code, keyCode: kc, which: kc, bubbles: true }));
+  // 第四个参数是可选的 KeyboardEvent 初始化项。
+  // 需要断言 defaultPrevented 的地方必须带 { cancelable: true }：合成事件
+  // 默认 cancelable=false，那时 preventDefault() 是空操作、defaultPrevented
+  // 永远是 false —— 断言会对着正确实现报假红（最小探针已实测）。
+  const key = (t, code, kc, opt) => window.dispatchEvent(new KeyboardEvent(t,
+    Object.assign({ code: code, keyCode: kc, which: kc, bubbles: true }, opt || {})));
 
   // ---- 1. 打开 ----
   out.phaser = typeof window.Phaser !== 'undefined';
@@ -263,6 +267,44 @@ const SCRIPT = `
       out.potionBarHasActive = bar ? !!bar.querySelector('.po.active') : false;
       // 持有量必须落到 DOM 上，否则玩家看不到自己还有几瓶
       out.potionBarText = bar ? bar.textContent.replace(/\\s+/g, '') : '';
+    }
+  }
+
+  // ---- 3c2. 远征里按 Tab：背包也能开，而且战斗真的停住（Task 9）----
+  // 只测 Hub 不够：Tab 的 window 监听是每个场景各注册一份的，
+  // Run 那边漏接线的话，战斗里按 Tab 要么没反应，要么背包开着还在挨打。
+  // 「停住了」必须用 run.elapsed 反证 —— 它由 logic 每帧 += dt，
+  // 只有 Run.update 在跑才会涨；只读 isPaused() 证明不了画面真的停。
+  {
+    const hubForRun = globalThis.__game
+      ? globalThis.__game.scene.getScene('Hub') : null;
+    // 上一局已经跑了几秒，可能已经结算：重开一局，保证 elapsed 是活的
+    if (hubForRun && typeof hubForRun.startRun === 'function') hubForRun.startRun('wood');
+    await wait(1000);
+    const runP = globalThis.__game ? globalThis.__game.scene.getScene('Run') : null;
+    const stR = window.EmberfieldApp.__state;
+    const run = stR && stR.run;
+    out.runSceneFound = !!runP;
+    out.runAlive = !!(run && run.player && run.player.hp > 0);
+    if (runP && run) {
+      key('keydown', 'Tab', 9);
+      await wait(90);
+      key('keyup', 'Tab', 9);
+      await wait(250);
+      out.runBagOpenedByTab = window.BagHud.isOpen();
+      out.runScenePaused = runP.scene.isPaused();
+      const e0 = run.elapsed;
+      await wait(450);
+      out.runElapsedWhilePaused = +(run.elapsed - e0).toFixed(3);
+      key('keydown', 'Tab', 9);
+      await wait(90);
+      key('keyup', 'Tab', 9);
+      await wait(250);
+      out.runBagClosedByTab = !window.BagHud.isOpen();
+      out.runSceneResumed = !runP.scene.isPaused();
+      const e2 = run.elapsed;
+      await wait(350);
+      out.runElapsedAfterResume = +(run.elapsed - e2).toFixed(3);
     }
   }
 
@@ -660,6 +702,49 @@ const SCRIPT = `
   if (nextBtn) { nextBtn.click(); await wait(200); }
   out.pageLabelOnPage2 = textOf(document.getElementById('bag-page'));
   out.bagCellsOnPage2 = document.querySelectorAll('#bag .cell').length;
+
+  // ---- Tab 打开背包 + 暂停（V1 / V21）----
+  // 注意：本段整体在 SCRIPT 模板字符串里，**一个反引号都不能出现**。
+  const stP = window.EmberfieldApp.__state;
+  const hubP = globalThis.__game.scene.getScene('Hub');
+  window.BagHud.close();              // 从关闭态开始，保证 Tab 真的从无到有
+  stP.hub.x = 300; stP.hub.z = 105;   // 放在空地，避免撞到点位边界
+  await wait(350);
+  out.pauseClosedBefore = window.BagHud.isOpen();
+
+  key('keydown', 'Tab', 9); await wait(90); key('keyup', 'Tab', 9);
+  await wait(350);
+  out.pauseOpenedByTab = window.BagHud.isOpen();
+  out.pauseScenePaused = hubP.scene.isPaused();
+
+  const x0 = stP.hub.x;
+  key('keydown', 'KeyD', 68); await wait(700); key('keyup', 'KeyD', 68);
+  await wait(120);
+  out.pauseXBefore = x0;
+  out.pauseXWhileOpen = stP.hub.x;
+
+  // 关掉背包，同样的按键必须能动 —— 证明上一条的「不动」是暂停造成的
+  key('keydown', 'Tab', 9); await wait(90); key('keyup', 'Tab', 9);
+  await wait(350);
+  out.pauseClosedAfter = window.BagHud.isOpen();
+  out.pauseSceneResumed = !hubP.scene.isPaused();
+  const x1 = stP.hub.x;
+  key('keydown', 'KeyD', 68); await wait(700); key('keyup', 'KeyD', 68);
+  await wait(120);
+  out.pauseXBeforeReopen = x1;
+  out.pauseXAfterClose = stP.hub.x;
+
+  // Tab 默认会把焦点移到下一个控件，必须被 preventDefault 吃掉。
+  // cancelable:true 是真实键盘事件的取值；这里不带上就测不到任何东西。
+  let defaultPrevented = false;
+  const probe = (e) => { defaultPrevented = e.defaultPrevented; };
+  window.addEventListener('keydown', probe);
+  key('keydown', 'Tab', 9, { cancelable: true }); await wait(60); key('keyup', 'Tab', 9);
+  window.removeEventListener('keydown', probe);
+  out.tabDefaultPrevented = defaultPrevented;
+  await wait(250);
+  window.BagHud.close();
+
   return out;
 })();
 `;
@@ -905,6 +990,29 @@ const SCRIPT = `
   ok(typeof r.pageLabelOnPage2 === 'string' && r.pageLabelOnPage2.indexOf('2 / 2') >= 0,
      '翻页后是第 2 / 2 页', r.pageLabelOnPage2);
   eq(r.bagCellsOnPage2, 35, '翻到第二页格子数仍然恒为 35');
+
+  console.log('\n--- Tab 打开背包 + 暂停（V1 / V21）---');
+  ok(r.pauseClosedBefore === false, '起始态背包是关着的（否则下面测不到 Tab）');
+  ok(r.pauseOpenedByTab === true, '按 Tab 打开背包');
+  ok(r.pauseScenePaused === true, '背包打开时 Hub 场景真的 pause 了');
+  ok(r.pauseXWhileOpen === r.pauseXBefore,
+     '暂停期间按住 D 位置不变', r.pauseXBefore + ' -> ' + r.pauseXWhileOpen);
+  ok(r.pauseClosedAfter === false, '再按 Tab 关闭背包');
+  ok(r.pauseSceneResumed === true, '关闭后场景恢复运行（pause/resume 成对）');
+  ok(r.pauseXAfterClose > r.pauseXBeforeReopen + 5,
+     '关闭后同样按 D 位置真的变了（反证：上一条不是按键失效）',
+     r.pauseXBeforeReopen + ' -> ' + r.pauseXAfterClose);
+  ok(r.tabDefaultPrevented === true, 'Tab 的浏览器默认行为被 preventDefault 拦掉');
+
+  console.log('\n--- 远征里按 Tab 也暂停（Task 9）---');
+  ok(r.runSceneFound === true, '远征场景存在');
+  ok(r.runAlive === true, '这一局还活着（否则 elapsed 停了也证明不了什么）');
+  ok(r.runBagOpenedByTab === true, '远征里按 Tab 也能打开背包');
+  ok(r.runScenePaused === true, '背包打开时 Run 场景真的 pause 了');
+  ok(r.runElapsedWhilePaused === 0, '暂停期间 run.elapsed 一帧都没涨（战斗真的停住）', r.runElapsedWhilePaused);
+  ok(r.runBagClosedByTab === true, '再按 Tab 关闭背包（Run）');
+  ok(r.runSceneResumed === true, '关闭后 Run 场景恢复运行');
+  ok(r.runElapsedAfterResume > 0, '恢复后 run.elapsed 继续往上涨（反证：上一帧数不是本来就停）', r.runElapsedAfterResume);
 
   console.log('\n' + '='.repeat(56));
   if (fail === 0) {

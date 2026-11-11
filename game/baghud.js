@@ -932,6 +932,11 @@
     if (nextState) state = nextState;
     if (nextOpts) opts = nextOpts;
     if (!ui && !build()) return false;
+    // 宿主只关心「关 -> 开」这一跳。重复 open() 是幂等的（只重置位置和分页），
+    // 再通知一次 onOpen 会让宿主把已经被置成 true 的面板状态当成"打开前"，
+    // 关背包时永远恢复成 true —— update() 从此早退，角色再也不动
+    // （实测：连开两次 + 关一次，Hub 里按 D 位移 0px；只开一次则 150px）。
+    const wasOpen = opened;
     opened = true;
     ui.root.classList.add('on');
     ui.root.setAttribute('aria-hidden', 'false');
@@ -942,12 +947,15 @@
     placeDefault();
     page = 0;
     batch = null;
-    if (host && typeof host.onOpen === 'function') host.onOpen();
+    if (!wasOpen && host && typeof host.onOpen === 'function') host.onOpen();
     refresh();
     return true;
   }
 
   function close() {
+    // 同理：只有真的从开到关才通知 onClose。已经关着再 close() 不该让宿主
+    // 恢复一次面板状态，也不该触发一次 resume。
+    const wasOpen = opened;
     opened = false;
     batch = null;
     hideTip();
@@ -956,7 +964,7 @@
       ui.root.setAttribute('aria-hidden', 'true');
     }
     drag = null;
-    if (host && typeof host.onClose === 'function') host.onClose();
+    if (wasOpen && host && typeof host.onClose === 'function') host.onClose();
     return true;
   }
 

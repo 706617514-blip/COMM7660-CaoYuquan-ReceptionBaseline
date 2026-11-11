@@ -865,13 +865,27 @@
       Digit1: 'potion1', Digit2: 'potion2', Digit3: 'potion3',
       Numpad1: 'potion1', Numpad2: 'potion2', Numpad3: 'potion3',
       Escape: 'esc',
+      // Tab：开/关背包（Task 9）。
+      // 它**不能**像别的键那样只写进 down 表等 update() 去读：背包打开后
+      // scene.pause() 会停掉该场景的 update()，第二次按 Tab 就再也没人处理，
+      // 背包永远关不掉（自锁）。所以下面 onDown 里立刻调用 scene.toggleBag()。
+      Tab: 'bag',
     };
 
     const onDown = (ev) => {
       const name = CODES[ev.code];
       if (!name) return;
-      // 阻止空格滚动页面、Shift 触发浏览器快捷键
-      if (ev.code === 'Space' || ev.code.startsWith('Shift')) ev.preventDefault();
+      // 阻止空格滚动页面、Shift 触发浏览器快捷键；
+      // Tab 必须一起拦：不拦的话浏览器会把焦点跳到 DOM 按钮上，
+      // 之后的按键全被那个按钮吃掉，游戏像死了一样（实测）。
+      if (ev.code === 'Space' || ev.code.startsWith('Shift') || ev.code === 'Tab') ev.preventDefault();
+      if (name === 'bag') {
+        // 边沿动作，当场执行，不进 down 表 —— 开启后本场景 update() 已停，
+        // 读按键表的那条路径走不到。window 监听不受 scene.pause() 影响，
+        // 所以"再按一次 Tab 关掉"始终有效。
+        if (typeof scene.toggleBag === 'function') scene.toggleBag();
+        return;
+      }
       down[name] = true;
       down['confirm'] = down['confirm'] || name === 'attack';
     };
@@ -1458,6 +1472,14 @@
           onClose: () => {
             this.panelOpen = !!this.bagPrevPanelOpen;
             this.bagPrevPanelOpen = false;
+            // 与 toggleBag 里的 scene.pause() 成对恢复。三件事要一起说清：
+            // 1) 必须在这里而不是只在 toggleBag 里：✕ 按钮（和 Esc 提示）直接调
+            //    BagHud.close()，绕过 Tab；只写在 toggleBag 里游戏会一直冻住。
+            // 2) 必须先问 isPaused()：场景可能已经被别的来源暂停（例如 ESC 菜单），
+            //    无条件 resume() 会把别人的暂停吞掉。
+            // 3) 重复 close() 不会再通知（baghud 只在真的"开 -> 关"那一跳回调），
+            //    所以这里不会出现"关两次恢复两次"。
+            if (this.scene && this.scene.isPaused()) this.scene.resume();
           },
         });
       }
@@ -1472,6 +1494,26 @@
       // 调试钩子：无头探针需要能驱动场景（见 /tmp/probe.js）
       global.EmberfieldApp.__scene = this;
       global.EmberfieldApp.__state = this.state;
+    }
+
+    /*
+     * Tab 开 / 关背包（Task 9）。
+     *
+     * 方向只问 BagHud.isOpen()，不另存一份开关状态 —— 两份状态一旦漂移，
+     * 就会出现"按 Tab 关不掉"或者"面板关了场景还在暂停"。
+     * 调用点只有一个：createInput 的 window keydown 监听（Tab 分支）。
+     */
+    toggleBag() {
+      const hud = global.BagHud;
+      if (!hud || typeof hud.open !== 'function') return;
+      if (hud.isOpen()) { hud.close(); return; }   // 恢复在 onClose 里，成对
+      // 先开面板再暂停：反过来的话一暂停就轮不到渲染，玩家会看到半张面板。
+      const okOpen = hud.open(this.state, {
+        onChange: () => refreshHeroEquip(this.hero, this.state),
+      });
+      // 面板建不出来（没有 DOM / 贴图缺失）就不要暂停，否则游戏冻住还没有出口
+      if (!okOpen) return;
+      this.scene.pause();
     }
 
     refreshPlots() {
@@ -1632,9 +1674,41 @@
       this.lastShake = 0;
 
       this.events.on('wake', () => { this.state = CURRENT_STATE; });
+
+      /*
+       * 背包在远征里也能开（Tab），打开时同样暂停本场景 —— 战斗中翻背包
+       * 不能继续挨打。
+       *
+       * onChange 必须接：update() 一暂停，里面每帧那句 refreshHeroEquip
+       * 就执行不到，玩家在背包里换了武器，场上的主角会一直是旧贴图。
+       * 暂停 / 恢复本身由 toggleBag 与这里的 onClose 配对负责。
+       */
+      if (global.BagHud && typeof global.BagHud.setHost === 'function') {
+        global.BagHud.setHost({
+          onChange: () => refreshHeroEquip(this.hero, this.state),
+          onClose: () => {
+            // 同 Hub：只恢复自己暂停的那一次，别的来源（ESC 菜单）暂停的不碰。
+            // 也不能只看 toggleBag —— ✕ 按钮直接调 BagHud.close()。
+            if (this.scene && this.scene.isPaused()) this.scene.resume();
+          },
+        });
+      }
+
       global.EmberfieldUI.showHud(true, this.state);
       global.EmberfieldApp.__scene = this;
       global.EmberfieldApp.__state = this.state;
+    }
+
+    // Tab 开 / 关背包（Task 9）。只动本场景的 this.scene，不影响 Hub。
+    toggleBag() {
+      const hud = global.BagHud;
+      if (!hud || typeof hud.open !== 'function') return;
+      if (hud.isOpen()) { hud.close(); return; }
+      const okOpen = hud.open(this.state, {
+        onChange: () => refreshHeroEquip(this.hero, this.state),
+      });
+      if (!okOpen) return;
+      this.scene.pause();
     }
 
     getEnemySprite(i, kind) {
