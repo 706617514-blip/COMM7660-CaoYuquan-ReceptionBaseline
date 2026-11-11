@@ -350,6 +350,214 @@ group('追加修复1b：满包覆盖时 UI 必须说出被顶掉的是哪一件'
     '没满包时仍是「已进背包」文案', toasts[1]);
 });
 
+// ---------------------------------------------------------------- 卖出价（V8）
+section('卖出价 sellValue / equipInvested（V8）');
+group('卖出价 sellValue / equipInvested（V8）', function(){
+  // 实测（直接读 config 的 equipDef.price 与 equipPrice 逐级求和，不经实现）：
+  //   thornMail  price 700  prices 700,1015,1472,2134,3094 -> sell 350,857,1593,2660,4207
+  //   longCloak  price 200  prices 200,290,421            -> sell 100,245,455
+  // 公式 floor(0.5 × (底价 + 升级投入))，三条数都核对过上表。
+  eq(L.sellValue('thornMail', 1), 350, 'thornMail Lv1 = 350');
+  eq(L.sellValue('thornMail', 3), 1593, 'thornMail Lv3 = 1593');
+  eq(L.sellValue('longCloak', 2), 245, 'longCloak Lv2 = 245');
+
+  // 升级投入只从 Lv2 起算：1 级没有任何投入，投入必须是 0 而不是底价本身。
+  eq(L.equipInvested('longCloak', 1), 0, 'Lv1 没有升级投入');
+  eq(L.equipInvested('longCloak', 3), 711, 'longCloak Lv3 投入 = 290+421');
+  // 卖出价严格递增，否则升级就是纯粹的亏钱。
+  ok(L.sellValue('thornMail', 5) > L.sellValue('thornMail', 3), '满级卖价高于 3 级');
+});
+
+// ---------------------------------------------------------------- 单件出售（语义 1/2/3/4）
+section('单件出售 sellItem 的四种语义');
+group('单件出售 sellItem 的四种语义', function(){
+  // 语义 1：uid 在背包 → 卖出、加钱、移除。
+  const s1 = L.createState(41);
+  s1.meta.bag.length = 0;
+  s1.meta.coins = 100;
+  L.bagAdd(s1, 'longCloak', 2);
+  const uid1 = s1.meta.bag[0].uid;
+  const val1 = L.sellValue('longCloak', 2);
+  const r1 = L.sellItem(s1, uid1);
+  eq(r1.ok, true, '背包里的 uid 能卖');
+  eq(r1.value, val1, '回报的卖价与 sellValue 一致');
+  eq(s1.meta.coins, 100 + val1, '铜币按卖价增加');
+  eq(s1.meta.bag.length, 0, '条目已从背包移除');
+  eq(L.bagIndexOfUid(s1, uid1), -1, '按 uid 再也找不到这件');
+
+  // 语义 2：uid 不存在 → 失败且**不动铜币**。
+  // 只断言 ok===false 不够：把扣款写成「先加再判断」也能让 ok 是 false，
+  // 但玩家已经凭空多/少了钱。所以铜币必须逐字不变。
+  const coinsBefore = s1.meta.coins;
+  const r2 = L.sellItem(s1, 'u-not-exist');
+  eq(r2.ok, false, '不存在的 uid 出售失败');
+  ok(typeof r2.reason === 'string' && r2.reason.length > 0, '失败带原因', r2.reason);
+  eq(s1.meta.coins, coinsBefore, '失败时铜币分文未动');
+
+  // 语义 3：uid 指向已穿戴 → 防御性拒绝。
+  // 正常路径不可达（穿戴即离包），但存档码可注入，所以这条是防御。
+  const s3 = L.createState(42);
+  s3.meta.bag.length = 0;
+  s3.meta.coins = 99999;
+  L.buyEquipment(s3, 'longCloak');
+  L.equipItem(s3, 'longCloak', s3.meta.bag[0].uid);
+  const wornUid = s3.meta.equipment.back.uid;
+  const c3 = s3.meta.coins;
+  const r3 = L.sellItem(s3, wornUid);
+  eq(r3.ok, false, '已穿戴的 uid 拒绝出售（防御）');
+  eq(s3.meta.equipment.back.id, 'longCloak', '身上那件还在');
+  eq(s3.meta.coins, c3, '拒绝时铜币未变');
+
+  // 语义 4：该 id 只剩背包里的最后一件 → **必须能卖**。
+  // 「每 id 留一件」只属于 sellBatch；若错写进 sellItem，
+  // 玩家最后一件就永远卖不掉，只能当传家宝。
+  const s4 = L.createState(43);
+  s4.meta.bag.length = 0;
+  s4.meta.coins = 0;
+  L.bagAdd(s4, 'windBoots', 1);
+  eq(s4.meta.bag.length, 1, '背包里就这一件 windBoots');
+  const r4 = L.sellItem(s4, s4.meta.bag[0].uid);
+  eq(r4.ok, true, '仅剩一件也允许单件卖出');
+  eq(s4.meta.bag.length, 0, '卖完背包里没有这个 id 了');
+  eq(s4.meta.coins, L.sellValue('windBoots', 1), '铜币到账');
+});
+
+// ---------------------------------------------------------------- 已穿戴不可卖（V27 + V9）
+section('批量出售不动身上那件（V27）');
+group('批量出售不动身上那件（V27）', function(){
+  // ⚠ 不能用 `sellItem(s, 已穿戴uid).ok === false` 来证明这条规则：
+  //   穿戴时条目已从 meta.bag 移除（实测 bagIndexOfUid 返回 -1），
+  //   sellItem 找不到 uid 自然失败 —— 那是恒真断言，什么都证明不了。
+  //   真正的规则是：卖光同 id 的背包件之后，身上那件**必须还在**。
+  const s = L.createState(31);
+  s.meta.coins = 99999;
+  L.buyEquipment(s, 'longCloak');
+  L.equipItem(s, 'longCloak', s.meta.bag[0].uid);
+  const wornUidBefore = JSON.stringify(s.meta.equipment.back);
+  L.bagAdd(s, 'longCloak', 1);
+  L.bagAdd(s, 'longCloak', 1);
+  const n0 = s.meta.bag.length;
+  eq(n0, 2, '背包里有两件同 id（前置条件）');
+
+  const rSell = L.sellBatch(s, L.sellableUids(s));
+  eq(rSell.ok, true, '批量出售成功');
+  ok(JSON.stringify(s.meta.equipment.back) === wornUidBefore,
+    '身上那件装备卖不掉，卖完还在（不能连穿着的都卖掉）');
+  ok(s.meta.bag.length < n0,
+    '背包件确实被卖掉了一些（否则上一条是空转）',
+    'bag.length=' + s.meta.bag.length + ', n0=' + n0);
+  // 身上那件的 uid 不在背包里，sellableUids 自然也点不到它。
+  eq(L.bagIndexOfUid(s, s.meta.equipment.back.uid), -1,
+    'sellableUids 不包含已穿戴条目（身上那件不在背包里）');
+  const sellable = L.sellableUids(s);
+  ok(sellable.every(function (uid) {
+    return L.bagIndexOfUid(s, uid) >= 0 && uid !== s.meta.equipment.back.uid;
+  }), 'sellableUids 全部是背包里、且不是身上那件的 uid', JSON.stringify(sellable));
+});
+
+// ---------------------------------------------------------------- 每 id 留一件（V26）
+section('批量出售每 id 强制留一件（V26）');
+group('批量出售每 id 强制留一件（V26）', function(){
+  const s2 = L.createState(32);
+  s2.meta.bag.length = 0;
+  L.bagAdd(s2, 'longCloak', 1);
+  L.bagAdd(s2, 'longCloak', 3);
+  s2.meta.coins = 0;
+  const r = L.sellBatch(s2, L.sellableUids(s2));
+  eq(r.count, 1, '两件同 id 只卖掉一件');
+  eq(s2.meta.bag.length, 1, '强制保留一件');
+  eq(s2.meta.bag[0].level, 3, '保留的是等级最高的那件');
+  eq(r.total, L.sellValue('longCloak', 1), '拿到的是 1 级那件的钱（不是 3 级那件）');
+  eq(s2.meta.coins, L.sellValue('longCloak', 1), '铜币等于卖掉的 1 级价');
+  // 全选一次之后再全选：已经没有重复件可卖，不能把最后一件也清走。
+  const r2 = L.sellBatch(s2, L.sellableUids(s2));
+  eq(r2.count, 0, '重复件卖完后全选不再卖任何东西');
+  eq(s2.meta.bag.length, 1, '最后一件仍在背包里');
+});
+
+// ---------------------------------------------------------------- 总价逐件求和（V28）
+section('批量出售总价逐件求和（V28）');
+group('批量出售总价逐件求和（V28）', function(){
+  // ⚠ 原 brief 的 fixture 是「longCloak 一件 + windBoots 一件」，期望两件都卖掉。
+  //   这与 V26「每 id 强制留一件」直接矛盾：两个 id 各只有一件，
+  //   按规则两件都该留，count 只能是 0（实测 sellableUids 返回 []）。
+  //   修法不是放宽断言，而是让 fixture 满足规则：每个 id 各放两件，
+  //   于是每 id 留一件、各卖一件，count=2 且总价仍是逐件求和。
+  //   这样 V28 要证明的东西（总价是逐件求和，不是单价×件数）一点没弱化。
+  const s3 = L.createState(33);
+  s3.meta.bag.length = 0;
+  L.bagAdd(s3, 'longCloak', 1);
+  L.bagAdd(s3, 'longCloak', 1);
+  L.bagAdd(s3, 'windBoots', 2);
+  L.bagAdd(s3, 'windBoots', 2);
+  s3.meta.coins = 0;
+  const r3 = L.sellBatch(s3, L.sellableUids(s3));
+  eq(r3.count, 2, '两个 id 各卖一件（每 id 留一件）');
+  eq(r3.total, L.sellValue('longCloak', 1) + L.sellValue('windBoots', 2), '总价逐件求和');
+  eq(s3.meta.coins, r3.total, '铜币等于总价');
+  eq(s3.meta.bag.length, 2, '每个 id 各留一件');
+  // 反证：不能是「一个价 × 件数」。longCloak Lv1=100、windBoots Lv2=245，
+  // 若实现取了第一件的价乘以件数会得到 200，与 345 不等。
+  ok(r3.total !== L.sellValue('longCloak', 1) * 2, '总价不是一个单价乘件数', r3.total);
+});
+
+// ---------------------------------------------------------------- sellBatch 排序
+section('sellBatch 保留等级最高、并列保留下标最靠前');
+group('sellBatch 保留等级最高、并列保留下标最靠前', function(){
+  // 三件同 id，等级 1 / 3 / 2，背包顺序就是下标顺序。
+  // 保留的必须是下标 1 那件（Lv3），卖掉的应是下标 0 与 2。
+  const s = L.createState(34);
+  s.meta.bag.length = 0;
+  L.bagAdd(s, 'longCloak', 1);      // 下标 0
+  L.bagAdd(s, 'longCloak', 3);      // 下标 1 ← 应保留
+  L.bagAdd(s, 'longCloak', 2);      // 下标 2
+  s.meta.coins = 0;
+  const uids = s.meta.bag.map(function (e) { return e.uid; });
+  eq(JSON.stringify(L.sellableUids(s)), JSON.stringify([uids[0], uids[2]]),
+    '可卖的正好是 1 级与 2 级那两件（等级最高的不卖）');
+
+  const r = L.sellBatch(s, L.sellableUids(s));
+  eq(r.count, 2, '三件卖两件');
+  eq(s.meta.bag.length, 1, '留下一件');
+  eq(s.meta.bag[0].level, 3, '留下的是等级最高的');
+  eq(s.meta.bag[0].uid, uids[1], '留下的正是下标 1 那件的 uid（不是别件冒充）');
+  // 反证：总价必须是「卖掉的两件」之和（1 级 + 2 级），缺一件都凑不出。
+  eq(r.total, L.sellValue('longCloak', 1) + L.sellValue('longCloak', 2),
+    '总价 = 被卖掉那两件的价之和');
+
+  // 等级相同时保留**下标靠前**那件：结果必须稳定可复现，
+  // 否则同一份存档两次全选会卖不同的件，玩家以为见了鬼。
+  const t = L.createState(35);
+  t.meta.bag.length = 0;
+  L.bagAdd(t, 'longCloak', 2);      // 下标 0 ← 保留
+  L.bagAdd(t, 'longCloak', 2);      // 下标 1
+  L.bagAdd(t, 'longCloak', 2);      // 下标 2
+  const tu = t.meta.bag.map(function (e) { return e.uid; });
+  eq(JSON.stringify(L.sellableUids(t)), JSON.stringify([tu[1], tu[2]]),
+    '等级并列时保留下标最靠前那件');
+  L.sellBatch(t, L.sellableUids(t));
+  eq(t.meta.bag[0].uid, tu[0], '并列时留下的是下标 0 那件');
+});
+
+// ---------------------------------------------------------------- duplicateUids 与 sellableUids 等价
+section('duplicateUids 与 sellableUids 等价');
+group('duplicateUids 与 sellableUids 等价', function(){
+  const s = L.createState(36);
+  s.meta.bag.length = 0;
+  L.bagAdd(s, 'longCloak', 1);
+  L.bagAdd(s, 'longCloak', 3);
+  L.bagAdd(s, 'windBoots', 1);
+  L.bagAdd(s, 'thornMail', 2);
+  L.bagAdd(s, 'thornMail', 2);
+  // 两者必须逐字相同：实现上让一个调用另一个，
+  // 两套分组逻辑迟早分叉（一处按等级、一处按下标，就再也对不上了）。
+  eq(JSON.stringify(L.sellableUids(s)), JSON.stringify(L.duplicateUids(s)),
+    'sellableUids 与 duplicateUids 完全一致');
+  eq(L.sellableUids(s).length, 2, '只有两个重复件可卖（longCloak 低等级 + thornMail 后一件）');
+  // 单件的 windBoots 不出现在结果里。
+  eq(L.sellableUids(s).indexOf(s.meta.bag[2].uid), -1, '只有一件的 id 不进可卖列表');
+});
+
 // ---------------------------------------------------------------- 汇总
 console.log('\n' + '='.repeat(56));
 if (fail === 0) {

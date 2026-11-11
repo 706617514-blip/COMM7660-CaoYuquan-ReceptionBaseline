@@ -728,6 +728,157 @@
     return rollEquipDrop(state);
   }
 
+  // ---------------------------------------------------------------- 出售
+  /**
+   * 某件装备升到 level 级一共花掉的升级钱（不含 1 级的底价）。
+   *
+   * 必须是**纯函数**，只依赖 id 与等级。不要绕 equipUpgradeCost：
+   * 它要 state、会随状态变化（已穿戴时读身上那件的等级），
+   * 而且满级返回 null —— 在循环里加总就是 null + n = NaN，
+   * 卖价一旦变 NaN，铜币会顺着存档一路传下去。
+   */
+  function equipInvested(id, level) {
+    let sum = 0;
+    for (let lv = 2; lv <= level; lv++) sum += C.equipPrice(id, lv);
+    return sum;
+  }
+
+  /**
+   * 卖出价：底价与升级投入各折一半。
+   *
+   * 折半而不是全退，是为了让"买了又卖"始终亏钱 —— 否则商店就成了
+   * 免费仓库，玩家可以随时反悔，构筑选择也就没有代价了。
+   * 但升级投入必须计入，不然升到满级再卖和 1 级卖一个价，
+   * 玩家会觉得自己被偷了钱。
+   */
+  function sellValue(id, level) {
+    const def = C.equipDef(id);
+    if (!def) return 0;
+    return Math.floor(0.5 * (def.price + equipInvested(id, level || 1)));
+  }
+
+  /**
+   * 背包里"同 id 有多件时，除等级最高那件外其余"的 uid 列表。
+   *
+   * 等级相同时保留**下标靠前**那件：结果必须稳定可复现，
+   * 否则同一份存档两次全选会卖掉不同的件，玩家会以为见了鬼。
+   * 返回顺序按背包下标升序，UI 直接拿去勾选即可。
+   */
+  function duplicateUids(state) {
+    const bag = state.meta.bag || [];
+    // 先按 id 分组，记下每组的全部下标。
+    const groups = {};
+    const order = [];
+    for (let i = 0; i < bag.length; i++) {
+      const id = bag[i].id;
+      if (!groups[id]) { groups[id] = []; order.push(id); }
+      groups[id].push(i);
+    }
+    const out = [];
+    order.forEach(function (id) {
+      const idxs = groups[id];
+      if (idxs.length < 2) return;                 // 只有一件，不算重复
+      // 找"该保留"的那一件：等级最高；并列时取下标最小。
+      // 用严格大于比较，于是并列时先遇到（下标更小）的那件胜出。
+      let keep = idxs[0];
+      for (let k = 1; k < idxs.length; k++) {
+        const lv = bag[idxs[k]].level || 1;
+        const best = bag[keep].level || 1;
+        if (lv > best) keep = idxs[k];
+      }
+      idxs.forEach(function (i) {
+        if (i !== keep) out.push(bag[i].uid);
+      });
+    });
+    // 按背包下标升序输出，保证顺序稳定（分组顺序取决于首次出现位置，
+    // 组内顺序取决于遍历顺序，两者合起来未必是全局升序）。
+    out.sort(function (a, b) {
+      return bagIndexOfUid(state, a) - bagIndexOfUid(state, b);
+    });
+    return out;
+  }
+
+  /**
+   * 可以卖的 uid 列表 —— 即"全选"卖出去之后每个 id 还剩一件。
+   *
+   * 与 duplicateUids 等价，所以直接调用它，不另写一套分组逻辑：
+   * 两份分组代码迟早分叉（一处按等级、一处按下标），
+   * 到那时"勾选全部重复件"和"全选出售"会给出不同的件，玩家无从理解。
+   *
+   * 已穿戴的条目本来就不在 meta.bag 里（穿戴即离包），
+   * 所以这里天然排除，不需要额外判断。
+   */
+  function sellableUids(state) {
+    return duplicateUids(state);
+  }
+
+  /**
+   * 卖一件。玩家明确点的那一件，**不受"每 id 留一件"约束** ——
+   * 那条规则只属于 sellBatch。若错写进这里，玩家最后一件就永远卖不掉。
+   */
+  function sellItem(state, uid) {
+    const idx = bagIndexOfUid(state, uid);
+    if (idx < 0) {
+      // 防御：uid 可能指向身上那件（正常路径不可达，但存档码可注入）。
+      // 穿戴即离包，所以"找不到"里混着"已穿戴"这一种，分开报更好懂。
+      const eq = state.meta.equipment || {};
+      for (let i = 0; i < C.EQUIP_SLOTS.length; i++) {
+        const it = eq[C.EQUIP_SLOTS[i]];
+        if (it && it.uid === uid) return { ok: false, reason: '身上穿着的不能卖' };
+      }
+      return { ok: false, reason: '背包里没有这件' };
+    }
+    const entry = state.meta.bag[idx];
+    const value = sellValue(entry.id, entry.level || 1);
+    // 先算价再移除：移除之后再读 entry 就没了。
+    state.meta.bag.splice(idx, 1);
+    state.meta.coins += value;
+    return { ok: true, value: value, id: entry.id };
+  }
+
+  /**
+   * 批量出售。**每 id 强制留一件**（等级最高的那件），
+   * 所以"全选"永远不会把某个 id 清空 —— 玩家不会因为手滑
+   * 把唯一一件装备卖掉，然后发现自己光着身子打下一局。
+   *
+   * 顺序很重要：先按 id 分组 → 每组按等级降序 → 每组除第一个外全部可卖
+   * → 与传入 uids 取交集 → 求和扣款移除。
+   * 直接复用 duplicateUids 的判定，保证"勾选全部重复件"与"全选出售"
+   * 卖的是同一批件。
+   */
+  function sellBatch(state, uids) {
+    const want = {};
+    (uids || []).forEach(function (u) { want[u] = true; });
+    // 可卖集合由 duplicateUids 决定，传入的 uids 只是"玩家勾了哪些"。
+    // 两者取交集：勾了不该卖的（比如唯一一件）也不会被卖掉。
+    const allowed = {};
+    duplicateUids(state).forEach(function (u) { allowed[u] = true; });
+
+    const targets = [];
+    (state.meta.bag || []).forEach(function (e) {
+      if (want[e.uid] && allowed[e.uid]) targets.push(e.uid);
+    });
+
+    let total = 0;
+    const kept = [];
+    // 逐件求和，不是"一个价 × 件数"：同 id 不同等级卖价不同，
+    // 不同 id 更是各算各的。
+    targets.forEach(function (uid) {
+      const idx = bagIndexOfUid(state, uid);
+      if (idx < 0) return;
+      const entry = state.meta.bag[idx];
+      total += sellValue(entry.id, entry.level || 1);
+      state.meta.bag.splice(idx, 1);
+    });
+    // kept：玩家勾了、但因"每 id 留一件"而没卖的 uid。
+    (uids || []).forEach(function (u) {
+      if (!allowed[u] && bagIndexOfUid(state, u) >= 0) kept.push(u);
+    });
+
+    state.meta.coins += total;
+    return { ok: true, count: targets.length, total: total, kept: kept };
+  }
+
   // ---------------------------------------------------------------- 开局
   function startRun(state, difficultyId) {
     const diff = C.difficultyById(difficultyId);
@@ -1877,6 +2028,8 @@
     buyPotion, usePotion, hurtPlayer, potionDamageMul,
     equipBonus, hasFx, equipOwned, buyEquipment, equipItem, unequipSlot,
     equipUpgradeCost, upgradeEquipment, rollEquipDrop, tryEquipDrop,
+    // 出售：卖价按「底价 + 升级投入」折半，批量出售每 id 强制留一件。
+    equipInvested, sellValue, sellItem, sellBatch, duplicateUids, sellableUids,
     // bagIndexOfId 一直在本文件里（equipOwned 等都要用它），
     // 但此前没进 API —— hub.js 想按 id 找背包条目读等级时拿不到它。
     // 函数"存在却不可达"和不存在一样会让调用方写出错的行为。
