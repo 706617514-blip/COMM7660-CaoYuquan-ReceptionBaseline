@@ -1848,7 +1848,10 @@ git commit -m "feat(hub): 六点位上下错落（含判定与绘制同步），
 
 **Files:**
 - Create: `game/audio.js`
-- Modify: `game/config.js`（加 `AUDIO` 参数）、`game/index.html`（音量按钮）、`game/app.js`（触发点接线）
+- Modify: `game/config.js`（加 `AUDIO` 参数）、`game/app.js`（触发点接线）
+- **不改** `game/index.html` 的界面**除了**加一行 `<script src="audio.js"></script>`：
+  设置面板里的两个滑块是 **Task 13** 的活，本任务只负责"能被调用"（`setMasterVolume` / `setMuted`），
+  不要在这里先做一套音量按钮——Task 13 再做就要拆一遍，白干两次。
 - **Modify: `tests/test_game_page.js`（脚本清单，见下方警告）**
 - Test: `tests/test_audio.js`（**新建**）
 
@@ -1862,6 +1865,13 @@ git commit -m "feat(hub): 六点位上下错落（含判定与绘制同步），
 - Consumes: 无
 - Produces:
   - `global.GameAudio = { play(name), setMasterVolume(v01), setMuted(bool), isMuted(), ensureStarted(), context }`
+- 模块外壳照抄 `game/logic.js` 的写法（`:12` 的 `(function (global) { 'use strict'; ... })`
+  与 `:2111` 的 `global.GameLogic = API;`，末尾用 `typeof globalThis !== 'undefined' ? globalThis : this` 传入）——
+  **本仓库所有模块都是这一套**，别自创 `export`/`module.exports` 混用。
+  `config.js` 的取法也一样：`const C = (typeof module !== 'undefined' && module.exports) ? require('./config.js') : global.GameConfig;`
+- `AudioContext` 的取法必须双端兼容：`const CtxCtor = global.AudioContext || global.webkitAudioContext;`
+  （浏览器里 `global` 就是 `globalThis`，Node 测试里 `global.AudioContext` 是 stub。
+  **不要写 `new (window.AudioContext)`**——Node 里没有 `window`，测试会直接崩。）
   - `AUDIO.volume` 默认 **0.30**
   - `context` **必须是自建 `AudioContext`**（**不是** `game.sound.context`，那是 `null`）
 - **也必须在 `logic.js` 里建 `meta.settings`**（见下方警告）
@@ -1918,7 +1928,10 @@ NAMES.forEach(function (n) {
 // 记了每一次 createOscillator/createGain，数量为 0 说明 play() 是空函数。
 ok(A.context && A.context.created && A.context.created.length > 0,
    '真的向 AudioContext 里建了音频节点（play 不是空函数）');
-ok(A.context.state === 'running', '用的是自建 AudioContext 且已 resume');
+// 不能写 A.context.state === 'running'：stub 里 state 一开始就是 'running'，
+// 那条断言只证明了 stub 自己，与实现无关（恒真）。要断言"我们的 ctx 是那个 stub 的实例"。
+ok(A.context instanceof global.AudioContext, '用的是自建的 AudioContext，不是 Phaser 的 game.sound');
+ok(A.resumed === true || A.context.resumed === true, 'ensureStarted() 调过 resume()（自动播放策略要求在用户手势里启动）');
 // Phaser 的 game.sound.context 是 null（noAudio:true），
 // 所以"没依赖它"表现为"我们的 ctx 不是那个 null"——直接断言非空即可，不必再写一条。
 ```
@@ -1932,6 +1945,28 @@ Expected: FAIL —— `Cannot find module '../game/audio.js'`。
 
 - 模块级单例 `AudioContext`，**首次用户交互时创建/`resume()`**（自动播放策略要求在用户手势里启动）
 - 17 个音效各一个合成函数（波形/频率/时长放 `config.js`，合成代码放 `audio.js`）
+- **触发点接线**（`game/app.js` 为主，`game/baghud.js` 两处）。行号会漂，**按事件找，不要按行号找**：
+
+  | 音效 | 事件 | 大概位置 |
+  |---|---|---|
+  | `slash` | 玩家挥击出手 | `RunScene` 里处理 `input.attack` 的分支 |
+  | `hit` | 命中敌人（非暴击） | `L.step` 之后读 `run.hits` / 命中回调 |
+  | `crit` | 暴击命中 | 同上，按暴击标记分流 |
+  | `hurt` | 玩家受伤 | `run.player.hp` 下降处 |
+  | `coin` | 铜币入账 | 结算与 `run.loot.coins` 增加处 |
+  | `seed` | 拾取种子 | `run.loot.seeds` 增加处 |
+  | `dropNew` / `dropDup` | 掉落新件 / 重复件 | Task 1 改过的 `run.equipDrops` 排空循环（`drop.duplicate` 分流） |
+  | `potion` | 喝药水 | `potionEdge` / 药水键处理 |
+  | `skill` | 释放技能 | `castSkill` / 技能键分支 |
+  | `special` | 释放特殊技（V） | `castSpecial` |
+  | `upgrade` | 购买/穿戴/升级/播种成功 | `perform()` 返回成功后（用 `action.verb` 或 kind 分流） |
+  | `sell` | 出售成功 | `game/baghud.js` 的 `sellEntry` / `runConfirm` 里 `res.ok` 之后 |
+  | `bagOpen` | 背包打开 | `HubScene.toggleBag` / `RunScene.toggleBag` 里 `open()` 之后 |
+  | `wave` | 新一波开始 | `L.step` 里波次推进处 |
+  | `boss` | Boss 出场 | Boss 生成处 |
+  | `death` | 玩家死亡 | `state.phase` 变 `'dead'` 处 |
+
+  接完用 `grep -c 'GameAudio.play' game/app.js game/baghud.js` 核对条数（应是 15 + 2）。
 - 节点**用完即弃**（`stop()` 后交给 GC），不预建常驻音轨
 - 静音 = `masterGain.gain = 0`，**不要** `ctx.close()`
 - **25ms 节流**：同音效短时间重复触发要合并，否则连段攻击同帧堆三个音会爆音
