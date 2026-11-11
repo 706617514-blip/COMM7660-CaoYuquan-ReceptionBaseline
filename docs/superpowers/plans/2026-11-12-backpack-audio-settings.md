@@ -14,6 +14,13 @@
 
 ## Global Constraints
 
+> **写浏览器测试片段时的硬规则（已踩过一次，Task 7 的 smoke 直接语法崩溃）**：
+> `tests/browser/smoke.js` 里页面内那段代码是**模板字符串**（反引号包起来的）。
+> 粘进去的片段**任何位置都不许出现反引号**——包括注释里。一旦出现，
+> 模板字符串提前结束，后面变成待解析代码，报
+> `SyntaxError: Unexpected identifier 'window'`，**整个 smoke 一条都跑不了**。
+> 需要强调时用「」引号或单引号，别用反引号。
+
 - **规则与渲染分离**：`logic.js` 内**禁止**出现 `document` / `window` / `Phaser` / `localStorage`。CI 有测试盯着这条。
 - **数值只在 `config.js`**：`logic.js` / `app.js` 里出现裸魔数视为缺陷。
 - **不引入图片或音频文件**：美术全部 `Graphics.generateTexture`，音效全部 WebAudio 合成。唯一例外是已有的六个 Boss PNG。
@@ -944,7 +951,7 @@ git commit -m "feat(bag): 整理排序与分类页签过滤"
 
 ```js
   // ---- 背包面板（V2 / V4）----
-  // ⚠️ 必须用守卫：实现之前 `window.BagHud` 是 undefined，裸调会抛异常，
+  // ⚠️ 必须用守卫：实现之前 window.BagHud 是 undefined，裸调会抛异常，
   //    驱动把它当成 {error} 直接中止整个脚本 —— 45 条既有断言全部消失，
   //    看起来像"游戏全线崩了"，实际只是新功能还没写。
   const bagEl = () => document.getElementById('bag');
@@ -1020,7 +1027,7 @@ Expected: PASS（45 + 新增）。
 - [ ] **Step 5: 提交**
 
 ```bash
-git add game/baghud.js game/index.html tests/browser/smoke.js
+git add game/baghud.js game/index.html tests/browser/smoke.js tests/test_game_page.js
 git commit -m "feat(bag): 背包 DOM 浮层（网格/页签/拖动夹边/贴图缓存）"
 ```
 
@@ -1507,9 +1514,9 @@ ok((H.zoneAt(s) || {}).id === 'anvil', 'z 正确时命中铁匠铺');
 ```js
 // V17：提示文字已删除，键帽可见。
 //
-// ⚠️ 不能查 DOM：`this.prompt` 是 **Phaser 画布内的 Text 对象**（app.js:1436 创建），
-// 不是 HTML 元素。`document.querySelector('#prompt')` 永远返回 null，
-// 写成 `!el || ...` 就是**恒真空断言** —— 正好是上面注释里点名要防的写法。
+// ⚠️ 不能查 DOM：this.prompt 是 Phaser 画布内的 Text 对象（app.js:1436 创建），
+// 不是 HTML 元素。document.querySelector('#prompt') 永远返回 null，
+// 写成 "!el || ..." 就是恒真空断言 —— 正好是上面注释里点名要防的写法。
 // 必须用 Phaser 侧探针。另外本仓库没有 Playwright，代码要分页面内/Node 侧两段写。
 ```
 
@@ -1612,7 +1619,14 @@ git commit -m "feat(hub): 六点位上下错落（含判定与绘制同步），
 **Files:**
 - Create: `game/audio.js`
 - Modify: `game/config.js`（加 `AUDIO` 参数）、`game/index.html`（音量按钮）、`game/app.js`（触发点接线）
+- **Modify: `tests/test_game_page.js`（脚本清单，见下方警告）**
 - Test: `tests/test_audio.js`（**新建**）
+
+> **加 `<script>` 就必须改 `tests/test_game_page.js`**（Task 7 已经踩过一次）：
+> `tests/test_game_page.js:114-118` 硬断言 `index.html` 的脚本列表**精确等于**某个数组，
+> `:119-126` 还按顺序 `loadModule('game/...')`。往 `index.html` 加 `audio.js`
+> 而不改这两处，`test_game_page` 立刻红，而且报错信息看起来像"页面结构坏了"。
+> 顺序照 `index.html` 里的实际顺序写：`audio.js` 放在 `config.js` 之后、`logic.js` 之前或紧随其后。
 
 **Interfaces:**
 - Consumes: 无
@@ -1697,7 +1711,7 @@ Expected: PASS。
 - [ ] **Step 5: 提交**
 
 ```bash
-git add game/audio.js game/config.js game/app.js game/index.html tests/test_audio.js
+git add game/audio.js game/config.js game/app.js game/index.html tests/test_audio.js tests/test_game_page.js
 git commit -m "feat(audio): 自建 AudioContext 合成 17 个音效 + 音量控制"
 ```
 
