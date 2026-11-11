@@ -2279,8 +2279,19 @@ git commit -m "feat: 攻击连段与判定范围整体加长 5%"
 ```bash
 python3 analysis/build_report2.py
 ```
-Expected: 生成 `reports/COMM7660_Phase2_report.docx` 且**不再出现** `None%`；
-`grep -c "None%" reports/` 在产物文本里为 0。
+Expected: 生成 `reports/COMM7660_Phase2_report.docx` 且**不再出现** `None%`。
+**不要用 `grep reports/` 验证**：`.docx` 是 zip 二进制，grep 只会告诉你"binary file matches"，
+什么都证明不了。必须抽文本再查：
+
+```bash
+python3 - <<'EOF'
+from docx import Document
+t = "\n".join(p.text for p in Document("reports/COMM7660_Phase2_report.docx").paragraphs)
+print("None% 出现次数:", t.count("None%"))
+print("refunded at 出现次数:", t.count("refunded at"))
+EOF
+```
+Expected: 两个计数都是 **0**。
 
 - [ ] **Step 1: 跑全套测试**
 
