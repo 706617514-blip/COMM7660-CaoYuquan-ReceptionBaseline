@@ -470,6 +470,87 @@ section('10b. 背包条目（容量 / 落位 / uid）');
   ok(d2.bagFull === false, '有空位时 bagFull 为 false', JSON.stringify(d2));
 }
 
+// ---------------------------------------------------------------- 10c. 同 id 多件的 uid 指向
+section('10c. 装备函数接受可选 uid（同 id 多件时指哪一件）');
+{
+  // 背包里两件同 id：不带 uid 作用于第一件，带 uid 作用于指定的那件。
+  // 修复前 upgradeEquipment 完全忽略第三参，永远升第一件 —— 玩家点的是 u2，
+  // 被升的却是 u1，且按 u1 的等级报价（白付钱、升错件）。
+  const s2 = L.createState(12);
+  L.bagAdd(s2, 'longCloak', 1);
+  L.bagAdd(s2, 'longCloak', 1);
+  s2.meta.coins = 99999;
+  const uidB = s2.meta.bag[1].uid;
+  ok(s2.meta.bag[0].level === 1 && s2.meta.bag[1].level === 1, '初始两件都是 Lv1');
+  L.upgradeEquipment(s2, 'longCloak', uidB);
+  ok(s2.meta.bag[0].level === 1, '没有 uid 的那件没被动过',
+    'bag[0].level = ' + s2.meta.bag[0].level);
+  ok(s2.meta.bag[1].level === 2, '指定 uid 的那件被升级',
+    'bag[1].level = ' + s2.meta.bag[1].level);
+
+  // 报价也要按 uid 指定的那件算，否则玩家会被按错件收费。
+  // 注：brief 原稿此处用 longCloak（基础装备，满级 3）并断言报价等于
+  // equipPrice('longCloak', 4) —— 满级装备没有"下一级"，正确值是 null，
+  // 610 不可能实现（见 task-3-report.md 缺陷 A）。改用血滴护符（特效装备，
+  // 满级 5）才能让"Lv3 那件的下一级(Lv4)"这个报价有定义。
+  const s3 = L.createState(13);
+  L.bagAdd(s3, 'bloodCharm', 1);
+  L.bagAdd(s3, 'bloodCharm', 3);
+  s3.meta.coins = 99999;
+  const uidHi = s3.meta.bag[1].uid;
+  const costHi = L.equipUpgradeCost(s3, 'bloodCharm', uidHi);
+  const costLo = L.equipUpgradeCost(s3, 'bloodCharm');
+  ok(costHi !== costLo, '按 uid 与不按 uid 的报价不同（等级不同，价就不同）',
+    'costHi = ' + costHi + ', costLo = ' + costLo);
+  ok(costHi === C.equipPrice('bloodCharm', 4), '按 Lv3 那件报价 = 下一级(4)的价',
+    'got ' + costHi + ', want ' + C.equipPrice('bloodCharm', 4));
+  ok(costLo === C.equipPrice('bloodCharm', 2), '不带 uid 按第一件(Lv1)报价 = 2 级的价',
+    'got ' + costLo + ', want ' + C.equipPrice('bloodCharm', 2));
+
+  // 穿戴也要能指定：穿背包里第 2 件，且穿走的是它的等级。
+  // 注：brief 原稿此处 bagAdd(...,4) 断言 equipment.back.level===4，但 longCloak
+  // 满级 3，把超上限的等级当正常态写进断言与上限不变量冲突（缺陷 B）。
+  // 改成长期有效等级 3（满级），仍然证明"穿的是 uid 指定那件的等级"。
+  const s4 = L.createState(14);
+  L.bagAdd(s4, 'longCloak', 1);
+  L.bagAdd(s4, 'longCloak', 3);
+  const uidWear = s4.meta.bag[1].uid;
+  L.equipItem(s4, 'longCloak', uidWear);
+  eq(s4.meta.equipment.back.level, 3, '穿上的是 uid 指定那件（等级 3）');
+  eq(s4.meta.bag[0].level, 1, '另一件留在背包里，等级没变');
+
+  // 三处判定都不能选错：已穿戴优先于背包（Review Focus #3）。
+  // 注：brief 原稿此处没给 s5 铜币，createState 默认 coins=0，buyEquipment 会因
+  // "铜币不够"直接失败，后面的断言因无关原因挂掉（缺陷 C）。补上铜币。
+  const s5 = L.createState(15);
+  s5.meta.coins = 99999;
+  L.buyEquipment(s5, 'longCloak');
+  L.equipItem(s5, 'longCloak');
+  L.bagAdd(s5, 'longCloak', 3);
+  ok(L.equipOwned(s5, 'longCloak') === 'equipped', '已穿戴优先');
+  ok(s5.meta.bag.length === 1 && s5.meta.bag[0].level === 3, '背包里那件仍是 Lv3',
+    JSON.stringify(s5.meta.bag));
+
+  // 两参数调用必须与从前完全一致（向后兼容）：不带 uid 仍作用于第一件。
+  const s6 = L.createState(16);
+  L.bagAdd(s6, 'longCloak', 1);
+  L.bagAdd(s6, 'longCloak', 1);
+  s6.meta.coins = 99999;
+  eq(L.equipUpgradeCost(s6, 'longCloak'), C.equipPrice('longCloak', 2),
+    '两参数报价仍是第一件的下一级');
+  ok(L.upgradeEquipment(s6, 'longCloak').ok, '两参数升级成功');
+  ok(s6.meta.bag[0].level === 2 && s6.meta.bag[1].level === 1,
+    '两参数升级仍只作用于第一件', JSON.stringify(s6.meta.bag.map(e => e.level)));
+
+  // uid 给了但背包里没有那一件，要退回按 id 找第一件，而不是整件事失败。
+  const s7 = L.createState(17);
+  L.bagAdd(s7, 'longCloak', 2);
+  s7.meta.coins = 99999;
+  ok(L.upgradeEquipment(s7, 'longCloak', '不存在的uid').ok,
+    'uid 找不到时退回按 id 升级第一件');
+  ok(s7.meta.bag[0].level === 3, '退回后升的是第一件');
+}
+
 // ---------------------------------------------------------------- 11. 边界
 section('11. 场地边界');
 {

@@ -505,12 +505,15 @@
    * 穿上一件装备。会自动把该位原有的装备放回背包 ——
    * 否则换装会凭空销毁装备，玩家会开始害怕换装，选择就死了。
    */
-  function equipItem(state, id) {
+  function equipItem(state, id, uid) {
     const def = C.equipDef(id);
     if (!def) return { ok: false, reason: '没有这件装备' };
     if (equipOwned(state, id) === 'equipped') return { ok: false, reason: '已经装备着' };
 
-    const idx = bagIndexOfId(state, id);
+    // 同 id 可能有两件（掉落会带重复品）。调用方点的是哪一件就穿哪一件，
+    // 没给 uid（或 uid 已失效）才退回"第一件同 id"——老的两参数调用行为不变。
+    let idx = uid ? bagIndexOfUid(state, uid) : -1;
+    if (idx < 0) idx = bagIndexOfId(state, id);
     if (idx < 0) return { ok: false, reason: '背包里没有' };
     const entry = state.meta.bag.splice(idx, 1)[0];
 
@@ -551,8 +554,13 @@
     return { ok: true, id: it.id };
   }
 
-  /** 升级价格：下一级的价格。满级返回 null。 */
-  function equipUpgradeCost(state, id) {
+  /**
+   * 升级价格：下一级的价格。满级返回 null。
+   *
+   * 带上 uid 时按**那一条**背包条目报价：同 id 的重复件各升各的级，
+   * 报价必须跟着玩家实际点中的那件走，否则会出现"按 A 件的价收钱、升 B 件"。
+   */
+  function equipUpgradeCost(state, id, uid) {
     const def = C.equipDef(id);
     if (!def) return null;
     const max = C.equipMaxLevel(id);
@@ -560,12 +568,14 @@
     if (!held) return null;                      // 没拥有就不能升级
     let level = 1;
     if (held === 'equipped') {
+      // 身上只有一件，uid 在这里不适用：等级就是装备位上的等级。
       C.EQUIP_SLOTS.forEach(function (s) {
         const it = state.meta.equipment[s];
         if (it && it.id === id) level = it.level || 1;
       });
     } else {
-      const idx = bagIndexOfId(state, id);
+      let idx = uid ? bagIndexOfUid(state, uid) : -1;
+      if (idx < 0) idx = bagIndexOfId(state, id);
       level = (idx >= 0 && state.meta.bag[idx].level) || 1;
     }
     if (level >= max) return null;
@@ -578,8 +588,9 @@
    * 背包里的装备与身上的装备都要能升级，所以等级存在两处：
    * 装备位上直接带 level，背包条目里也各自带 level（v6 起）。
    */
-  function upgradeEquipment(state, id) {
-    const cost = equipUpgradeCost(state, id);
+  function upgradeEquipment(state, id, uid) {
+    // 报价与实收必须是同一件：uid 一路透传给 equipUpgradeCost。
+    const cost = equipUpgradeCost(state, id, uid);
     if (cost === null) {
       const def = C.equipDef(id);
       if (!def) return { ok: false, reason: '没有这件装备' };
@@ -598,7 +609,9 @@
     } else {
       // 背包里只升一件：同一 id 可能有重复件，各升各的级，
       // 不能把它们一起抬上去（那等于凭空送出升级）。
-      const idx = bagIndexOfId(state, id);
+      // 升的必须是 equipUpgradeCost 报价时用的那一条，否则收错价、升错件。
+      let idx = uid ? bagIndexOfUid(state, uid) : -1;
+      if (idx < 0) idx = bagIndexOfId(state, id);
       if (idx >= 0) state.meta.bag[idx].level = (state.meta.bag[idx].level || 1) + 1;
     }
 
