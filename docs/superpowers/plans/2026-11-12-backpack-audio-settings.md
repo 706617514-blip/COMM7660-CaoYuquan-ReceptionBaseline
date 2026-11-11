@@ -495,32 +495,34 @@ git commit -m "refactor(bag): 装备函数接受可选 uid（同 id 多件时指
 - Consumes: Task 2 的 `bagAdd`/`bagCapacity`
 - Produces:
   - `C.BAG = { cols: 5, rows: 7, cellsPerPage: 35, maxPages: 6, pagePrices: [0, 200, 500, 1000, 2000, 5000] }`
-
-> **本任务必须先修三个"静默吞装备"缺陷 + 一处过时读取（Task 2 复审实测，我复现确认）**：
->
-> **先看 `game/hub.js:190`**：`const lv = (state.meta.inventoryLevels || {})[id] || 1;` 读的
-> 字段 Task 2 已删除，于是**任何背包里的装备在兵器架上都显示 Lv.1**。实测：
-> 背包里放一件 `leatherHelm` Lv.3，`H.zoneActions(s,'forgewear')` 返回
-> `equip-wear | 皮盔 | 头部 · Lv.1 · 生命上限 +12` —— 等级显示错，且**没有任何断言覆盖**。
-> 改为从 `meta.bag` 里按 id 找条目读 `level`（`bagIndexOfId` 已在 Task 2 就位）。
-
-> `bagAdd` 满包返回 `-1`，但除 `rollEquipDrop` 外**所有调用者都忽略返回值**。
->
-> | 路径 | 实测行为 | 危害 |
-> |---|---|---|
-> | `buyEquipment`（`logic.js:497`） | 满包时**照扣 190 铜币**、返回 `{ok:true}`、`equipOwned` 仍为 `null` | 可无限重复，纯铜币黑洞 |
-> | `unequipSlot`（`logic.js:544`） | 满包时返回 **`{ok:true}`**、部位清空、装备**消失** | **谎报成功 + 丢装备** |
-> | 最后一格覆盖（`bagFull` 路径） | 覆盖已有真实装备，且**丢失跨序列化存活** | 玩家白掉的装备找不回来 |
->
-> 三个都违反设计 §4.7「不丢装备」。修法一致：**满包时拒绝动作，不要销毁**。
-> - `buyEquipment`：`bagAdd` 返回 `-1` → 不扣钱，返回 `{ok:false, reason:'背包已满'}`。
-> - `unequipSlot`：`bagAdd` 返回 `-1` → 不清空部位，返回 `{ok:false, reason:'背包已满'}`。
-> - `rollEquipDrop` 的 `bagFull` 覆盖路径**保留**（掉落不该阻塞战斗），但必须
->   在 `run.equipDrops` 里带上 `overwrote` 字段，让 UI 能提示"覆盖了哪一件"，
->   并加断言证明被覆盖的那件确实是从"最后一格"里选出来的（不是随机删一件）。
   - `buyBagPage(state) -> { ok: boolean, reason?: string, cost?: number }`
   - `pageOf(state, index) -> number`（0 基）
   - `pageSlice(state, page) -> Array<{ id, level, uid }>`（不足 35 格补 `null`）
+  - 修好后的 `buyEquipment(state,id)` / `unequipSlot(state,slot)` / `rollEquipDrop(state)`
+
+**前置修复（Task 2 复审实测，我复现确认 —— 先做这些再做分页）**
+
+**① `game/hub.js:190` 读已删除的字段。**
+`const lv = (state.meta.inventoryLevels || {})[id] || 1;` 里的 `inventoryLevels` 已被
+Task 2 删除，于是**任何背包里的装备在兵器架上都显示 Lv.1**。实测：背包里放一件
+`leatherHelm` Lv.3，`H.zoneActions(s,'forgewear')` 返回
+`equip-wear | 皮盔 | 头部 · Lv.1 · 生命上限 +12` —— 等级显示错，**且没有任何断言覆盖**。
+改为从 `meta.bag` 里按 id 找条目读 `level`（`bagIndexOfId` 已在 Task 2 就位）。
+
+**② `bagAdd` 满包返回 `-1`，但除 `rollEquipDrop` 外所有调用者都忽略返回值。**
+
+| 路径 | 实测行为 | 危害 |
+|---|---|---|
+| `buyEquipment`（`logic.js:497`） | 满包时**照扣 190 铜币**、返回 `{ok:true}`、`equipOwned` 仍为 `null` | 可无限重复，纯铜币黑洞 |
+| `unequipSlot`（`logic.js:544`） | 满包时返回 **`{ok:true}`**、部位清空、装备**消失** | **谎报成功 + 丢装备** |
+| 最后一格覆盖（`bagFull` 路径） | 覆盖已有真实装备，且丢失**跨序列化仍存活** | 玩家白掉的装备找不回来 |
+
+三者都违反设计 §4.7「不丢装备」。修法一致：**满包时拒绝动作，不要销毁**。
+- `buyEquipment`：`bagAdd` 返回 `-1` → 不扣钱，返回 `{ok:false, reason:'背包已满'}`。
+- `unequipSlot`：`bagAdd` 返回 `-1` → 不清空部位，返回 `{ok:false, reason:'背包已满'}`。
+- `rollEquipDrop` 的 `bagFull` 覆盖路径**保留**（掉落不该阻塞战斗），但必须在
+  `run.equipDrops` 里带上 `overwrote` 字段，让 UI 能提示"覆盖了哪一件"，
+  并加断言证明被覆盖的那件确实是从"最后一格"里选出来的（不是随机删一件）。
 
 - [ ] **Step 1: 写测试（覆盖 Review Focus #1、#2）**
 
