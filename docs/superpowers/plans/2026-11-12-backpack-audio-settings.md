@@ -1704,6 +1704,10 @@ git commit -m "feat(hub): 六点位上下错落（含判定与绘制同步），
   - `context` **必须是自建 `AudioContext`**（**不是** `game.sound.context`，那是 `null`）
 - **也必须在 `logic.js` 里建 `meta.settings`**（见下方警告）
 
+> **✅ 这个缺口已经在 Task 2 补掉了**（2026-11-12 复核：`game/logic.js:61` 的 `createState` 里已有
+> `settings: { volume: 0.30, muted: false }`，`game/logic.js:2038` 的迁移块与 `:2064` 的 `deserialize`
+> 也各有兜底）。**本任务不要再改 `logic.js` 去建这个字段**，直接读写即可；下面的历史说明保留供追溯。
+>
 > **会崩的缺口（独立核验发现）**：`createState` **今天没有 `meta.settings`**
 > —— 全仓 `grep -n settings game/logic.js` 零命中（已实测）。
 > 设计文档 §5.5 要求音量/静音持久化，而本任务与 Task 13 原本都没写"谁负责建这个字段"。
