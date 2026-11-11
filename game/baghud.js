@@ -89,6 +89,7 @@
   let batch = null;         // null = 普通态；{ sel: { uid: true } } = 批量选择态
   let keptUids = {};        // 批量态里"每 id 会被保留的那件"（由 logic 的补集决定）
   let drag = null;          // { pointerId, dx, dy }
+  let resizeBound = false;  // window 上的 resize 监听是否已注册（只注册一次）
 
   const doc = () => global.document;
 
@@ -881,6 +882,24 @@
    * 玩家拖出去一次就再也找不回来了。
    * 面板比可视区还大时 max 会算成负数，此时用 max(0, ...) 保证不越界到负坐标。
    */
+  /**
+   * resize 监听：面板**打开期间**窗口被缩小，必须重新夹边。
+   *
+   * 为什么必须：clamp() 原本只在 open() 与拖动时被调用，#bag 是 position:fixed，
+   * left/top 一旦写成具体像素就跟着视口走。实测 1100 宽时开面板 left = 554，
+   * 把窗口缩到 520 后矩形仍是 left 554 / right 1024 —— 面板整块落在视口外，
+   * 玩家既看不到也点不到，只能再按一次 Tab 重开。（旧版同样如此，不是回归。）
+   *
+   * 为什么 close() 不解绑：解绑要写"只在真的关掉时移除"的条件分支，漏一次
+   * 就是一个再也不夹边的面板；而每次重开都会再进 open()，所以注册一次就够。
+   * 回调里必须判打开态：关闭时 #bag 是 display:none，offsetWidth 读到 0，
+   * 那时 clamp() 会把 left/top 算到 0 —— 在看不见的面板上写一套错位坐标没有意义。
+   */
+  function onResize() {
+    if (!opened) return;
+    clamp();
+  }
+
   function clamp() {
     if (!ui || !ui.root) return;
     const root = ui.root;
@@ -973,6 +992,11 @@
     if (nextState) state = nextState;
     if (nextOpts) opts = nextOpts;
     if (!ui && !build()) return false;
+    // 窗口缩放要在开面板之后才管：注册一次，close() 不解绑（见 onResize）
+    if (!resizeBound) {
+      resizeBound = true;
+      if (global.addEventListener) global.addEventListener('resize', onResize);
+    }
     // 宿主只关心「关 -> 开」这一跳。重复 open() 是幂等的（只重置位置和分页），
     // 再通知一次 onOpen 会让宿主把已经被置成 true 的面板状态当成"打开前"，
     // 关背包时永远恢复成 true —— update() 从此早退，角色再也不动

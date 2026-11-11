@@ -98,6 +98,21 @@ app.whenReady().then(async () => {
     result = await win.webContents.executeJavaScript(script);
   } catch (err) { result = { error: err.message }; }
   log('RESULT ' + JSON.stringify(result));
+  // 第三段：面板开着的时候把窗口缩小（Task 10c）。
+  // 顺序必须在 SMALLSCRIPT 之前：那一段进来时视口就该是 520x420，
+  // 而这一段要的是"先在大窗口打开面板、再缩小"，反了就测不到。
+  if (process.env.RESIZESCRIPT) {
+    try { win.setContentSize(520, 420); } catch (err) { log('RESIZE-FAIL ' + err.message); }
+    await new Promise(r => setTimeout(r, 800));
+    let rs;
+    try {
+      rs = await win.webContents.executeJavaScript(process.env.RESIZESCRIPT);
+    } catch (err) { rs = { error: err.message }; }
+    log('RESIZE ' + JSON.stringify(rs));
+    // 还原成大窗口，免得残留的小视口影响后面那段的登录 / 建档流程。
+    try { win.setContentSize(1100, 800); } catch (err) { log('RESIZE-BACK-FAIL ' + err.message); }
+    await new Promise(r => setTimeout(r, 400));
+  }
   // 第二段：真正的 520x420 视口。
   // 面板"比视口大就只夹左上角"这个缺陷在 1100x800 下根本复现不了 —— 620x540
   // 在那个视口里塞得下，两条夹边断言对着坏实现也是绿的。所以必须真的把窗口改小。
@@ -1100,8 +1115,54 @@ const SCRIPT = `
     });
   }
 
+  // ---- 面板开着时缩小窗口：先把大窗口下的矩形记下来（Task 10c）----
+  // 主段结束时必须保持面板打开，driver 会在 RESULT 之后把窗口缩到 520x420，
+  // 再由 RESIZESCRIPT 量一次。这里记的是反证素材：如果"缩小前有一截在 520
+  // 之外"都不成立，那么"缩小后在里面"就什么也证明不了（它本来就在里面）。
+  stZ.hub.x = 500;
+  stZ.hub.z = 105;
+  window.BagHud.open(window.EmberfieldApp.__state);
+  await wait(300);
+  {
+    const bb = document.getElementById('bag').getBoundingClientRect();
+    out.beforeShrink = {
+      vw: innerWidth,
+      vh: innerHeight,
+      left: Math.round(bb.left),
+      right: Math.round(bb.right),
+      top: Math.round(bb.top),
+      bottom: Math.round(bb.bottom),
+      open: window.BagHud.isOpen(),
+    };
+  }
+
   return out;
 })();
+`;
+
+// 第三段脚本：主段结束是面板开着的大窗口，driver 把窗口缩到 520x420 之后再调这里。
+// 这里**不许**再调 open()：重开会走 placeDefault() 复位，那时量到的是"打开时复位"，
+// 不是"resize 触发的重新夹边"——两者都能让面板回到视口内，断言就区分不出来了。
+// 同样不许出现反引号（这本身也是模板字符串）。
+const RESIZESCRIPT = `
+(function () {
+  var out = {};
+  var el = document.getElementById('bag');
+  out.vw = innerWidth;
+  out.vh = innerHeight;
+  out.open = window.BagHud.isOpen();
+  var r = el.getBoundingClientRect();
+  out.w = Math.round(r.width);
+  out.h = Math.round(r.height);
+  out.left = Math.round(r.left);
+  out.top = Math.round(r.top);
+  out.right = Math.round(r.right);
+  out.bottom = Math.round(r.bottom);
+  out.inside = r.left >= -0.5 && r.top >= -0.5 &&
+    r.right <= innerWidth + 0.5 && r.bottom <= innerHeight + 0.5;
+  window.BagHud.close();
+  return out;
+})()
 `;
 
 // 第二段脚本：驱动先把窗口改成 520x420，再在这里量。#bag 一旦比视口大，
@@ -1156,7 +1217,7 @@ const SMALLSCRIPT = `
   const profileDir = '/tmp/emberfield-browser-' + process.pid + '-' + Date.now();
 
   const child = spawn(ELECTRON, ['--user-data-dir=' + profileDir, DRIVER], {
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '', TARGET: `http://127.0.0.1:${PORT}/game/`, SCRIPT, SMALLSCRIPT },
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '', TARGET: `http://127.0.0.1:${PORT}/game/`, SCRIPT, SMALLSCRIPT, RESIZESCRIPT },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -1185,6 +1246,10 @@ const SMALLSCRIPT = `
   const errors = e ? JSON.parse(e[1]) : [];
   const sm = buf.match(/SMALL (\{.*\})/);
   const small = sm ? JSON.parse(sm[1]) : null;
+  // RESIZE 段（面板开着缩小窗口，Task 10c）。RESIZE-FAIL / RESIZE-BACK-FAIL
+  // 这两行不含花括号，所以下面这个正则只会命中真正的 JSON 行。
+  const rzm = buf.match(/^RESIZE (\{.*\})/m);
+  const resize = rzm ? JSON.parse(rzm[1]) : null;
 
   // 页面脚本一旦抛异常，driver 会返回 {error}，此时 out 里所有字段都是 undefined，
   // 于是下面每条断言都失败 —— 24 条红色，看起来像游戏全线崩了，实际只有一处接线错误。
@@ -1500,6 +1565,33 @@ const SMALLSCRIPT = `
        '小窗口下七个页签也放得下', JSON.stringify(small.tabsFit));
     ok(typeof small.slotH === 'number' && small.slotH >= 26 && small.slotH <= 28,
        '装备槽没被挤扁（34x27）', small.slotH);
+  }
+
+  console.log('\n--- 面板开着时缩小窗口要重新夹边（Task 10c）---');
+  ok(!!resize, '缩放探针返回了结果');
+  if (resize) {
+    ok(resize.error === undefined, '缩放探针没有抛异常', resize.error);
+    ok(r.beforeShrink && r.beforeShrink.vw > 900,
+       '缩小前确实是大窗口（否则反证没有意义）',
+       r.beforeShrink ? r.beforeShrink.vw + 'x' + r.beforeShrink.vh : 'null');
+    ok(r.beforeShrink && r.beforeShrink.open === true,
+       '主段结束时面板是开着的（缩小的是打开中的面板）',
+       r.beforeShrink ? String(r.beforeShrink.open) : 'null');
+    ok(r.beforeShrink && r.beforeShrink.left > 520,
+       '反证：缩小前面板确实有一截在 520 的右边之外',
+       r.beforeShrink ? 'left ' + r.beforeShrink.left + ' / right ' + r.beforeShrink.right : 'null');
+    ok(resize.vw <= 560 && resize.vh <= 460,
+       '视口真的缩到了 520x420', resize.vw + 'x' + resize.vh);
+    ok(resize.open === true, '窗口缩小时面板仍然开着（不是关了才夹边）');
+    ok(resize.w <= resize.vw && resize.h <= resize.vh,
+       '缩小后连面板自身的尺寸都没超过视口', resize.w + 'x' + resize.h);
+    ok(resize.right <= resize.vw + 0.5 && resize.bottom <= resize.vh + 0.5,
+       '缩小后右下角都在视口内（resize 真的重新夹了边）',
+       'right ' + resize.right + ' bottom ' + resize.bottom +
+       ' / 视口 ' + resize.vw + 'x' + resize.vh);
+    ok(resize.inside === true, '缩小后整个面板矩形都在视口内',
+       'left ' + resize.left + ' top ' + resize.top +
+       ' / right ' + resize.right + ' bottom ' + resize.bottom);
   }
 
   console.log('\n--- 远征里按 Tab 也暂停（Task 9）---');
