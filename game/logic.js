@@ -608,6 +608,18 @@
       return;
     }
 
+    // 推开重叠：玩家不能走进 Boss 身体，否则视觉上像穿模。
+    // 判定半径 46 是"能被打到"的范围，但身体视觉宽约 88，
+    // 所以需要额外把玩家推到 88 之外。
+    const minGap = C.BOSS.radius + C.PLAYER_W / 2 + 6;
+    if (dist < minGap && dist > 0.001) {
+      const ddx = p.x - boss.x, ddz = p.z - boss.z;
+      const dd = Math.hypot(ddx, ddz) || 1;
+      const push = (minGap - dist);
+      p.x = clamp(p.x + (ddx / dd) * push, C.PLAYER_W / 2, C.FIELD_W - C.PLAYER_W / 2);
+      p.z = clamp(p.z + (ddz / dd) * push * 0.5, 0, C.FIELD_D);
+    }
+
     // 缓慢逼近（两个轴都跟，但很慢）
     if (dist > C.BOSS.meleeRange * 0.7) {
       const dx = p.x - boss.x, dz = p.z - boss.z;

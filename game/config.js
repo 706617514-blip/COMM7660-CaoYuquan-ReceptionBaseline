@@ -244,7 +244,8 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
   const BOSS = {
     id: 'vineTitan',
     name: '藤蔓巨像',
-    radius: 74,              // 视觉半径（碰撞按 0.62 倍）
+    radius: 46,              // 判定半径。视觉高 150px，判定按体宽的一半，
+                             // 避免玩家站在 Boss "身体里"却不在判定内。
     bodyW: 240, bodyH: 220,  // 美术简报里的原生尺寸
     // 移动很慢：小怪是 92~126，Boss 只有 26
     speed: 26,

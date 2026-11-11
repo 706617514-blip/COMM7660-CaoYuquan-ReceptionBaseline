@@ -139,6 +139,18 @@
           payload: { difficultyId: d.id },
         });
       });
+      // Boss 挑战：三档难度对应不同的装备门槛（PM 定的验收标准）。
+      // 单独入口而不是混进普通波次 —— 玩家需要能选择何时挑战。
+      Object.keys(C.BOSS.tiers).forEach((t) => {
+        const tier = C.BOSS.tiers[t];
+        out.push({
+          kind: 'boss', id: 'boss-' + t,
+          label: '★ ' + tier.label + ' · 藤蔓巨像',
+          sub: tier.hint + ' · 5 个技能 · 全屏技需卡无敌帧',
+          cost: 0, enabled: true, disabledReason: '',
+          payload: { bossTier: t },
+        });
+      });
     }
     return out;
   }

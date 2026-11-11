@@ -440,33 +440,81 @@
   }
 
   // ================================================================ 输入
-  function readKeys(scene) {
-    const k = scene.input.keyboard.addKeys({
-      up: 'W', down: 'S', left: 'A', right: 'D',
-      jump: 'SPACE', attack: 'J', sprint: 'SHIFT',
-      whirl: 'U', blink: 'I', slam: 'O', cry: 'K', nova: 'L',
-      confirm: 'J', esc: 'ESC',
+  /**
+   * 输入层。**不依赖 Phaser 的键盘插件**，直接监听 DOM 事件。
+   *
+   * 为什么不用 scene.input.keyboard.addKeys()：
+   *   1. Shift 检测不到 —— Phaser 的 key 名 'SHIFT' 与实际按键
+   *      'ShiftLeft' / 'ShiftRight' 对不上，导致冲刺完全无效（实测 0 px/s）。
+   *   2. 长按会掉速 —— Phaser 的 isDown 在浏览器重复触发 keydown 时
+   *      状态会被重置，长按 3 秒后速度从 250 掉到 57 px/s（实测）。
+   *
+   * 自己维护一个 keydown/keyup 集合，语义直白且可测。
+   */
+  function createInput(scene) {
+    const down = Object.create(null);
+
+    const CODES = {
+      KeyW: 'up', ArrowUp: 'up',
+      KeyS: 'down', ArrowDown: 'down',
+      KeyA: 'left', ArrowLeft: 'left',
+      KeyD: 'right', ArrowRight: 'right',
+      Space: 'jump',
+      KeyJ: 'attack', KeyJConfirm: 'confirm',
+      ShiftLeft: 'sprint', ShiftRight: 'sprint',
+      KeyU: 'whirl', KeyI: 'blink', KeyO: 'slam', KeyK: 'cry', KeyL: 'nova',
+      Escape: 'esc',
+    };
+
+    const onDown = (ev) => {
+      const name = CODES[ev.code];
+      if (!name) return;
+      // 阻止空格滚动页面、Shift 触发浏览器快捷键
+      if (ev.code === 'Space' || ev.code.startsWith('Shift')) ev.preventDefault();
+      down[name] = true;
+      down['confirm'] = down['confirm'] || name === 'attack';
+    };
+    const onUp = (ev) => {
+      const name = CODES[ev.code];
+      if (!name) return;
+      down[name] = false;
+      if (name === 'attack') down['confirm'] = false;
+    };
+    // 失焦时清空：否则切出去再回来会"卡键"，角色一直往一个方向跑
+    const onBlur = () => { for (const k in down) down[k] = false; };
+
+    window.addEventListener('keydown', onDown, { passive: false });
+    window.addEventListener('keyup', onUp);
+    window.addEventListener('blur', onBlur);
+
+    scene.events.once('shutdown', () => {
+      window.removeEventListener('keydown', onDown);
+      window.removeEventListener('keyup', onUp);
+      window.removeEventListener('blur', onBlur);
     });
+
+    // 边沿检测：上一帧没按、这一帧按了。用于"按一下触发一次"的操作。
+    const prev = Object.create(null);
+    const pressed = Object.create(null);
+    const justPressed = (name) => {
+      const now = !!down[name];
+      const was = !!prev[name];
+      prev[name] = now;
+      return now && !was;
+    };
+
     const read = () => ({
-      up: !!k.up.isDown, down: !!k.down.isDown,
-      left: !!k.left.isDown, right: !!k.right.isDown,
-      jump: !!k.jump.isDown, attack: !!k.attack.isDown, sprint: !!k.sprint.isDown,
-      whirl: !!k.whirl.isDown, blink: !!k.blink.isDown,
-      slam: !!k.slam.isDown, cry: !!k.cry.isDown, nova: !!k.nova.isDown,
+      up: !!down.up, down: !!down.down,
+      left: !!down.left, right: !!down.right,
+      jump: !!down.jump, attack: !!down.attack, sprint: !!down.sprint,
+      whirl: !!down.whirl, blink: !!down.blink, slam: !!down.slam,
+      cry: !!down.cry, nova: !!down.nova,
+      confirm: !!down.attack, esc: !!down.esc,
     });
-    return { keys: k, read: read };
+
+    return { read: read, isDown: (n) => !!down[n], justPressed: justPressed };
   }
 
-  // ================================================================ 草（会动）
-  /**
-   * 地面上的草。三个设计要点：
-   *
-   * 1. **按 z 排序**：草的 depth 用 1000 - z，与角色/敌人同一套排序，
-   *    所以靠前的草会盖住靠后的角色，走近草丛时有"拨草"的层次感。
-   * 2. **两道相位不同的风**：一道低频的大风（整片一起倒），一道高频的小风
-   *    （叶尖各自抖）。只有一道正弦会像整体平移，很假。
-   * 3. **每株草自带相位与频率偏移**：同相位会让整片草像一块板子在晃。
-   */
   const grassFields = new WeakMap();
 
   function plantGrass(scene, mode) {
@@ -571,6 +619,7 @@
     }
   }
 
+  // ================================================================ 背景
   // ================================================================ 背景
   function paintBackdrop(scene, mode) {
     const isHub = mode === 'hub';
@@ -718,7 +767,7 @@
 
     create() {
       this.state = CURRENT_STATE;
-      this.keyboardApi = readKeys(this);
+      this.input2 = createInput(this);
       this.panelOpen = false;
 
       paintBackdrop(this, 'hub');
@@ -839,6 +888,13 @@
           this.startRun(action.payload.difficultyId);
           return;
         }
+        // Boss 挑战：进入一场只有 Boss 的对局
+        if (action.kind === 'boss') {
+          global.EmberfieldUI.closePanel();
+          this.panelOpen = false;
+          this.startBossRun(action.payload.bossTier);
+          return;
+        }
         const r = H.perform(this.state, action);
         const isPlant = action.kind === 'plant' || action.kind === 'plant-all';
         global.EmberfieldUI.refreshPanel(zone, this.state);
@@ -855,10 +911,25 @@
       this.scene.start('Run');
     }
 
+    /** Boss 挑战：清空普通波次，只放一只 Boss。 */
+    startBossRun(tierId) {
+      L.startRun(this.state, 'wood');
+      const run = this.state.run;
+      run.enemies.length = 0;
+      run.spawnQueue.length = 0;
+      run.waveState = 'break';
+      run.breakTimer = 99999;                 // 不推进普通波次
+      run.isBossRun = true;
+      run.bossTier = tierId;
+      L.spawnBoss(this.state, run, tierId);
+      global.EmberfieldUI.save(this.state);
+      this.scene.start('Run');
+    }
+
     update(time, delta) {
       if (this.panelOpen) return;
       const dt = Math.min(delta / 1000, 0.05);
-      const input = this.keyboardApi.read();
+      const input = this.input2.read();
       // 基地里同样支持 Shift 冲刺
       H.moveHub(this.state, input, dt, input.sprint ? C.SPRINT_MULT : 1);
 
@@ -880,7 +951,7 @@
         this.prompt.setVisible(false);
       }
 
-      if (Phaser.Input.Keyboard.JustDown(this.keyboardApi.keys.confirm) && zone) {
+      if (this.input2.justPressed('attack') && zone) {
         if (zone.id === 'field') {
           // 农场是一个独立场景，不是弹出面板：
           // 渐黑 → 切换 → 渐亮，让"走进农田"有过渡感
@@ -900,7 +971,7 @@
 
     create() {
       this.state = CURRENT_STATE;
-      this.keyboardApi = readKeys(this);
+      this.input2 = createInput(this);
       this.enemyPool = [];
 
       paintBackdrop(this, 'run');
@@ -945,7 +1016,7 @@
       const run = this.state.run;
       if (!run || this.state.phase !== 'run') return;
 
-      const input = this.keyboardApi.read();
+      const input = this.input2.read();
       L.step(this.state, input, dt);
 
       updateGrass(this, dt);
@@ -1034,8 +1105,108 @@
         }
       }
 
+      // Boss：用真实美术（三档难度各一对左右视图），按朝向切换
+      run.enemies.forEach((e) => {
+        if (!e.isBoss) return;
+        if (!this.bossSprite) {
+          this.bossSprite = this.add.image(0, 0, 'boss_normal_right').setOrigin(0.5, 1);
+          this.bossSprite.setVisible(false);
+          // Boss 的接地阴影。小怪一直有，Boss 之前没有 —— 于是看起来"悬空"。
+          // 阴影要又大又淡，才像庞大物体投在地面上的柔和暗影。
+          this.bossShadow = this.add.ellipse(0, 0, 150, 34, 0x000000, 0.30)
+            .setVisible(false).setDepth(1);
+        }
+        const tier = e.bossTier || 'normal';
+        const dir = e.facing >= 0 ? 'right' : 'left';
+        const key = 'boss_' + tier + '_' + dir;
+        if (this.textures.exists(key)) {
+          this.bossSprite.setTexture(key);
+        } else if (this.textures.exists('boss_normal_' + dir)) {
+          this.bossSprite.setTexture('boss_normal_' + dir);
+        }
+        const bs = toScreen(e.x, e.z, e.h);
+        // 缩放到游戏里的目标高度（约 220px 视觉高度）
+        // 185 ≈ 玩家的 3 倍高。150 时像"大点的怪"没有压迫感，
+        // 220 时占画面 1/3 且抠图细节糊掉。185 是两者之间。
+        const targetH = 185;
+        const texH = this.bossSprite.height || 400;
+        const scale = (targetH / texH) * bs.sc;
+        // 贴地：sy 已是 z 对应的地面位置，origin(0.5,1) 让图片底边落在这里
+        const gy = toScreen(e.x, e.z, 0).sy;
+        this.bossSprite.setVisible(true)
+          .setPosition(bs.sx, gy)
+          .setScale(scale)
+          .setDepth(1000 - e.z)
+          .setAlpha(e.hitFlash > 0 ? 0.75 : 1);
+
+        // 接地阴影：让庞大的身体有"压在地上"的重量感
+        this.bossShadow.setVisible(true)
+          .setPosition(bs.sx, gy + 4)
+          .setSize(150 * scale, 34 * scale)
+          .setDepth(1000 - e.z - 1);
+
+        // ---- 光环与技能特效 ----
+        // 作用有二：盖住抠图残留的灰边；强化"异界入侵"的压迫感。
+        // 颜色按难度区分，与 Boss 主色呼应。
+        const AURA = { normal: 0xb8a878, hard: 0x8fd45a, hell: 0xff5a3c };
+        const auraCol = AURA[tier] || AURA.normal;
+        const g = this.effectGfx;
+        const groundY = toScreen(e.x, e.z, 0).sy;
+        const t = time / 1000;
+        const pulse = 0.5 + 0.5 * Math.sin(t * 2.2);
+
+        // (1) 地面法阵：细、暗、贴地。之前 210x62 的亮绿大环盖住了 Boss 本身。
+        g.lineStyle(1.8, auraCol, 0.34 + pulse * 0.16);
+        g.strokeEllipse(bs.sx, groundY + 2, 132 * bs.sc, 38 * bs.sc);
+        for (let k = 0; k < 10; k++) {
+          const a = (k / 10) * Math.PI * 2 + t * 0.6;
+          const rx = 66 * Math.cos(a) * bs.sc, ry = 19 * Math.sin(a) * bs.sc;
+          g.fillStyle(auraCol, 0.3 + 0.4 * Math.abs(Math.sin(t * 3 + k)));
+          g.fillCircle(bs.sx + rx, groundY + 2 + ry, 1.8 * bs.sc);
+        }
+
+        // (2) 轮廓光：贴着身体外缘，用来盖抠图灰边。椭圆要匹配实际体型。
+        const bodyH = 185 * bs.sc, bodyW = 88 * bs.sc;
+        g.lineStyle(3.5 * bs.sc, auraCol, 0.30 + pulse * 0.14);
+        g.strokeEllipse(bs.sx, groundY - bodyH * 0.5, bodyW * 1.55, bodyH * 0.94);
+
+        // (3) 上升的孢子：少量、暗色
+        for (let k = 0; k < 5; k++) {
+          const ph = (t * 0.35 + k * 0.2) % 1;
+          const px = bs.sx + Math.sin(t * 1.1 + k * 2.1) * 40 * bs.sc;
+          const py = groundY - ph * 170 * bs.sc;
+          g.fillStyle(auraCol, (1 - ph) * 0.45);
+          g.fillCircle(px, py, (2.2 - ph * 1.1) * bs.sc);
+        }
+
+        // (5) 正在施法时：显示技能范围与前摇进度
+        if (e.casting) {
+          const def = C.BOSS.skills.find((k) => k.id === e.casting.id);
+          if (def) {
+            const prog = 1 - (e.casting.timer / e.casting.windup);   // 0 → 1
+            const warn = 0.45 + 0.55 * Math.sin(t * 18);              // 急促闪烁
+            if (def.range === 'full') {
+              // 全屏：整片场地的预警，越接近爆发越亮
+              g.fillStyle(0xff5a3c, 0.10 + prog * 0.22);
+              g.fillRect(0, 0, W, HGT);
+              g.lineStyle(6, 0xff7a3c, 0.5 + warn * 0.5);
+              g.strokeRect(3, 3, W - 6, HGT - 6);
+            } else {
+              // 范围技能：地面圆环 + 内圈填充，半径随进度收缩（提示"快来了"）
+              // 半径按游戏单位换算到屏幕，不再乘 1.9（那会让 210 的半径看起来像 400）
+              const r = def.radius * bs.sc * (1.10 - prog * 0.10);
+              g.fillStyle(0xff5a3c, 0.10 + prog * 0.14);
+              g.fillEllipse(bs.sx, groundY + 2, r, r * 0.34);
+              g.lineStyle(3, 0xff9a6c, 0.55 + warn * 0.45);
+              g.strokeEllipse(bs.sx, groundY + 2, r, r * 0.34);
+            }
+          }
+        }
+      });
+
       // 小怪
       run.enemies.forEach((e, i) => {
+        if (e.isBoss) return;                 // Boss 单独渲染
         const sp = this.getEnemySprite(i, e.kind);
         const es = toScreen(e.x, e.z, e.h);
         sp.img.setVisible(true).setPosition(es.sx, es.sy).setScale(es.sc * ENEMY_SCALE);
@@ -1264,7 +1435,7 @@
     create() {
       this.state = CURRENT_STATE;
       H.ensureHub(this.state);
-      this.keyboardApi = readKeys(this);
+      this.input2 = createInput(this);
       this.cursor = 0;
       this.busy = false;
 
@@ -1555,15 +1726,28 @@
       updateGrass(this, Math.min((delta || 16) / 1000, 0.05));
       if (this.busy) return;
       const k = this.keyboardApi.keys;
-      if (Phaser.Input.Keyboard.JustDown(k.esc)) this.leave();
-      // J 也可以返回（与基地的操作键一致）
-      if (Phaser.Input.Keyboard.JustDown(k.confirm)) this.leave();
+      if (this.input2.justPressed('esc')) this.leave();
     }
   }
 
   // 引导场景：先在所有纹理就绪后再进基地，避免第一帧拿到不存在的纹理而黑屏
   class BootScene extends Phaser.Scene {
     constructor() { super('Boot'); }
+
+    preload() {
+      // Boss 美术来自课程指定的 AIMC 平台（人工生成），
+      // 经 game/assets/ 处理：抠背景 → 降色数 → 加描边。
+      // 三档难度各一对左右视图。文件缺失时不会崩，只是该档没有图。
+      const TIERS = ['normal', 'hard', 'hell'];
+      const DIRS = ['right', 'left'];
+      TIERS.forEach((t) => {
+        DIRS.forEach((d) => {
+          const key = 'boss_' + t + '_' + d;
+          this.load.image(key, 'assets/boss_' + t + '_' + d + '.png');
+        });
+      });
+    }
+
     create() {
       buildTextures(this);
       this.scene.start('Hub');
