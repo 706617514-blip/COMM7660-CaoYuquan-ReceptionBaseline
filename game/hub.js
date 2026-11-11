@@ -31,13 +31,15 @@
    */
   const ZONES = [
     { id: 'field', name: '田地', hint: '播种 · 成熟后自动产出',
-      x: 150, reach: 95, art: 'field' },
+      x: 120, reach: 85, art: 'field' },
     { id: 'anvil', name: '铁匠铺', hint: '强化攻击、生命、移速',
-      x: 400, reach: 80, art: 'anvil' },
+      x: 330, reach: 70, art: 'anvil' },
+    { id: 'shop', name: '药水铺', hint: '补给消耗品 · 每局都要重新买',
+      x: 510, reach: 68, art: 'shop' },
     { id: 'altar', name: '技能祭坛', hint: '提升技能等级',
-      x: 620, reach: 80, art: 'altar' },
+      x: 680, reach: 70, art: 'altar' },
     { id: 'gate', name: '远征之门', hint: '选择难度并出发',
-      x: 850, reach: 85, art: 'gate' },
+      x: 870, reach: 78, art: 'gate' },
   ];
 
   function ensureHub(state) {
@@ -130,6 +132,24 @@
           payload: { key: key },
         });
       });
+    } else if (zoneId === 'shop') {
+      // 药水铺：三种消耗品，价格固定、每局都要重新买。
+      // 全部列出（包括买不起/已带满的），因为这里同时承担"展示效果"的功能 ——
+      // 玩家要先看到"坚壁药能减伤"才知道下局该带什么。
+      C.POTION_ORDER.forEach(function (id) {
+        const def = C.POTIONS[id];
+        const held = (state.meta.potions && state.meta.potions[id]) || 0;
+        const full = held >= def.carry;
+        const poor = state.meta.coins < def.price;
+        out.push({
+          kind: 'potion', id: 'po-' + id, label: def.name,
+          sub: def.desc + ' · 携带 ' + held + '/' + def.carry,
+          cost: def.price,
+          enabled: !full && !poor,
+          disabledReason: full ? '已带满 ' + def.carry + ' 瓶' : (poor ? '铜币不够' : ''),
+          payload: { id: id },
+        });
+      });
     } else if (zoneId === 'gate') {
       C.DIFFICULTIES.forEach((d) => {
         out.push({
@@ -172,6 +192,7 @@
       });
       return { ok: n > 0, reason: n ? '' : '种子不够', planted: n };
     }
+    if (action.kind === 'potion') return L.buyPotion(state, action.payload.id, 1);
     if (action.kind === 'upgrade') return L.buyUpgrade(state, action.payload.key);
     if (action.kind === 'skill') return L.buySkill(state, action.payload.key);
     return { ok: false, reason: '未知动作' };

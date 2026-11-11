@@ -54,6 +54,24 @@ function armedRun(diffId, playerX, playerZ) {
   return { s, run };
 }
 
+/**
+ * 带药水开一局。
+ *
+ * 必须在 startRun **之前**把药水塞进 meta —— 本局携带量是开局那一刻的快照，
+ * 开局后再改 meta 不会影响本局（这正是设计意图：中途退出不吞药）。
+ */
+function armedRunWithPotions(potions, diffId) {
+  const s = L.createState(12345);
+  s.meta.potions = Object.assign({ heal: 0, strength: 0, wall: 0 }, potions || {});
+  L.startRun(s, diffId || 'wood');
+  const run = s.run;
+  run.enemies = [];
+  run.spawnQueue = [];
+  run.waveState = 'break';
+  run.breakTimer = 9999;
+  return { s, run };
+}
+
 function addEnemy(s, run, x, z, kind) {
   const e = L.makeEnemy(s, kind || 'crawler', run.diff);
   e.x = x; e.z = z; e.vx = 0; e.vz = 0;
@@ -934,6 +952,174 @@ section('21. 藤蔓 Boss：技能、前摇、可躲避性');
   ok(tiers[2].hp > tiers[1].hp, '地狱档血量高于困难', `${tiers[1].hp} -> ${tiers[2].hp}`);
   ok(tiers[1].damage > tiers[0].damage, '困难档伤害高于普通');
   ok(tiers[2].damage > tiers[1].damage, '地狱档伤害高于困难');
+}
+
+// ---------------------------------------------------------------- 22. 药水
+section('22. 药水（消耗品）');
+{
+  // 三瓶药水的配置必须齐全，且效果各不相同 —— 否则"三格药水"只是换个名字
+  const P = C.POTIONS || {};
+  const ids = Object.keys(P);
+  ok(ids.length === 3, '配置了 3 种药水', ids.join(','));
+  ok(ids.indexOf('heal') >= 0 && ids.indexOf('strength') >= 0 && ids.indexOf('wall') >= 0,
+    '三种药水分别是回春/力量/坚壁');
+
+  // 键位：用户明确指定 1/2/3
+  const keys = ids.map(k => P[k].key);
+  ok(keys.join('') === '123', '键位依次为 1 / 2 / 3', keys.join(''));
+  ok(ids.every(k => P[k].key.length === 1 && '123'.indexOf(P[k].key) >= 0),
+    '键位是单字符数字键（DOM code Digit1/2/3 可映射）');
+
+  // 价格与携带上限
+  const hp_ = P.heal || {}, sp_ = P.strength || {}, wp_ = P.wall || {};
+  ok(hp_.price === 60 && sp_.price === 80 && wp_.price === 90,
+    '价格为 60 / 80 / 90', [hp_.price, sp_.price, wp_.price].join('/'));
+  ok(hp_.carry === 3 && sp_.carry === 2 && wp_.carry === 2,
+    '携带上限为 3 / 2 / 2', [hp_.carry, sp_.carry, wp_.carry].join('/'));
+
+  // ---- 回春药：立刻回血 ----
+  const a = armedRunWithPotions({ heal: 1 });
+  a.run.player.hp = 30;
+  L.usePotion(a.s, 'heal');
+  ok(a.run.player.hp === 55, '回春药立刻回 25 血', `30 -> ${a.run.player.hp}`);
+  ok(a.run.potions.heal === 0, '回春药用掉后本局携带数减 1', String(a.run.potions.heal));
+
+  // 回血不得超过上限
+  const b = armedRunWithPotions({ heal: 1 });
+  b.run.player.hp = b.run.player.maxHp - 5;
+  L.usePotion(b.s, 'heal');
+  ok(b.run.player.hp === b.run.player.maxHp, '回春药不会超过血量上限', String(b.run.player.hp));
+
+  // ---- 力量药：限时增伤 ----
+  const c = armedRunWithPotions({ strength: 1 });
+  const base = L.playerStats(c.s).damage;
+  L.usePotion(c.s, 'strength');
+  ok(c.run.player.potionBuff && c.run.player.potionBuff.damageMul > 1,
+    '力量药设置增伤倍率', JSON.stringify(c.run.player.potionBuff));
+  ok(c.run.player.potionBuff.timer > 14 && c.run.player.potionBuff.timer <= 15.01,
+    '力量药持续 15 秒', String(c.run.player.potionBuff.timer));
+
+  // ---- 坚壁药：限时减伤 ----
+  const d = armedRunWithPotions({ wall: 1 });
+  L.usePotion(d.s, 'wall');
+  ok(d.run.player.potionBuff && d.run.player.potionBuff.hurtMul < 1,
+    '坚壁药设置减伤倍率', JSON.stringify(d.run.player.potionBuff));
+  ok(d.run.player.potionBuff.timer > 7 && d.run.player.potionBuff.timer <= 8.01,
+    '坚壁药持续 8 秒', String(d.run.player.potionBuff.timer));
+
+  // ---- 用掉就没了：没有携带时按了不生效 ----
+  const e = armedRunWithPotions({});
+  e.run.player.hp = 30;
+  const r0 = L.usePotion(e.s, 'heal');
+  ok(r0 && r0.ok === false, '没有携带时使用失败', JSON.stringify(r0));
+  ok(e.run.player.hp === 30, '失败时不回血', String(e.run.player.hp));
+
+  // ---- 每局要重新买：药水不进结算金币 ----
+  ok(typeof hp_.price === 'number' && hp_.price > 0,
+    '药水是花钱买的（经济出口）');
+
+  // ---- 键位输入：input.potion1/2/3 触发对应药水 ----
+  const f = armedRunWithPotions({ heal: 1, strength: 1, wall: 1 });
+  f.run.player.hp = 40;
+  L.step(f.s, { left: false, right: false, up: false, down: false, potion1: true }, 1 / 60);
+  ok(f.run.player.hp === 65, '按 1 喝回春药', `40 -> ${f.run.player.hp}`);
+  ok(f.run.potions.heal === 0, '按 1 后本局回春药减少');
+
+  const g = armedRunWithPotions({ heal: 1, strength: 1, wall: 1 });
+  L.step(g.s, { left: false, right: false, up: false, down: false, potion2: true }, 1 / 60);
+  ok(g.run.potions.strength === 0 && g.run.player.potionBuff,
+    '按 2 喝力量药');
+
+  const h = armedRunWithPotions({ heal: 1, strength: 1, wall: 1 });
+  L.step(h.s, { left: false, right: false, up: false, down: false, potion3: true }, 1 / 60);
+  ok(h.run.potions.wall === 0 && h.run.player.potionBuff,
+    '按 3 喝坚壁药');
+
+  // ---- 持续药水到期后效果消失 ----
+  const i2 = armedRunWithPotions({ strength: 1 });
+  L.usePotion(i2.s, 'strength');
+  const idle = { left: false, right: false, up: false, down: false };
+  for (let t = 0; t < 16 * 60; t++) L.step(i2.s, idle, 1 / 60);
+  ok(!i2.run.player.potionBuff, '力量药 15 秒后失效', JSON.stringify(i2.run.player.potionBuff));
+
+  // ---- 存档：v3 旧档走真实读取路径后能补齐 potions ----
+  // 用 deserialize 而不是 migrate —— 玩家实际走的就是这条路径，
+  // 单独测 migrate 会漏掉"版本号没跟上"这类只在装配处暴露的问题。
+  const oldJson = JSON.stringify({
+    version: 3, seed: 7, rngState: 7, phase: 'farm',
+    meta: { coins: 10, seeds: 2, upgrades: { damage: 0, maxHp: 0, speed: 0 },
+      skills: { whirl: 1, blink: 1, slam: 1, cry: 1, nova: 1 },
+      runsCompleted: 1, runsWon: 0, bestWave: 2 },
+    farm: { plots: [] },
+  });
+  let migrated = null, loadErr = null;
+  try { migrated = L.deserialize(oldJson); } catch (err) { loadErr = err.message; }
+  ok(!loadErr, 'v3 旧档能读出（不抛错误）', loadErr || '');
+  ok(migrated && migrated.version === 4, 'v3 旧档读取后升到 v4',
+    migrated ? String(migrated.version) : 'null');
+  ok(migrated && migrated.meta.potions && migrated.meta.potions.heal === 0,
+    '旧档补齐 potions 且默认是 0（不白送）',
+    JSON.stringify(migrated && migrated.meta.potions));
+  ok(migrated && migrated.meta.coins === 10 && migrated.meta.bestWave === 2,
+    '迁移不丢原有数据');
+
+  // ---- 新局开始：本轮携带的药水从 meta 快照，不直接吃 meta ----
+  const j = L.createState(999);
+  j.meta.potions = { heal: 3, strength: 2, wall: 2 };
+  L.startRun(j, 'wood');
+  ok(j.run.potions && j.run.potions.heal === 3,
+    '开局把携带药水快照进本局', JSON.stringify(j.run.potions));
+
+  // ---- 结算时把剩余的携带量回写 meta（喝掉的不再回来）----
+  const k2 = armedRunWithPotions({ heal: 3, strength: 1, wall: 2 });
+  L.usePotion(k2.s, 'heal');
+  L.usePotion(k2.s, 'strength');
+  L.endRun(k2.s, false);
+  ok(k2.s.meta.potions.heal === 2, '结算后 meta 回写剩余回春药', String(k2.s.meta.potions.heal));
+  ok(k2.s.meta.potions.strength === 0, '喝掉的力量药不会退回', String(k2.s.meta.potions.strength));
+  ok(k2.s.meta.potions.wall === 2, '没喝的药水原样保留', String(k2.s.meta.potions.wall));
+
+  // ---- 坚壁药真的减半伤害 ----
+  const plain = armedRunWithPotions({});
+  L.hurtPlayer(plain.run.player, 40);
+  const plainHp = plain.run.player.hp;
+
+  const tank = armedRunWithPotions({ wall: 1 });
+  L.usePotion(tank.s, 'wall');
+  L.hurtPlayer(tank.run.player, 40);
+  const tankHp = tank.run.player.hp;
+  ok(tankHp > plainHp, '坚壁药后同样伤害掉血更少', `无药 ${plainHp} vs 有药 ${tankHp}`);
+  ok(plain.run.player.maxHp - tankHp === 20,
+    '坚壁药把 40 点伤害减半成 20', String(plain.run.player.maxHp - tankHp));
+
+  // ---- 力量药真的提升伤害 ----
+  const weak = armedRunWithPotions({});
+  const strong = armedRunWithPotions({ strength: 1 });
+  L.usePotion(strong.s, 'strength');
+  const dWeak = L.currentDamage ? L.currentDamage(weak.s, weak.run.player) : 0;
+  const dStrong = L.currentDamage ? L.currentDamage(strong.s, strong.run.player) : 0;
+  ok(dStrong > dWeak, '力量药提升当前伤害', `${dWeak} -> ${dStrong}`);
+
+  // ---- 不能在基地喝药（避免用铜币在安全区回血）----
+  const idleState = L.createState(4242);
+  idleState.meta.potions = { heal: 1, strength: 0, wall: 0 };
+  const rBase = L.usePotion(idleState, 'heal');
+  ok(rBase && rBase.ok === false, '基地（非战斗中）不能喝药', JSON.stringify(rBase));
+
+  // ---- 买药水：扣钱、加携带、受上限约束 ----
+  const shopper = L.createState(555);
+  shopper.meta.coins = 500;
+  const buy1 = L.buyPotion(shopper, 'heal', 2);
+  ok(buy1.ok && shopper.meta.potions.heal === 2, '买 2 瓶回春药', JSON.stringify(buy1));
+  ok(shopper.meta.coins === 500 - 120, '买 2 瓶扣 120 铜币', String(shopper.meta.coins));
+  const buy2 = L.buyPotion(shopper, 'heal', 5);
+  ok(buy2.ok && shopper.meta.potions.heal === 3, '买到携带上限就停', JSON.stringify(shopper.meta.potions));
+  const buy3 = L.buyPotion(shopper, 'heal', 1);
+  ok(buy3.ok === false, '已带满时买不了', JSON.stringify(buy3));
+  const poor = L.createState(556);
+  poor.meta.coins = 10;
+  const buy4 = L.buyPotion(poor, 'wall', 1);
+  ok(buy4.ok === false && poor.meta.coins === 10, '铜币不够买不了且不扣钱');
 }
 
 // ---------------------------------------------------------------- 汇总

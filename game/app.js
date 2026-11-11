@@ -394,6 +394,44 @@
     g.fillStyle(0xffffff, 0.8); g.fillCircle(32, 12, 3);
     g.generateTexture('altar', 64, 54);
 
+    /**
+     * 药水铺：摊位 + 条纹雨棚 + 三个药瓶。
+     *
+     * 轮廓上必须和铁匠铺（矮、方、石头）完全不同 ——
+     * 玩家是靠剪影找建筑的，颜色接近的两堆方块在景深压缩后会糊成一团。
+     * 这里用"高窄的帐篷顶 + 三个圆润瓶子"制造辨识度：
+     * 圆瓶是全身唯一的圆形元素，眼睛会自动抓过去。
+     */
+    g.clear();
+    // 木柜台
+    g.fillStyle(0x4a3726, 1); g.fillRoundedRect(6, 40, 68, 26, 4);
+    g.fillStyle(0x5c452f, 1); g.fillRoundedRect(6, 40, 68, 7, 3);
+    // 台面物件：三个瓶子（绿 / 橙 / 蓝，对应三种药水）
+    g.fillStyle(0x2f5a38, 1); g.fillRoundedRect(15, 26, 12, 15, 4);
+    g.fillStyle(0x7fe08a, 0.9); g.fillRoundedRect(17, 33, 8, 7, 3);
+    g.fillStyle(0x5a3a22, 1); g.fillRoundedRect(33, 24, 12, 17, 4);
+    g.fillStyle(0xff9a6c, 0.9); g.fillRoundedRect(35, 32, 8, 8, 3);
+    g.fillStyle(0x24384f, 1); g.fillRoundedRect(51, 27, 12, 14, 4);
+    g.fillStyle(0x9ad7ff, 0.9); g.fillRoundedRect(53, 33, 8, 7, 3);
+    // 瓶塞
+    g.fillStyle(0x8a7355, 1); g.fillRect(19, 23, 4, 4);
+    g.fillRect(37, 21, 4, 4); g.fillRect(55, 24, 4, 4);
+    // 雨棚：红白条纹，是最强的远距离识别特征
+    g.fillStyle(0x7a2f28, 1); g.fillTriangle(0, 14, 80, 14, 40, 0);
+    g.fillStyle(0xc4453a, 1);
+    for (let i = 0; i < 4; i++) {
+      const bx = 40 + (i - 1.5) * 20;
+      g.fillTriangle(40, 0, bx - 5, 14, bx + 5, 14);
+    }
+    g.fillStyle(0xf0e6d2, 0.85);
+    for (let i = 0; i < 3; i++) {
+      const bx = 40 + (i - 1) * 20;
+      g.fillTriangle(40, 0, bx - 4, 14, bx + 4, 14);
+    }
+    // 支柱
+    g.fillStyle(0x3a2a1c, 1); g.fillRect(2, 14, 4, 28); g.fillRect(74, 14, 4, 28);
+    g.generateTexture('shop', 80, 68);
+
     // 远征文门
     g.clear();
     g.fillStyle(0x2a2f3a, 1); g.fillRect(4, 10, 12, 76);
@@ -463,6 +501,8 @@
       KeyJ: 'attack', KeyJConfirm: 'confirm',
       ShiftLeft: 'sprint', ShiftRight: 'sprint',
       KeyU: 'whirl', KeyI: 'blink', KeyO: 'slam', KeyK: 'cry', KeyL: 'nova',
+      Digit1: 'potion1', Digit2: 'potion2', Digit3: 'potion3',
+      Numpad1: 'potion1', Numpad2: 'potion2', Numpad3: 'potion3',
       Escape: 'esc',
     };
 
@@ -503,12 +543,25 @@
       return now && !was;
     };
 
+    // 药水是**边沿触发**：长按 1 不能把三瓶回春一次喝光。
+    // 这里在 read() 内部消费边沿，read() 每帧只调一次，语义与"按一下喝一瓶"一致。
+    const potionEdge = (name) => {
+      const now = !!down[name];
+      const was = !!prevPotion[name];
+      prevPotion[name] = now;
+      return now && !was;
+    };
+    const prevPotion = Object.create(null);
+
     const read = () => ({
       up: !!down.up, down: !!down.down,
       left: !!down.left, right: !!down.right,
       jump: !!down.jump, attack: !!down.attack, sprint: !!down.sprint,
       whirl: !!down.whirl, blink: !!down.blink, slam: !!down.slam,
       cry: !!down.cry, nova: !!down.nova,
+      potion1: potionEdge('potion1'),
+      potion2: potionEdge('potion2'),
+      potion3: potionEdge('potion3'),
       confirm: !!down.attack, esc: !!down.esc,
     });
 
@@ -936,6 +989,23 @@
           img.add(this.add.rectangle(0, -2, 54, 10, 0x2a2f36).setOrigin(0.5, 1));
           img.add(this.add.rectangle(0, -10, 44, 9, 0x353b44).setOrigin(0.5, 1));
           img.add(this.add.image(0, -18, 'anvil').setOrigin(0.5, 1).setScale(1.15));
+        } else if (z.art === 'shop') {
+          img = this.add.container(z.x, y);
+          img.add(this.add.rectangle(0, -2, 74, 9, 0x2f2418).setOrigin(0.5, 1));
+          img.add(this.add.image(0, 0, 'shop').setOrigin(0.5, 1).setScale(1.12));
+          // 三个瓶子的呼吸光：对应三种药水，让摊位"在营业"
+          const glowA = this.add.ellipse(-25, -30, 12, 10, 0x7fe08a, 0.34)
+            .setBlendMode(Phaser.BlendModes.ADD);
+          const glowB = this.add.ellipse(-3, -32, 12, 10, 0xff9a6c, 0.34)
+            .setBlendMode(Phaser.BlendModes.ADD);
+          const glowC = this.add.ellipse(19, -30, 12, 10, 0x9ad7ff, 0.34)
+            .setBlendMode(Phaser.BlendModes.ADD);
+          img.add(glowA); img.add(glowB); img.add(glowC);
+          // 相位错开：三个灯同时闪会像故障，错开才像"各烧各的"
+          [glowA, glowB, glowC].forEach((gl, i) => {
+            this.tweens.add({ targets: gl, alpha: 0.7, duration: 900 + i * 260,
+              yoyo: true, repeat: -1, ease: 'Sine.inOut', delay: i * 200 });
+          });
         } else if (z.art === 'altar') {
           img = this.add.container(z.x, y);
           img.add(this.add.image(0, 0, 'altar').setOrigin(0.5, 1).setScale(1.2));
@@ -1595,6 +1665,29 @@
           return;
         }
         const s2 = toScreen(ef.x, ef.z, 0);
+        if (ef.kind === 'ring') {
+          // 药水/瞬时效果：从脚下向外扩散的一圈光，外带一圈上浮的光点。
+          // 默认那个椭圆环是平铺在地上的，看着像"地上的水渍"，
+          // 喝药看不出效果作用在自己身上。
+          const rr = ef.radius * (0.35 + prog * 0.9) * s2.sc;
+          const ry = rr * 0.42;
+          const cy = s2.sy - 6 * s2.sc;
+          this.effectGfx.lineStyle(3.2 * s2.sc, ef.color, k * 0.85);
+          this.effectGfx.strokeEllipse(s2.sx, cy, rr * 2, ry * 2);
+          this.effectGfx.lineStyle(1.6 * s2.sc, 0xffffff, k * 0.5);
+          this.effectGfx.strokeEllipse(s2.sx, cy, rr * 1.72, ry * 1.72);
+          // 上浮光点：给"药效进入身体"一个方向感
+          const n = 7;
+          for (let i = 0; i < n; i++) {
+            const a = (i / n) * Math.PI * 2 + prog * 1.1;
+            const px = s2.sx + Math.cos(a) * rr * 0.86;
+            const py = cy + Math.sin(a) * ry * 0.86 - prog * 44 * s2.sc;
+            const sz = Math.max(0.8, (2.6 - prog * 1.1) * s2.sc);
+            this.effectGfx.fillStyle(ef.color, k * 0.8);
+            this.effectGfx.fillCircle(px, py, sz);
+          }
+          return;
+        }
         this.effectGfx.lineStyle(4, ef.color, k * 0.9);
         this.effectGfx.strokeEllipse(s2.sx, s2.sy - 16, ef.radius * 1.8 * (1.15 - k * 0.15),
           ef.radius * 0.72 * (1.15 - k * 0.15));

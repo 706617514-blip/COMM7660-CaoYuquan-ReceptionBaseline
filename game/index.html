@@ -62,6 +62,28 @@
     font-size:15px;font-weight:700;color:#cfe0ef;font-variant-numeric:tabular-nums}
   .sk.cooling .cd{display:flex}
 
+  /* 药水条：放在技能栏上方，独立一行 ——
+     和技能视觉上必须分开，否则玩家会把"有冷却"和"有数量"混为一谈。 */
+  #potions{position:absolute;left:50%;bottom:84px;transform:translateX(-50%);
+    display:flex;gap:8px;pointer-events:none}
+  #potions.off{display:none}
+  .po{position:relative;min-width:58px;height:38px;border-radius:9px;
+    background:linear-gradient(180deg,#1a222c,#111820);
+    box-shadow:inset 0 0 0 1px #38495b, 0 4px 10px -6px #000;
+    display:flex;align-items:center;justify-content:center;gap:6px;
+    opacity:.45;transition:opacity .15s}
+  .po.has{opacity:1}
+  .po .k{font-size:10px;color:var(--dim);letter-spacing:.5px}
+  .po .n{font-size:11px;color:#dbe6f0}
+  .po .c{font-size:13px;font-weight:700;color:var(--gold);
+    font-variant-numeric:tabular-nums}
+  .po.empty .c{color:#5a6a7a;font-weight:400}
+  /* 药水生效中的倒计时：环绕高亮，和技能冷却区分开 */
+  .po.active{box-shadow:inset 0 0 0 1px #7fe08a, 0 0 14px -4px #7fe08a}
+  .po .t{position:absolute;left:0;bottom:-13px;width:100%;text-align:center;
+    font-size:10px;color:#9fe8b0;font-variant-numeric:tabular-nums;display:none}
+  .po.active .t{display:block}
+
   .overlay{position:absolute;inset:0;display:none;align-items:center;
     justify-content:center;background:#060a0ec2;backdrop-filter:blur(4px);padding:20px}
   .overlay.on{display:flex}
@@ -170,6 +192,7 @@
       </div>
     </div>
     <div id="skills"></div>
+    <div id="potions" class="off"></div>
   </div>
 
   <div class="overlay" id="panel">
@@ -211,7 +234,8 @@
 <footer>
   <kbd>A</kbd><kbd>D</kbd> 左右　<kbd>W</kbd><kbd>S</kbd> 前后（景深）　
   <kbd>Shift</kbd> 加速跑　<kbd>空格</kbd> 跳　<kbd>J</kbd> 攻击／基地互动　
-  <kbd>U</kbd> 裂风斩　<kbd>I</kbd> 闪现　<kbd>O</kbd> 震地　<kbd>K</kbd> 战吼　<kbd>L</kbd> 大招
+  <kbd>U</kbd> 裂风斩　<kbd>I</kbd> 闪现　<kbd>O</kbd> 震地　<kbd>K</kbd> 战吼　<kbd>L</kbd> 大招　
+  <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> 喝药水（回春／力量／坚壁）
   <br>
   玩法：在基地走到设施前按 <kbd>J</kbd> 使用（田地会进入农场场景）；走到远征之门选难度出发。
   打怪攒种子与铜币；种田后作物 <b>2 局成熟</b>，成熟后<b>每局结算自动入账</b>（不需要手动收取）；收益用来升级强化与技能。
@@ -270,6 +294,30 @@
                      '<div class="cd"></div>';
       bar.appendChild(el);
     });
+    buildPotionBar();
+  }
+
+  /**
+   * 药水条。常驻显示三格（而不是"有药水才显示"）——
+   * 常驻才能让玩家记住 1/2/3 的位置，临时出现的格子永远学不会。
+   * 没有携带时整格压暗，数量显示 0。
+   */
+  function buildPotionBar() {
+    const bar = $('potions');
+    if (!bar || !C.POTIONS) return;
+    bar.innerHTML = '';
+    C.POTION_ORDER.forEach(function (id) {
+      const d = C.POTIONS[id];
+      const el = document.createElement('div');
+      el.className = 'po empty';
+      el.id = 'po-' + id;
+      el.title = d.name + '：' + d.desc;
+      el.innerHTML = '<div class="k">' + d.key + '</div>' +
+                     '<div class="n">' + d.short + '</div>' +
+                     '<div class="c">0</div>' +
+                     '<div class="t"></div>';
+      bar.appendChild(el);
+    });
   }
 
   function updateHud(s) {
@@ -299,6 +347,19 @@
       } else {
         el.className = 'sk' + ult;
       }
+    });
+
+    // 药水条：数量 + 生效倒计时
+    const bar = $('potions');
+    if (bar) bar.className = run.potions ? '' : 'off';
+    if (C.POTION_ORDER) C.POTION_ORDER.forEach(function (id) {
+      const el = $('po-' + id);
+      if (!el) return;
+      const n = (run.potions && run.potions[id]) || 0;
+      const buff = p.potionBuff && p.potionBuff.id === id ? p.potionBuff : null;
+      el.className = 'po' + (n > 0 ? ' has' : ' empty') + (buff ? ' active' : '');
+      el.querySelector('.c').textContent = n;
+      el.querySelector('.t').textContent = buff ? buff.timer.toFixed(1) + 's' : '';
     });
   }
 

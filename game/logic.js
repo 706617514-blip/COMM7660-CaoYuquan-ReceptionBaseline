@@ -14,7 +14,7 @@
     ? require('./config.js')
     : global.GameConfig;
 
-  const STATE_VERSION = 3;
+  const STATE_VERSION = 4;
 
   // ---------------------------------------------------------------- 随机数
   // 用可序列化的 mulberry32：种子存在 state 里，
@@ -46,6 +46,7 @@
         runsCompleted: 0,
         runsWon: 0,
         bestWave: 0,
+        potions: { heal: 0, strength: 0, wall: 0 },
       },
       farm: {
         plots: new Array(C.FARM.cols * C.FARM.rows).fill(null).map(function () {
@@ -70,7 +71,20 @@
   function maturePlots(state) {
     return state.farm.plots.filter(function (p) { return p.state === 'mature'; }).length;
   }
-
+  /**
+   * 统一的受伤入口。
+   *
+   * 之前六处伤害各自写 `p.hp -= x`，加"减伤"就必须改六遍，
+   * 漏一处就会出现"坚壁药有时管用有时不管用"这种极难复现的 bug。
+   * 集中到一个函数后，减伤只在这里生效一次。
+   */
+  function hurtPlayer(p, amount) {
+    const mul = (p.potionBuff && p.potionBuff.hurtMul) || 1;
+    // 向上取整，避免 0.5 倍后出现小数血量（血条会显示成 12.5）
+    p.hp -= Math.ceil(amount * mul);
+    p.invuln = C.INVULN_AFTER_HIT;
+    return p.hp;
+  }
   function passiveIncome(state) {
     return maturePlots(state) * C.FARM.yieldPerPlot;
   }
@@ -106,6 +120,71 @@
       radius: (def.radius || def.forwardRange || 0) + (def.radiusPerLevel || 0) * lv,
       heal: (def.heal || 0) + (def.healPerLevel || 0) * lv,
     };
+  }
+
+  // ================================================================ 药水
+
+  /**
+   * 买药水。价格固定（不随等级递增），因为消耗品靠"每局都要买"限流，
+   * 不靠涨价 —— 涨价会让后期直接买不起，出口反而被堵死。
+   */
+  function buyPotion(state, id, n) {
+    const def = C.POTIONS[id];
+    if (!def) return { ok: false, reason: '没有这种药' };
+    if (!state.meta.potions) state.meta.potions = { heal: 0, strength: 0, wall: 0 };
+    const want = n || 1;
+    const held = state.meta.potions[id] || 0;
+    const room = def.carry - held;
+    if (room <= 0) return { ok: false, reason: '已带满 ' + def.carry + ' 瓶' };
+    const count = Math.min(want, room);
+    const cost = def.price * count;
+    if (state.meta.coins < cost) return { ok: false, reason: '铜币不够' };
+    state.meta.coins -= cost;
+    state.meta.potions[id] = held + count;
+    return { ok: true, count: count, cost: cost };
+  }
+
+  /**
+   * 喝药水。
+   *
+   * 只在**战斗进行中**可用：基地/农场里喝药没有意义，
+   * 而且会让玩家用铜币在基地回血，破坏"每局重置"的节奏。
+   */
+  function usePotion(state, id) {
+    const def = C.POTIONS[id];
+    if (!def) return { ok: false, reason: '没有这种药' };
+    if (state.phase !== 'run' || !state.run) return { ok: false, reason: '不在战斗中' };
+    const run = state.run;
+    if (run.status !== 'active') return { ok: false, reason: '战斗已结束' };
+
+    // 本局携带量是权威值；meta 只在结算后同步
+    if (!run.potions) run.potions = { heal: 0, strength: 0, wall: 0 };
+    if ((run.potions[id] || 0) <= 0) return { ok: false, reason: '没有携带' };
+
+    const p = run.player;
+    run.potions[id] -= 1;
+
+    if (def.kind === 'instant') {
+      p.hp = Math.min(p.maxHp, p.hp + def.heal);
+      pushEffect(run, 'ring', p.x, p.z, 70, 0.35, def.color);
+      return { ok: true, id: id };
+    }
+
+    // buff 类：同类药水刷新时长，不叠加倍率 ——
+    // 允许叠加会让"连喝两瓶力量药"变成唯一最优解，把选择变成操作量竞赛。
+    p.potionBuff = {
+      id: id,
+      timer: def.duration,
+      damageMul: def.damageMul || 1,
+      hurtMul: def.hurtMul || 1,
+    };
+    pushEffect(run, 'ring', p.x, p.z, 90, 0.4, def.color);
+    return { ok: true, id: id };
+  }
+
+  /** 药水对伤害的乘数（力量药）。没有 buff 时恒为 1。 */
+  function potionDamageMul(p) {
+    return (p.potionBuff && p.potionBuff.damageMul) || 1;
   }
 
   function upgradeCost(state, key) {
@@ -172,7 +251,16 @@
         comboTimer: 0,
         cooldowns: { whirl: 0, blink: 0, slam: 0, cry: 0, nova: 0 },
         buffTimer: 0,
+        potionBuff: null,
         casting: null,
+      },
+      // 本局携带的药水：从 meta 快照一份。
+      // 绝对不能让本局直接扣 meta —— 中途退出/重开就会把药水永久吃掉，
+      // 玩家在基地买的药会"凭空消失"，而结算界面又取不到证据。
+      potions: {
+        heal: (state.meta.potions && state.meta.potions.heal) || 0,
+        strength: (state.meta.potions && state.meta.potions.strength) || 0,
+        wall: (state.meta.potions && state.meta.potions.wall) || 0,
       },
       diff: diff,
     };
@@ -305,6 +393,16 @@
       if (p.cooldowns[k] > 0) p.cooldowns[k] = Math.max(0, p.cooldowns[k] - dt);
     });
     p.buffTimer = Math.max(0, (p.buffTimer || 0) - dt);
+    if (p.potionBuff) {
+      p.potionBuff.timer -= dt;
+      if (p.potionBuff.timer <= 0) p.potionBuff = null;
+    }
+
+    // 药水（1/2/3）：按下即用。justPressed 语义由渲染层保证，
+    // 这里只认 input.potionN，长按不会连续消耗（每瓶都是一次资源）。
+    if (input.potion1) usePotion(state, 'heal');
+    if (input.potion2) usePotion(state, 'strength');
+    if (input.potion3) usePotion(state, 'wall');
 
     // 技能（U/I/O/K/L）：冷却好了就释放
     C.SKILL_ORDER.forEach(function (k) {
@@ -335,10 +433,11 @@
     if (p.attackTimer > 0) resolveAttack(state, run, p, st);
   }
 
-  /** 当前实际伤害：战吼生效期间按倍率提升。技能伤害也吃这个倍率。 */
+  /** 当前实际伤害：战吼与力量药生效期间按倍率提升。技能伤害也吃这个倍率。 */
   function currentDamage(state, p) {
     let d = playerStats(state).damage;
     if (p.buffTimer > 0) d *= C.SKILLS.cry.buffMult;
+    d *= potionDamageMul(p);
     return d;
   }
 
@@ -360,7 +459,7 @@
     const st = skillStats(key, level);
     // 直接乘增益倍率。原写法 (1 + current/base - 1) 代数上等价，
     // 但 BASE_DAMAGE 若变成 0 会除出 NaN。
-    const dmg = st.damage * (p.buffTimer > 0 ? C.SKILLS.cry.buffMult : 1);
+    const dmg = st.damage * (p.buffTimer > 0 ? C.SKILLS.cry.buffMult : 1) * potionDamageMul(p);
     p.cooldowns[key] = st.cooldown;
     p.casting = { key: key, timer: def.fxTime };
 
@@ -535,16 +634,14 @@
         pushEffect(run, 'ring', p.x, p.z, 90, 0.4, 0xc9a6ff);
         return;
       }
-      p.hp -= base;
-      p.invuln = C.INVULN_AFTER_HIT;
+      hurtPlayer(p, base);
       pushEffect(run, 'nova', boss.x, boss.z, C.FIELD_W, 0.6, 0xff7a3c);
       return;
     }
 
     if (dist > def.radius) return;                  // 不在范围内
     if (p.invuln > 0) return;
-    p.hp -= def.damage;
-    p.invuln = C.INVULN_AFTER_HIT;
+    hurtPlayer(p, def.damage);
     if (def.knockback) {
       const dx = p.x - boss.x, dz = p.z - boss.z;
       const d = Math.hypot(dx, dz) || 1;
@@ -599,8 +696,7 @@
     if (dist <= C.BOSS.meleeRange && boss.attackCd <= 0) {
       boss.attackCd = C.BOSS.attackCooldown / tier.speedMul;
       if (p.invuln === 0) {
-        p.hp -= boss.damage;
-        p.invuln = C.INVULN_AFTER_HIT;
+        hurtPlayer(p, boss.damage);
         const dx = p.x - boss.x, dz = p.z - boss.z;
         const d = Math.hypot(dx, dz) || 1;
         p.x = clamp(p.x + (dx / d) * 30, C.PLAYER_W / 2, C.FIELD_W - C.PLAYER_W / 2);
@@ -763,8 +859,7 @@
       const dz = Math.abs(e.z - p.z);
       if (dx < (e.radius + C.PLAYER_W / 2) && dz < C.ATTACK_DEPTH) {
         if (e.attackCd === 0 && p.invuln === 0) {
-          p.hp -= e.damage;
-          p.invuln = C.INVULN_AFTER_HIT;
+          hurtPlayer(p, e.damage);
           e.attackCd = 0.9;
           // 把玩家往反方向推开一点，避免黏住
           const dir = p.x >= e.x ? 1 : -1;
@@ -880,8 +975,7 @@
       if (!gone && p.invuln === 0
           && Math.abs(pr.x - p.x) < pr.radius
           && Math.abs(pr.z - p.z) < pr.depth) {
-        p.hp -= pr.damage;
-        p.invuln = C.INVULN_AFTER_HIT;
+        hurtPlayer(p, pr.damage);
         gone = true;
       }
       if (gone) run.projectiles.splice(i, 1);
@@ -923,6 +1017,14 @@
     state.meta.seeds += seeds;
     state.meta.runsCompleted += 1;
     if (won) state.meta.runsWon += 1;
+
+    // 药水同步：本局喝掉多少，meta 就扣掉多少。
+    // 用"剩余量回写"而不是"扣减量"，中途重开也不会重复扣。
+    if (run.potions && state.meta.potions) {
+      state.meta.potions.heal = run.potions.heal || 0;
+      state.meta.potions.strength = run.potions.strength || 0;
+      state.meta.potions.wall = run.potions.wall || 0;
+    }
 
     // 农庄推进：**每一局**（无论胜负）都算一次生长，成熟后开始被动产出。
     // 这是强度 A 的关键：作物按"局"计龄，所以失败也有进展，玩家不会卡死。
@@ -972,6 +1074,13 @@
       if (s.hub === undefined) s.hub = null;      // ensureHub 会补
       s.version = 3;
     }
+    // v3 → v4：新增 meta.potions（药水携带量）。空药水是安全的默认值，
+    // 老玩家不会因此白得药水，也不会丢档。
+    if (s.version === 3) {
+      if (!s.meta) s.meta = {};
+      if (!s.meta.potions) s.meta.potions = { heal: 0, strength: 0, wall: 0 };
+      s.version = 4;
+    }
     return s;
   }
 
@@ -983,6 +1092,7 @@
     // 兜底：补齐后来新增的字段，保证老档读出来也能直接玩
     if (!s.meta.skills) s.meta.skills = { whirl: 1, blink: 1, slam: 1, cry: 1, nova: 1 };
     if (!s.meta.upgrades) s.meta.upgrades = { damage: 0, maxHp: 0, speed: 0 };
+    if (!s.meta.potions) s.meta.potions = { heal: 0, strength: 0, wall: 0 };
     if (!s.farm || !s.farm.plots) {
       s.farm = { plots: new Array(C.FARM.cols * C.FARM.rows).fill(null)
         .map(function () { return { state: 'empty', growth: 0 }; }) };
@@ -1009,6 +1119,7 @@
     buySkill, skillCost, skillStats, tryCastSkill, currentDamage,
     stepProjectiles, stepRanged, spawnProjectile, stepPickups, collectAll,
     spawnBoss, bossCast, stepBoss, bossResolve,
+    buyPotion, usePotion, hurtPlayer, potionDamageMul,
     playerStats, maturePlots, passiveIncome,
     serialize, deserialize,
     nextRandom, buildWave, makeEnemy,

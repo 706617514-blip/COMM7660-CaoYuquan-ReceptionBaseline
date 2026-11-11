@@ -101,21 +101,28 @@ section('4. 基地区域判定');
 {
   const s = L.createState(5);
   H.ensureHub(s);
-  s.hub.x = 150;
-  eq(H.zoneAt(s).id, 'field', '站在田地位置判定为田地');
+  // 位置不写死数字：建筑加进基地后坐标必然调整，
+  // 写死会让"新增一个建筑"变成一堆无关测试变红。
+  H.ZONES.forEach((z) => {
+    s.hub.x = z.x;
+    eq(H.zoneAt(s).id, z.id, `站在「${z.name}」位置判定为该区域`);
+  });
 
-  s.hub.x = 400;
-  eq(H.zoneAt(s).id, 'anvil', '站在铁匠铺判定为铁匠铺');
-
-  s.hub.x = 620;
-  eq(H.zoneAt(s).id, 'altar', '站在祭坛判定为祭坛');
-
-  s.hub.x = 850;
-  eq(H.zoneAt(s).id, 'gate', '站在门口判定为门');
-
-  // 区域之间的空隙应当判定为"不在任何区域"
-  s.hub.x = 275;      // field 右边界 245，anvil 左边界 320
-  eq(H.zoneAt(s), null, '走在区域之间的空隙时没有可交互对象');
+  // 区域之间的空隙应当判定为"不在任何区域"：
+  // 取相邻两区判定边界的中点，那里必须落空。
+  const sorted = H.ZONES.slice().sort((a, b) => a.x - b.x);
+  let gapsChecked = 0, gapsOk = 0;
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const leftEdge = sorted[i].x + sorted[i].reach;
+    const rightEdge = sorted[i + 1].x - sorted[i + 1].reach;
+    if (rightEdge <= leftEdge) continue;         // 相邻无空隙，跳过
+    const mid = (leftEdge + rightEdge) / 2;
+    gapsChecked += 1;
+    s.hub.x = mid;
+    if (H.zoneAt(s) === null) gapsOk += 1;
+  }
+  ok(gapsChecked > 0, '确实存在区域之间的空隙', `${gapsChecked} 处`);
+  eq(gapsOk, gapsChecked, '走在区域之间的空隙时没有可交互对象');
 }
 
 section('5. 基地走动');
@@ -167,6 +174,65 @@ section('6. 区域动作的可用性');
   });
 }
 
+section('6b. 药水铺（新增的第四个建筑）');
+{
+  // 建筑要真的存在于基地里，而不是只在代码里有个分支
+  const shop = H.ZONES.find((z) => z.id === 'shop');
+  ok(!!shop, '基地里有一个药水铺区域（新增建筑）');
+  eq(shop.art, 'shop', '药水铺有自己的美术标记（不是复用铁砧）');
+
+  const s = L.createState(77);
+  H.ensureHub(s);
+  s.hub.x = shop.x;
+  eq(H.zoneAt(s).id, 'shop', '站在药水铺判定为药水铺');
+
+  // 建在铁匠铺与祭坛之间：动线上"打完一局回来先补给"最顺
+  ok(shop.x > 400 && shop.x < 620, '药水铺位于铁匠铺与祭坛之间', String(shop.x));
+  // 新增建筑不能把原有四个区域挤掉
+  ['field', 'anvil', 'altar', 'gate'].forEach((id) => {
+    ok(!!H.ZONES.find((z) => z.id === id), `原有区域 ${id} 仍在`);
+  });
+  // 区域之间必须留出空隙，否则相邻区域会同时命中
+  const sorted = H.ZONES.slice().sort((a, b) => a.x - b.x);
+  let overlap = 0;
+  for (let i = 0; i < sorted.length - 1; i++) {
+    if (sorted[i].x + sorted[i].reach >= sorted[i + 1].x - sorted[i + 1].reach) overlap += 1;
+  }
+  eq(overlap, 0, '任意两个区域的判定范围不重叠');
+
+  // 动作清单：没钱时三种药水都不可买，但都要列出来让玩家看到价格
+  const poor = L.createState(78);
+  poor.meta.coins = 0;
+  const acts = H.zoneActions(poor, 'shop');
+  eq(acts.length, C.POTION_ORDER.length, '药水铺列出全部三种药水');
+  eq(acts.map((a) => a.payload.id).join(','), C.POTION_ORDER.join(','), '顺序与配置一致');
+  ok(acts.every((a) => !a.enabled), '没钱时都不可购买');
+  ok(acts.every((a) => typeof a.cost === 'number' && a.cost > 0), '每种药水都标价');
+
+  // 有钱时能买，且真的扣钱加携带
+  const rich = L.createState(79);
+  rich.meta.coins = 300;
+  const acts2 = H.zoneActions(rich, 'shop');
+  ok(acts2.every((a) => a.enabled), '钱够时都能买');
+  const buyHeal = acts2.find((a) => a.payload.id === 'heal');
+  const r = H.perform(rich, buyHeal);
+  ok(r.ok, '通过 perform 买回春药成功', JSON.stringify(r));
+  eq(rich.meta.potions.heal, 1, '回春药携带数 +1');
+  eq(rich.meta.coins, 300 - C.POTIONS.heal.price, '扣掉对应铜币');
+
+  // 带满后按钮要变灰并说明原因（而不是点了没反应）
+  rich.meta.potions.heal = C.POTIONS.heal.carry;
+  const acts3 = H.zoneActions(rich, 'shop');
+  const full = acts3.find((a) => a.payload.id === 'heal');
+  ok(!full.enabled, '带满后回春药不可再买');
+  ok(full.disabledReason && full.disabledReason.length > 0,
+     '带满后写明原因', full.disabledReason);
+
+  // sub 行要写清效果与上限，玩家不需要猜
+  ok(acts2.every((a) => a.sub && a.sub.length > 0), '每种药水都有说明行');
+}
+
+section('7. 农场田块几何（成品里点击播种走的就是这一段）');
 section('7. 农场田块几何（成品里点击播种走的就是这一段）');
 {
   const geo = H.farmLayout(960, 452);

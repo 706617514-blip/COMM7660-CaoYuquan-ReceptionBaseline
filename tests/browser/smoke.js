@@ -56,7 +56,17 @@ function startServer() {
       const ext = path.extname(file);
       const types = { '.html': 'text/html', '.js': 'text/javascript',
                       '.json': 'application/json', '.png': 'image/png', '.css': 'text/css' };
-      res.writeHead(200, { 'Content-Type': types[ext] || 'application/octet-stream' });
+      // 禁止缓存。Chromium 的 HTTP 缓存按 URL 键控，而这里的 URL 每次运行都相同
+      // （127.0.0.1:8123/game/...）。没有 Cache-Control 时它会把上一次运行的 JS
+      // 直接喂给这一次，于是断言的是**旧代码**：改完 game/*.js 仍然全绿，
+      // 而真正打开页面的人看到的是新代码。这类假绿比失败更危险，
+      // 它把"没验证"伪装成"验证过了"。
+      res.writeHead(200, {
+        'Content-Type': types[ext] || 'application/octet-stream',
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      });
       fs.createReadStream(file).pipe(res);
     });
     srv.listen(PORT, '127.0.0.1', () => resolve(srv));
@@ -200,6 +210,62 @@ const SCRIPT = `
     out.bladePhases = new Set(nonzero.map((r) => r.toFixed(1))).size;
   }
 
+  // ---- 3c. 药水：按键真的喝得掉、HUD 真的跟着变 ----
+  // 只断言"买到了"是不够的：药水整条链路是 买 → 开局快照 → 按键消耗 → HUD 刷新，
+  // 中间任何一环断掉，玩家按 1 都没反应，而单元测试仍然全绿。
+  {
+    const st = window.EmberfieldApp.__state;
+    const run = st && st.run;
+    if (run && run.player) {
+      // 备货后重开一局，让 startRun 走真实路径做快照。
+      // 这里必须用场景管理器拿 Hub 场景：此时 __scene 已经是 Run，
+      // 而 RunScene 上没有 startRun（早先误用它导致整段脚本抛异常，
+      // 结果连前面已通过的断言都读不到，看起来像"全线崩溃"）。
+      st.meta.potions = { heal: 2, strength: 2, wall: 2 };
+      const hubScene = globalThis.__game
+        ? globalThis.__game.scene.getScene('Hub') : null;
+      out.hasHubScene = !!hubScene;
+      if (hubScene && typeof hubScene.startRun === 'function') {
+        hubScene.startRun('wood');
+      }
+      await wait(1400);
+
+      const r2 = window.EmberfieldApp.__state.run;
+      out.potionSnapshot = r2 ? JSON.stringify(r2.potions) : null;
+
+      // 掉血，才能看出回春真的回了
+      const before = r2.player.hp;
+      r2.player.hp = Math.max(10, before - 30);
+      const damaged = r2.player.hp;
+
+      key('keydown', 'Digit1', 49);
+      await wait(120);
+      key('keyup', 'Digit1', 49);
+      await wait(260);
+
+      const r3 = window.EmberfieldApp.__state.run;
+      out.hpAfterHeal = Math.round(r3.player.hp);
+      out.hpDamaged = Math.round(damaged);
+      out.potionAfterHeal = r3.potions.heal;
+
+      // 力量药：应该挂上 buff 并且 HUD 出现倒计时
+      key('keydown', 'Digit2', 50);
+      await wait(120);
+      key('keyup', 'Digit2', 50);
+      await wait(260);
+      const r4 = window.EmberfieldApp.__state.run;
+      out.potionBuff = r4.player.potionBuff ? r4.player.potionBuff.id : null;
+      out.potionAfterStrength = r4.potions.strength;
+
+      const bar = document.getElementById('potions');
+      out.potionBarVisible = !!bar && !bar.classList.contains('off');
+      out.potionBarSlots = bar ? bar.querySelectorAll('.po').length : 0;
+      out.potionBarHasActive = bar ? !!bar.querySelector('.po.active') : false;
+      // 持有量必须落到 DOM 上，否则玩家看不到自己还有几瓶
+      out.potionBarText = bar ? bar.textContent.replace(/\\s+/g, '') : '';
+    }
+  }
+
   // ---- 4. 重开（restart）按钮存在 ----
   out.hasAgainButton = !!document.getElementById('btn-again') ||
                        document.body.innerHTML.indexOf('再来一局') >= 0;
@@ -247,6 +313,18 @@ const SCRIPT = `
   const r = JSON.parse(m[1]);
   const errors = e ? JSON.parse(e[1]) : [];
 
+  // 页面脚本一旦抛异常，driver 会返回 {error}，此时 out 里所有字段都是 undefined，
+  // 于是下面每条断言都失败 —— 24 条红色，看起来像游戏全线崩了，实际只有一处接线错误。
+  // 这种"错误原因被稀释成 24 个症状"的失败方式会把人引向错误的排查方向，
+  // 所以直接点名根因并中止。
+  if (r && r.error) {
+    console.log('\n页面脚本抛异常，断言无法执行：');
+    console.log('  ' + r.error);
+    console.log('  （这是测试接线问题，不是游戏功能问题；先修脚本再看下面的断言）');
+    console.log('\n失败：页面脚本异常');
+    process.exit(1);
+  }
+
   console.log('--- 1. 打开（opening）---');
   ok(r.phaser === true, 'Phaser 已加载');
   ok(r.app === true, '游戏模块已加载');
@@ -277,6 +355,20 @@ const SCRIPT = `
      `${r.bladesMoved}/${r.bladeCount}`);
   ok(r.bladeMaxDelta > 0.05, '摆幅可见（不是几乎不动）', r.bladeMaxDelta);
   ok(r.bladePhases >= 5, '各叶相位不同（不是整片同相位平移）', r.bladePhases);
+
+  console.log('\n--- 3c. 药水：按键 → 消耗 → 生效 → HUD ---');
+  ok(r.potionSnapshot === '{"heal":2,"strength":2,"wall":2}',
+     '开局把 meta 里的药水快照进本局', r.potionSnapshot);
+  ok(r.hpAfterHeal > r.hpDamaged, '按 1 后血量回升（回春真的回了血）',
+     `${r.hpDamaged} -> ${r.hpAfterHeal}`);
+  eq(r.potionAfterHeal, 1, '回春消耗掉一瓶');
+  eq(r.potionBuff, 'strength', '按 2 挂上了力量 buff');
+  eq(r.potionAfterStrength, 1, '力量消耗掉一瓶');
+  ok(r.potionBarVisible === true, '药水栏在战斗中可见');
+  eq(r.potionBarSlots, 3, '药水栏有三个槽位（回春/力量/坚壁）');
+  ok(r.potionBarHasActive === true, 'buff 生效时对应槽位有 active 标记');
+  ok(typeof r.potionBarText === 'string' && r.potionBarText.indexOf('回春') >= 0,
+     '药水栏写出了药水名', r.potionBarText);
 
   console.log('\n--- 4. 重开（restart）---');
   ok(r.hasAgainButton === true, '存在「再来一局」（restart）入口');

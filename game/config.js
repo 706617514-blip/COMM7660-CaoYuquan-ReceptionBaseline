@@ -200,6 +200,47 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
   const SKILL_ORDER = ['whirl', 'blink', 'slam', 'cry', 'nova'];
 
   /**
+   * 药水（消耗品）。
+   *
+   * 存在的理由不是"多三个技能"，而是给经营层开一个**永远不会枯竭的出口**：
+   * 升级与装备都会在满级后停止吸钱，只有"每局都要重新买"的消耗品
+   * 能让铜币始终有去处，玩家的选择也始终有效。
+   *
+   * 三条效果刻意选在**不同维度**上，避免互相替代：
+   *   回春 = 立刻回血（换血量）
+   *   力量 = 15 秒增伤（换输出窗口）
+   *   坚壁 = 8 秒减伤（换容错）
+   * 前两个是"增量"，第三个是"抗压"，对应三种不同的翻盘场景。
+   *
+   * 键位 1/2/3 由 PM 指定（设计文档 4.5 曾把键位列为实现者决定，
+   * PM 已明确要数字键）。
+   */
+  const POTIONS = {
+    heal: {
+      key: '1', name: '回春药', short: '回春',
+      desc: '立刻恢复 25 点生命',
+      price: 60, carry: 3,
+      kind: 'instant', heal: 25,
+      color: 0x7fe08a,
+    },
+    strength: {
+      key: '2', name: '力量药', short: '力量',
+      desc: '15 秒内伤害提升 25%',
+      price: 80, carry: 2,
+      kind: 'buff', duration: 15.0, damageMul: 1.25,
+      color: 0xff9a6c,
+    },
+    wall: {
+      key: '3', name: '坚壁药', short: '坚壁',
+      desc: '8 秒内受到的伤害减半',
+      price: 90, carry: 2,
+      kind: 'buff', duration: 8.0, hurtMul: 0.5,
+      color: 0x9ad7ff,
+    },
+  };
+  const POTION_ORDER = ['heal', 'strength', 'wall'];
+
+  /**
    * 强化：三条独立线，成本递增。
    * 与「种田」并列，构成每局结束后的第二个花钱去处 —— 玩家的取舍就在这里。
    */
@@ -315,6 +356,7 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
     INVULN_AFTER_HIT, WAVE_BREAK, WAVE_HEAL,
     BASE_HP, BASE_DAMAGE, BASE_ATTACK_SPEED,
     DIFFICULTIES, ENEMIES, UPGRADES, FARM, LOOT, SKILLS, SKILL_ORDER, SPAWN, BOSS,
+    POTIONS, POTION_ORDER,
     waveComposition,
     difficultyById: function (id) {
       return DIFFICULTIES.find(function (d) { return d.id === id; }) || DIFFICULTIES[1];
