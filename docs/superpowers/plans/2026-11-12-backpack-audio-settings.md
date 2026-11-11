@@ -538,7 +538,7 @@ Task 2 删除，于是**任何背包里的装备在兵器架上都显示 Lv.1**�
   `run.equipDrops` 里带上 `overwrote` 字段，让 UI 能提示"覆盖了哪一件"，
   并加断言证明被覆盖的那件确实是从"最后一格"里选出来的（不是随机删一件）。
 
-> **⚠ Task 4 复审实测：`overwrote` 曾是死代码（已派追加修复，见 progress ledger）**
+> **✅ 本研究已完成（Task 4 + 追加修复 `9bd9a46`）** —— 保留此段作为"为什么会漏"的记录：
 > `rollEquipDrop` 的返回值确实带上了 `overwrote`（实测满包返回
 > `{"id":"broadSword","duplicate":false,"bagFull":true,"overwrote":{"id":"strawShoes","uid":"u35","level":1}}`，
 > 且末格 uid 由 `u35` 变 `u36`，指向正确），**但传送通道没改**：
@@ -550,7 +550,8 @@ Task 2 删除，于是**任何背包里的装备在兵器架上都显示 Lv.1**�
 > 且必须有一条断言覆盖**通道**（不能只断言 `rollEquipDrop` 的返回值 ——
 > 那样接线缺陷完全隐形，Task 4 就是这么漏过去的）。
 
-> **⚠ 另一处（复审发现，同一类问题）：`bagPages` 无校验，会让 `coins` 变 `NaN`**
+> **✅ 已修（`9bd9a46`）** —— `buyBagPage` 与 `deserialize` 两处都已规整 `bagPages`。
+> 保留记录如下：
 > `game/logic.js:415-416` 只把 `cellsPerPage` 单点化，`maxPages`(:473) 与
 > `pagePrices[bagPages]`(:475) 都不设防。实测 `bagPages = 1.5` → 容量 52.5、
 > `buyBagPage` 返回 `{ok:true, pages:2.5}` 且 **`coins` 变 `NaN`**，序列化往返后仍是 2.5。
