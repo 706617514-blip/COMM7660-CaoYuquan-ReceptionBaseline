@@ -1433,6 +1433,35 @@
 
       this.shadow = this.add.image(0, 0, 'shadow').setScale(0.8).setDepth(1);
       this.hero = makeHero(this, 100);
+
+      /*
+       * 把背包接到本场景（Task 8）。
+       *
+       * 为什么必须显式接：update() 的第一行是 if (this.panelOpen) return;
+       * 背包一打开，整个 update 就早退，里面那句 refreshHeroEquip 再也执行不到 ——
+       * 玩家在背包里换装，主角贴图会一直停在旧样子，要关掉面板才更新。
+       * 所以背包每次改完装备都**回调**这里，而不是等下一帧顺手刷到。
+       * （store 面板是同一个坑，它靠 showPanel 里就地刷一次解决了；背包是
+       * 独立浮层，没有 showPanel 那个位置可挂，只能反向注册。）
+       *
+       * 开合也要通知：背包自己不暂停 canvas，只靠 panelOpen 冻结角色的
+       * 移动与攻击输入；scene.pause() 统一留到 Task 9。
+       */
+      if (global.BagHud && typeof global.BagHud.setHost === 'function') {
+        global.BagHud.setHost({
+          onChange: () => refreshHeroEquip(this.hero, this.state),
+          // 记下原本的开合状态：商店面板开着时再开背包，关背包不能顺手把商店也解冻
+          onOpen: () => {
+            this.bagPrevPanelOpen = this.panelOpen;
+            this.panelOpen = true;
+          },
+          onClose: () => {
+            this.panelOpen = !!this.bagPrevPanelOpen;
+            this.bagPrevPanelOpen = false;
+          },
+        });
+      }
+
       this.prompt = this.add.text(0, 0, '', {
         fontSize: '14px', color: '#ffe07a', backgroundColor: '#00000088',
         padding: { x: 8, y: 4 }, fontFamily: 'sans-serif',

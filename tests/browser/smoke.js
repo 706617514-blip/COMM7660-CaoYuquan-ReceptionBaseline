@@ -468,6 +468,198 @@ const SCRIPT = `
   // V4：第一页 5 列 × 7 行
   out.bagCells = document.querySelectorAll('#bag .cell').length;
 
+  // ---- 背包交互（V3 / V12 / V13 / V26–V29）----
+  /*
+   * 注意：这一整段会被塞进 Node 侧的模板字符串（SCRIPT），所以
+   * **一个反引号都不能出现**，也不写美元大括号插值 —— 上一个任务
+   * 就是多了一个反引号，整个 smoke 直接 SyntaxError，一条断言都跑不了。
+   */
+  const stI = window.EmberfieldApp.__state;
+  const Lg = window.GameLogic;
+  const hubI = globalThis.__game.scene.getScene('Hub');
+  // 英雄装备图层挂在 container 的 layers_ 上（app.js:101-124 的 refreshHeroEquip
+  // 改的就是它），不要去遍历 hero.list 猜 —— 直接读那一层最准。
+  const heroLayerKeys = function (slot) {
+    const img = hubI && hubI.hero && hubI.hero.layers_ ? hubI.hero.layers_[slot] : null;
+    return img && img.visible && img.texture ? img.texture.key : '';
+  };
+  const textOf = function (node) {
+    return node && node.textContent ? node.textContent.trim() : '';
+  };
+  const bagCountText = function () {
+    return textOf(document.getElementById('bag-count')).split(' ').join('');
+  };
+  const firstFilledCell = function () {
+    const img = document.querySelector('#bag .cell img');
+    return img && img.closest ? img.closest('.cell') : null;
+  };
+
+  stI.meta.coins = 99999;
+  /*
+   * 先清场。现场有两处不确定，都会让下面的等式变成偶然：
+   *   1) 3d 段已经给角色穿上了棱晶杖（武器，伤害 +12）。直接换成双刀（+10）
+   *      伤害是**下降**的，差额 -2 永远不可能等于声明加成 —— 「差额 == 声明值」
+   *      这条在既有状态下根本不可能成立。所以先把武器槽清空，让换装是
+   *      「空槽 → 有装」。
+   *   2) 前面跑过一局，袋子里可能有 5% 掉落的随机基础装备。V3 要悬停的是
+   *      「刚补进去的那一件」，袋子要是还有别的东西，第一个有图的格子就不是它。
+   */
+  stI.meta.bag.length = 0;
+  out.weaponUnequippedBefore = Lg.unequipSlot(stI, 'weapon');
+  stI.meta.bag.length = 0;
+
+  // V13：面板开着时换装，英雄图层必须真的换（不是等下一帧的 update）
+  const wId = 'twinBlades';
+  if (Lg.equipOwned(stI, wId) === null) Lg.buyEquipment(stI, wId);
+  window.BagHud.open(stI);
+  await wait(250);
+  // 背包一开，Hub.update 首行就早退了 —— 这条断言证明"下面看到的图层变化
+  // 不可能是 update 循环顺手刷出来的"。
+  out.hubPanelOpenWithBag = !!(hubI && hubI.panelOpen);
+  out.heroWeaponBefore = heroLayerKeys('weapon');
+  out.dmgBefore = Lg.playerStats(stI).damage;
+  out.statsTextBefore = textOf(document.querySelector('#bag-stats'));
+  const wUid = (stI.meta.bag.filter(function (e) { return e.id === wId; })[0] || {}).uid;
+  out.equipResult = Lg.equipItem(stI, wId, wUid);
+  window.BagHud.refresh();
+  await wait(300);
+  out.heroWeaponAfter = heroLayerKeys('weapon');
+  // V12：左栏数值必须严格上升，且差额等于该件声明的加成（不能用大于等于）
+  out.dmgGainDeclared = window.GameConfig.equipDef(wId).mods.damage;
+  out.dmgAfter = Lg.playerStats(stI).damage;
+  out.statsTextAfter = textOf(document.querySelector('#bag-stats'));
+
+  // V3：悬停显示信息
+  // 不能盲取「第一个 .cell」：空格也渲染（Task 7 的契约），穿上双刀后袋子
+  // 可能正好空了 —— 悬停空格什么都不弹，断言会以"没浮层"的形式失败，
+  // 看不出真实原因。所以先补一件确定留在袋子里的，再从「有图的格子」里取。
+  if (Lg.equipOwned(stI, 'ironHelm') === 'equipped') Lg.unequipSlot(stI, 'head');
+  stI.meta.bag.length = 0;
+  out.helmBought = Lg.buyEquipment(stI, 'ironHelm');
+  window.BagHud.refresh();
+  await wait(250);
+  const cell0 = firstFilledCell();
+  out.cellWithItemFound = !!cell0;
+  if (cell0) {
+    cell0.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }));
+    await wait(150);
+    const tip = document.getElementById('bag-tip');
+    out.tipVisible = !!(tip && getComputedStyle(tip).display !== 'none' &&
+                        tip.textContent.trim().length > 0);
+    out.tipText = tip ? tip.textContent.trim().slice(0, 80) : null;
+    cell0.dispatchEvent(new MouseEvent('pointerout', { bubbles: true }));
+    await wait(150);
+    const tip2 = document.getElementById('bag-tip');
+    out.tipHiddenAfterOut = !!(tip2 && getComputedStyle(tip2).display === 'none');
+  }
+
+  // 点格子 = 穿上；左栏的槽位与英雄图层都必须当场跟着变（同一个 onChange 钩子）
+  const headSlotSel = '#bag-wear [data-slot="head"]';
+  const headSlot0 = document.querySelector(headSlotSel);
+  // 3d 段已经给头上穿了角盔，所以这一格不是空的 —— 正好拿它测"替换"：
+  // 换穿另一件时，旧的那件必须回到背包里，而不是凭空消失。
+  out.headSlotAltBefore = headSlot0 && headSlot0.querySelector('img')
+    ? headSlot0.querySelector('img').alt : null;
+  out.headSlotWornBefore = !!(headSlot0 && headSlot0.classList.contains('on'));
+  out.headKeyBeforeClick = heroLayerKeys('head');
+  if (cell0) cell0.click();
+  await wait(300);
+  const headSlot = document.querySelector(headSlotSel);
+  out.headSlotWorn = !!(headSlot && headSlot.classList.contains('on'));
+  out.headSlotImgAlt = headSlot && headSlot.querySelector('img')
+    ? headSlot.querySelector('img').alt : null;
+  out.headKeyAfterClick = heroLayerKeys('head');
+  out.statsTextAfterClick = textOf(document.querySelector('#bag-stats'));
+  out.bagIdsAfterClick = stI.meta.bag.map(function (e) { return e.id; });
+
+  // 点已穿戴的槽 = 卸下（设计 §4.1）
+  if (headSlot) headSlot.click();
+  await wait(250);
+  out.headSlotEmptyAfterUnequip = !!(headSlot && headSlot.classList.contains('empty'));
+  out.heroHeadAfterUnequip = heroLayerKeys('head');
+  out.bagCountAfterUnequip = bagCountText();
+
+  // 整理：特效装备排在最前（设计 §4.5）
+  stI.meta.bag.length = 0;
+  Lg.bagAdd(stI, 'emberBoots', 1);
+  Lg.bagAdd(stI, 'ironHelm', 1);
+  Lg.bagAdd(stI, 'battleAxe', 1);
+  window.BagHud.refresh();
+  await wait(150);
+  const firstAlt = function () {
+    const img = document.querySelector('#bag .cell img');
+    return img ? img.alt : null;
+  };
+  out.sortFirstBefore = firstAlt();
+  const sortBtnEl = document.querySelector('#bag [data-act="sort"]');
+  out.sortBtn = !!sortBtnEl;
+  if (sortBtnEl) { sortBtnEl.click(); await wait(200); }
+  out.sortFirstAfter = firstAlt();
+
+  // V26–V29：批量出售。三件同 id（Lv1/2/3）+ 一件别的 ——
+  // 每 id 必须留一件，且留等级最高的那件。
+  stI.meta.bag.length = 0;
+  Lg.bagAdd(stI, 'ironHelm', 1);
+  Lg.bagAdd(stI, 'ironHelm', 2);
+  Lg.bagAdd(stI, 'ironHelm', 3);
+  Lg.bagAdd(stI, 'emberBoots', 1);
+  window.BagHud.refresh();
+  await wait(150);
+  const batchBtn = document.querySelector('#bag [data-act="batch-sell"]');
+  out.batchBtn = !!batchBtn;
+  if (batchBtn) {
+    batchBtn.click();
+    await wait(200);
+    const confirm0 = document.querySelector('#bag .confirm-ok');
+    out.batchConfirmDisabledWhenEmpty = !!(confirm0 && confirm0.disabled);
+    const pick = document.querySelector('#bag [data-act="pick-dups"]');
+    out.pickDupsBtn = !!pick;
+    if (pick) { pick.click(); await wait(200); }
+    const confirm1 = document.querySelector('#bag .confirm-ok');
+    out.batchConfirmEnabledAfterPick = !!(confirm1 && !confirm1.disabled);
+    out.batchSumText = textOf(document.getElementById('bag-sum'));
+    // 逐件求和，不是"单价 × 件数"：留 Lv3，卖 Lv1 与 Lv2，两件价不同。
+    out.batchExpectedTotal = Lg.sellValue('ironHelm', 1) + Lg.sellValue('ironHelm', 2);
+    out.batchUnitPrice = Lg.sellValue('ironHelm', 1);
+    out.batchCells = document.querySelectorAll('#bag .cell').length;
+    if (confirm1 && !confirm1.disabled) { confirm1.click(); await wait(250); }
+    out.bagCountAfterBatch = bagCountText();
+    out.bagAfterBatch = stI.meta.bag.map(function (e) {
+      return e.id + '@' + (e.level || 1);
+    });
+  }
+
+  // 右键出售：对着格子点右键 → 卖掉 + toast 报出卖价
+  stI.meta.bag.length = 0;
+  Lg.bagAdd(stI, 'ironHelm', 1);
+  window.BagHud.refresh();
+  await wait(150);
+  out.bagCountBeforeSell = bagCountText();
+  const sellCell = firstFilledCell();
+  out.sellCellFound = !!sellCell;
+  if (sellCell) {
+    sellCell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    await wait(300);
+  }
+  out.sellExpectedValue = Lg.sellValue('ironHelm', 1);
+  const toastEl = document.getElementById('toast');
+  out.toastAfterSell = textOf(toastEl);
+  out.toastOnAfterSell = !!(toastEl && toastEl.classList.contains('on'));
+  out.bagCountAfterSell = bagCountText();
+
+  // 分页：+扩容 → 第 N/M 页 → 翻页之后格子数仍然恒为 35（不能长也不能缩）
+  const expandBtn = document.querySelector('#bag [data-act="expand"]');
+  out.expandBtn = !!expandBtn;
+  out.prevBtn = !!document.querySelector('#bag [data-page="prev"]');
+  out.pageLabelBefore = textOf(document.getElementById('bag-page'));
+  if (expandBtn) { expandBtn.click(); await wait(250); }
+  out.pageLabelAfterExpand = textOf(document.getElementById('bag-page'));
+  out.bagCountAfterExpand = bagCountText();
+  const nextBtn = document.querySelector('#bag [data-page="next"]');
+  out.nextBtn = !!nextBtn;
+  if (nextBtn) { nextBtn.click(); await wait(200); }
+  out.pageLabelOnPage2 = textOf(document.getElementById('bag-page'));
+  out.bagCellsOnPage2 = document.querySelectorAll('#bag .cell').length;
   return out;
 })();
 `;
@@ -618,6 +810,101 @@ const SCRIPT = `
   ok(r.bagW > 0 && r.bagH > 0, '面板有真实尺寸', r.bagW + 'x' + r.bagH);
   ok(r.bagEndsWithinView === true, '面板右下角也不越界');
   ok(r.bagCells === 35, '第一页 5×7 = 35 格', r.bagCells);
+
+  console.log('\n--- 背包交互（V3 / V12 / V13 / V26–V29）---');
+  ok(r.cellWithItemFound === true, '背包里有带贴图的格子（否则悬停测试测的是空格）');
+  ok(r.equipResult && r.equipResult.ok === true, '穿戴成功', JSON.stringify(r.equipResult));
+  ok(typeof r.heroWeaponBefore === 'string', '能读到英雄的武器图层（探针有效）');
+  ok(r.heroWeaponAfter === 'eq-weapon-twinBlades',
+     '面板开着换装后英雄图层真的换成新武器', r.heroWeaponAfter);
+  ok(r.heroWeaponAfter !== r.heroWeaponBefore,
+     '图层确实变了，不是同一张', r.heroWeaponBefore + ' -> ' + r.heroWeaponAfter);
+  ok(r.hubPanelOpenWithBag === true,
+     '背包打开时 Hub.update 处于早退状态（所以上面的变化只能来自 onChange 钩子）',
+     String(r.hubPanelOpenWithBag));
+  ok(typeof r.dmgGainDeclared === 'number' && r.dmgGainDeclared > 0,
+     '该武器声明的加成是正数', r.dmgGainDeclared);
+  ok(r.dmgAfter - r.dmgBefore === r.dmgGainDeclared,
+     '伤害上升幅度恰好等于武器加成（不是巧合变绿）',
+     r.dmgBefore + ' + ' + r.dmgGainDeclared + ' vs ' + r.dmgAfter);
+  ok(typeof r.statsTextBefore === 'string' && r.statsTextBefore.indexOf('伤害' + r.dmgBefore) >= 0,
+     '左栏「当前数值」写着换装前的伤害', r.statsTextBefore);
+  ok(typeof r.statsTextAfter === 'string' && r.statsTextAfter.indexOf('伤害' + r.dmgAfter) >= 0,
+     '换装后左栏数值当场变了（不是等关面板）', r.statsTextAfter);
+  ok(r.statsTextBefore !== r.statsTextAfter, '左栏文案确实变了，不是同一份',
+     r.statsTextBefore + ' -> ' + r.statsTextAfter);
+  ok(typeof r.statsTextAfter === 'string' && r.statsTextAfter.indexOf('生命上限') >= 0 &&
+     r.statsTextAfter.indexOf('移速') >= 0 && r.statsTextAfter.indexOf('受伤') >= 0,
+     '四项数值都在（生命上限 / 伤害 / 移速 / 受伤）', r.statsTextAfter);
+
+  ok(r.tipVisible === true, '悬停出现物品信息', r.tipText);
+  ok(typeof r.tipText === 'string' && r.tipText.indexOf('铁盔') >= 0,
+     'tooltip 显示的确实是悬停那一件的名字（铁盔）', r.tipText);
+  ok(r.tipText && r.tipText.length > 0, '提示里有文字（不是空框）', r.tipText);
+  ok(typeof r.tipText === 'string' && r.tipText.indexOf('头部') >= 0,
+     'tooltip 写出槽位（设计 §4.3 要求名称/槽位/等级/效果/售价）', r.tipText);
+  ok(typeof r.tipText === 'string' && r.tipText.indexOf('售价') >= 0,
+     'tooltip 写出售价', r.tipText);
+  ok(r.tipHiddenAfterOut === true, '移开后浮层收起（不是一直挂在那儿）');
+
+  ok(r.helmBought && r.helmBought.ok === true, '补进背包的那件真的买到了', JSON.stringify(r.helmBought));
+  ok(r.headSlotWornBefore === true, '点之前头部槽已经穿着 3d 段买的那件（替换场景）');
+  eq(r.headSlotAltBefore, '角盔', '点之前头部槽里是角盔（3d 段穿上的）');
+  ok(r.headSlotWorn === true, '点格子穿上后头部槽亮起（左栏当场变）');
+  eq(r.headSlotImgAlt, '铁盔', '槽位里显示的就是穿上那件的贴图');
+  eq(r.headKeyAfterClick, 'eq-head-ironHelm', '英雄头部图层跟着换了（同一个 onChange）');
+  ok(r.headKeyBeforeClick !== r.headKeyAfterClick, '头部图层确实变了',
+     r.headKeyBeforeClick + ' -> ' + r.headKeyAfterClick);
+  ok(r.statsTextAfterClick !== r.statsTextAfter, '再穿一件，数值又变了一次', r.statsTextAfterClick);
+  ok(Array.isArray(r.bagIdsAfterClick) && r.bagIdsAfterClick.indexOf('hornHelm') >= 0,
+     '换下来的角盔回到背包（不凭空消失）', JSON.stringify(r.bagIdsAfterClick));
+  ok(r.headSlotEmptyAfterUnequip === true, '点已穿戴的槽 = 卸下（槽位回到空）');
+  eq(r.heroHeadAfterUnequip, '', '卸下后英雄头部图层隐藏（不残留上一件）');
+  ok(typeof r.bagCountAfterUnequip === 'string' && r.bagCountAfterUnequip.indexOf('/') > 0,
+     '卸下的装备回到背包里（计数可见）', r.bagCountAfterUnequip);
+
+  ok(r.sortBtn === true, '有「整理」按钮');
+  eq(r.sortFirstBefore, '熔火战靴', '整理前第一格是按入包顺序（熔火战靴）');
+  eq(r.sortFirstAfter, '战斧', '整理后特效装备排到最前（设计 §4.5 第一段）');
+
+  ok(r.batchBtn === true, '有「批量出售」按钮');
+  ok(r.batchConfirmDisabledWhenEmpty === true, '没勾选任何东西时确认按钮是禁用的');
+  ok(r.pickDupsBtn === true, '有「勾选全部重复件」快捷勾选');
+  ok(r.batchConfirmEnabledAfterPick === true, '勾上重复件后确认按钮可用');
+  ok(typeof r.batchSumText === 'string' &&
+     r.batchSumText.indexOf('2 件') >= 0 &&
+     r.batchSumText.indexOf(String(r.batchExpectedTotal)) >= 0,
+     '确认条写着件数与总价', r.batchSumText);
+  ok(r.batchExpectedTotal !== r.batchUnitPrice * 2,
+     '总价是按每件算的，不是单价 × 件数（否则这条断言区分不出错实现）',
+     r.batchUnitPrice + ' x2 vs ' + r.batchExpectedTotal);
+  eq(r.batchCells, 35, '选择态下格子数仍然是 35（不能多也不能少）');
+  ok(Array.isArray(r.bagAfterBatch) && r.bagAfterBatch.length === 2 &&
+     r.bagAfterBatch.indexOf('ironHelm@3') >= 0,
+     '每 id 至少留一件，且留的是等级最高的那件', JSON.stringify(r.bagAfterBatch));
+  ok(typeof r.bagCountAfterBatch === 'string' && r.bagCountAfterBatch.indexOf('2') === 0,
+     '卖掉两件后计数变成 2', r.bagCountAfterBatch);
+
+  ok(r.sellCellFound === true, '右键前确实有一格可卖的装备');
+  ok(r.toastOnAfterSell === true, '右键出售弹出 toast（不是静默失败）', r.toastAfterSell);
+  ok(typeof r.toastAfterSell === 'string' && r.toastAfterSell.indexOf('铁盔') >= 0,
+     'toast 写出卖的是哪一件', r.toastAfterSell);
+  ok(typeof r.toastAfterSell === 'string' &&
+     r.toastAfterSell.indexOf(String(r.sellExpectedValue)) >= 0,
+     'toast 写出真实卖价（sellValue 逐件算）', r.toastAfterSell);
+  eq(r.bagCountAfterSell, '0/35', '卖掉后背包空了');
+
+  ok(r.expandBtn === true, '有「+扩容」按钮');
+  ok(r.prevBtn === true && r.nextBtn === true, '有上一页 / 下一页按钮');
+  ok(typeof r.pageLabelBefore === 'string' && r.pageLabelBefore.indexOf('1 / 1') >= 0,
+     '一开始是第 1 / 1 页', r.pageLabelBefore);
+  ok(typeof r.pageLabelAfterExpand === 'string' &&
+     r.pageLabelAfterExpand.indexOf('1 / 2') >= 0,
+     '扩容后变成第 1 / 2 页', r.pageLabelAfterExpand);
+  eq(r.bagCountAfterExpand, '0/70', '容量按页数 × 35 算（2 页 = 70 格）');
+  ok(typeof r.pageLabelOnPage2 === 'string' && r.pageLabelOnPage2.indexOf('2 / 2') >= 0,
+     '翻页后是第 2 / 2 页', r.pageLabelOnPage2);
+  eq(r.bagCellsOnPage2, 35, '翻到第二页格子数仍然恒为 35');
 
   console.log('\n' + '='.repeat(56));
   if (fail === 0) {
