@@ -1627,7 +1627,7 @@ git commit -m "fix(bag): 面板收到 470x500（画布 40.8%）+ toast 层级 / 
 
 **Files:**
 - Modify: `game/hub.js:32-45`（`ZONES` 加 `z`）、`game/hub.js:54-61`（`zoneAt` 改距离判定）
-- Modify: `game/app.js:1340` 一带（按 `toScreen` 画）、`game/app.js:1550` 一带（**删提示文字**）、`game/app.js:1423`（删标签）
+- Modify: `game/app.js:1353-1354` 一带（按 `toScreen` 逐点画）、`game/app.js:1623-1630`（**删地面长提示**，连 `game/app.js:1487-1491` 的 `this.prompt` 一起删）、`game/app.js:1437-1440`（点位名称标签**保留**，但必须跟着逐点 `y` 走：`this.add.text(z.x, sc0.sy + 14, z.name, …)`——用户要删的是「按 J · 点位（提示）」那段长字，不是「田地 / 铁匠铺」这几个名字，删错了会看不出哪块是哪个设施）
 - **Modify: `tests/test_game_meta.js:103-127`（既有测试，必须同步改，否则本任务一定打红它）**
 - Test: `tests/test_game_logic.js`（V16）、`tests/browser/smoke.js`（V17）
 
@@ -1738,7 +1738,7 @@ ok((H.zoneAt(s) || {}).id !== 'field', 'z 不对时也不该命中下排点位')
   out.farPrompt = promptOf();
   out.farCap = !!(hubZ.keycap && hubZ.keycap.visible);
 
-  // 铁匠铺（x=265, z=34）
+  // 铁匠铺（x=265, z=122）
   stZ.hub.x = 265; stZ.hub.z = 122;
   await wait(600);
   out.nearPrompt = promptOf();
@@ -1776,7 +1776,7 @@ ok((r.zoneHits || []).every((h) => h.got === h.want),
 Run: `"$N" tests/test_game_logic.js && "$N" tests/browser/smoke.js`
 Expected: FAIL。**注意红在哪一条**：V16 的六条「站在自己点位上命中自己」在改动前
 **本来就会通过**（一维判定同样命中），真正打红的只有
-`z 不对时不该命中上排点位`（`hub.x = 265, hub.z = 0` 时旧实现返回 anvil）——
+`z 不对时不该命中上排点位`（`hub.x = 265, hub.z = 88` 时旧实现返回 anvil）——
 它才是这条需求的关键判据。浏览器侧「远离点位时没有键帽」/「靠近点位时出现键帽」
 一开始就 FAIL（`hubZ.keycap` 还不存在）。
 
@@ -1787,10 +1787,13 @@ Expected: FAIL。**注意红在哪一条**：V16 的六条「站在自己点位�
    **不能调 `app.js` 的 `toScreen`**（那是渲染层函数）。两个选择，取前者：
    - **在 `hub.js` 里放一份等价的投影常量/小函数**（`Z_TO_Y` / `Z_SCALE` / `FIELD_D`
      本来就该是共享常量）；或
-   - 把 `reach` 改成「x 与 z 各自一个容差」（`reachX` / `reachZ`）——
+   - 把 x 与 z 各自一个容差：**保留原字段名 `reach` 当作 x 容差，另外新增 `reachZ`**——
      最简单、无跨层依赖，**本计划采用这个**。
-   判定写成 `Math.abs(hub.x - z.x) <= z.reachX && Math.abs(hub.z - z.z) <= z.reachZ`。
-   `reachX` 沿用原 `reach` 值（66/58/58/58/58/60），**`reachZ` 必须取 30**。
+   判定写成 `Math.abs(hub.x - z.x) <= z.reach && Math.abs(hub.z - z.z) <= (z.reachZ || 30)`。
+   `reach` 值一个都不改（66/58/58/58/58/60），**`reachZ` 必须取 30**。
+   > **不要把它改名成 `reachX`**：`tests/test_game_meta.js:116`、`:117`、`:199` 三处都在读
+   > `z.reach` 做 x 轴空隙/重叠检测，改名会把这三条无关测试一起打红，
+   > 而它们本来完全不需要改。少改一个字段名，少三处误伤。
    这个数是被两条约束夹死的：
    - **必须 > 0 才有意义**，且要容得下玩家站位的浮动；
    - **必须 < 错落间距 34**，否则站在下排的 z 上也会命中上排点位，
@@ -1798,10 +1801,20 @@ Expected: FAIL。**注意红在哪一条**：V16 的六条「站在自己点位�
    `30 = 34 - 4`，留 4 个单位的余量。取 40 是我初稿的错值（`|122-88| = 34 < 40`，必然误触）。
    实测容差：下排点位可站位区间 `z ∈ [58, 118]`，上排 `z ∈ [92, 152]`，
    中线门 `z ∈ [75, 135]` —— 彼此重叠但被 x 轴隔离（相邻 x 间距 150–165 > 相邻 reachX 之和 116–124），不会同时命中。
-3. **绘制端必须同步改**：`app.js:1340` 目前把所有点位画在同一个固定 y 上，改为逐点 `toScreen(x, z, 0)`，并按 `sc` 缩放 —— **数据改了画面没改等于没做**
-4. **既有测试同步改**（见上方「回归地雷」）：`tests/test_game_meta.js:107-110` 加 `s.hub.z = z.z;`；
-   `:115-127` 的空隙检测确认只在 x 轴取中点，不受 `z` 影响。
-5. **删掉** `app.js:1550` 一带的 `this.prompt.setText('按 J · ' + zone.name + '（' + zone.hint + '）')`
+3. **绘制端必须同步改**：`game/app.js:1353-1354`（`H.ZONES.forEach` 里那行
+   `const y = GROUND_Y - (H.HUB_D / 2) * Z_TO_Y;`）目前把所有点位画在同一个固定 y 上，
+   改为逐点 `const sc0 = toScreen(z.x, z.z, 0)`，用 `sc0.sy` 当底边、`sc0.sc` 缩放 ——
+   **数据改了画面没改等于没做**。`toScreen` 定义在 `game/app.js:42`，同文件可直接用。
+   改完后 `z=88` 的点位底边约 `y=425`、`z=122` 约 `y=391`、`z=105` 约 `y=408`（原位置）。
+4. **既有测试同步改**（见上方「回归地雷」）：`tests/test_game_meta.js:107-110` 的 forEach 里加
+   `s.hub.z = z.z;`（否则 `hub.z` 一直是默认 105，只靠 `|105-88| = 17 < 30` 碰巧过关）；
+   `:110-127` 的空隙检测在循环前显式写 `s.hub.z = 105;`，让这条测试只测 x 轴隔离，
+   不依赖上一条留下什么状态。**不要改 `:116`/`:117`/`:199` 里的 `z.reach`**（字段名没变）。
+5. **删掉**地面长提示：`game/app.js:1623-1630`（`const zone = H.zoneAt(this.state); if (zone) { this.prompt.setVisible(true).setText('按 J · ' + zone.name + '（' + zone.hint + '）'); ... }`）。
+   只删"画在角色下方那段长文案"，**`ZONES[*].hint` 字段本身必须留着**——
+   `game/index.html:604` 的 `$('panelSub').textContent = zone.hint;` 还在用它在面板里当副标题。
+   `this.prompt`（`game/app.js:1487-1491` 创建）删掉写入点后就没有任何用途了：
+   **连创建一起整个删掉**，否则留下一个永远不可见、也没有文字的 Text 对象。
 6. 画**灰色圆角键帽 + 黑色 `J`**（约 26×26）在角色**头顶右上方**，150ms 淡入淡出。
    **必须挂在 `this.keycap`**（Container 或 Graphics，带 `.visible`）上，逐帧按
    `zoneAt(state)` 有无结果切 `visible` —— 测试直接断言 `hubZ.keycap.visible`，
