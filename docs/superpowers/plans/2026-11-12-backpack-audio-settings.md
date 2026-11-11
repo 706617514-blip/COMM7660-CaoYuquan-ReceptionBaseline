@@ -662,6 +662,16 @@ git commit -m "feat(bag): 分页容量 5x7、最多 6 页、逐页涨价扩容�
 
 ## Task 5: 卖价、单件出售、批量出售
 
+> **Task 3 复审带入的 UI 缺口（reviewer f43c23f2，Important）**
+> Task 3 让 `equipItem`/`equipUpgradeCost`/`upgradeEquipment` 接受可选 `uid`，
+> 但玩家路径根本走不到：`game/hub.js:195` 的 `payload: { id: id, slot: slot }` **没有 uid**，
+> 于是 `hub.js:247`（`equip-wear`）与 `:248`（`equip-upgrade`）只传 `payload.id`，
+> 背包里有两件同 id 时永远作用第一件。**三参修复目前在 UI 上不可达。**
+> 本任务及后续 Task 7/8 涉及装备动作时必须让 payload 带上 `uid`，
+> 并在 `app.js` → `H.perform` 的调用链里透传下去。
+> 同一处还要注意：`hub.js:181` 的报价与 `:183` 的 kind 判定**必须与穿戴/升级成对改动**，
+> 只改一边会让「报价按 A、扣费按 B」分叉。
+
 **Files:**
 - Modify: `game/logic.js`（加 `sellValue`/`sellItem`/`sellBatch`/`equipInvested`）
 - Test: `tests/test_bag.js`
