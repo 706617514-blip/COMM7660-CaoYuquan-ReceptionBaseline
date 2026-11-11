@@ -31,6 +31,15 @@
   "$N" tests/test_game_logic.js
   ```
 - **`timeout` 命令在 macOS 上不存在**，需要限时用后台任务。
+- **`tests/browser/smoke.js` 不是 Playwright/Puppeteer。** 它没有 `page.evaluate` /
+  `page.keyboard.press` / `page.waitForTimeout` —— 写了也只会 `ReferenceError`。真实结构是两段：
+  - **页面内**（`tests/browser/smoke.js:108` 起的模板字符串 `SCRIPT`）：一个
+    `(async function () { ... })()`，自带 `wait(ms)` 与 `key(t, code, kc)` 两个助手
+    （`:111` / `:112`），所有观察结果写进 `out.xxx`，最后 `return out;`（`:438`）。
+  - **Node 侧**（`:441` 起）：用 `ok(cond, label, detail)` 对 `r.xxx` 断言。
+  - 读游戏状态用 `window.EmberfieldApp.__state`。**`window.__game` 是 `Phaser.Game`，
+    `window.__game.state` 不存在**；场景用 `window.__game.scene.getScene('Hub')`。
+  - 按键一律 `key('keydown', 'Tab', 9)` / `key('keyup', 'Tab', 9)`，不要用 `page.*`。
 
 ---
 
@@ -922,27 +931,63 @@ git commit -m "feat(bag): 整理排序与分类页签过滤"
 **Interfaces:**
 - Consumes: Task 2–6 的全部 `L.bag*` / `L.pageOf` / `L.bagFilter` / `L.sortBag`
 - Produces:
-  - `global.BagHud = { open(state, opts), close(), refresh(), isOpen() }`
+  - `global.BagHud = { open(state, opts), close(), refresh(), isOpen(), clamp() }`
+    （`clamp()` 把面板位置夹回可见范围，拖动与测试都用它）
   - `opts.onChange` —— 每次背包内容变化后由 `BagHud` 调用，宿主负责 `refreshHeroEquip`
 
-- [ ] **Step 1: 写浏览器测试（V1、V2、V4）**
+- [ ] **Step 1: 写浏览器测试（V2、V4）**
 
-在 `tests/browser/smoke.js` 追加：
+**本任务不测 Tab。** `CODES` 里还没有 `Tab`（那是 Task 9 的接线），所以这里只能用
+公开 API `BagHud.open()` 打开面板。把「按 Tab 打开」留给 Task 9，否则本任务永远绿不了。
+
+**（A）页面内** —— 追加到 `SCRIPT` 的 IIFE 里、`return out;` 之前：
 
 ```js
-// V1：Tab 打开背包
-await page.keyboard.press('Tab');
-const bagOn = await page.evaluate(() => document.getElementById('bag').className.indexOf('on') >= 0);
-ok(bagOn, '按 Tab 打开背包');
-// V2：拖动夹边（拖到极限后仍在画布内）
-const clamped = await page.evaluate(() => {
-  const el = document.getElementById('bag');
-  el.style.left = '-9999px';
-  window.BagHud.clamp();
-  return parseFloat(el.style.left) >= 0;
-});
-ok(clamped, '面板被夹在画布内，拖不出去');
+  // ---- 背包面板（V2 / V4）----
+  const bagEl = () => document.getElementById('bag');
+  out.bagExists = !!bagEl();
+  const stBag = window.EmberfieldApp.__state;
+  window.BagHud.open(stBag);
+  await wait(300);
+  out.bagOpen = window.BagHud.isOpen();
+  out.bagDisplayed = !!(bagEl() && getComputedStyle(bagEl()).display !== 'none');
+
+  // V2：推到屏幕外，clamp() 之后必须回到可见范围
+  if (bagEl()) {
+    bagEl().style.left = '-9999px';
+    bagEl().style.top = '-9999px';
+    window.BagHud.clamp();
+    out.bagLeft = parseFloat(bagEl().style.left);
+    out.bagTop = parseFloat(bagEl().style.top);
+    out.bagW = bagEl().offsetWidth;
+    out.bagH = bagEl().offsetHeight;
+    out.viewW = window.innerWidth;
+    out.viewH = window.innerHeight;
+    // 只夹左上角是不够的：右下角同样会跑出屏幕，两个角都要验
+    out.bagEndsWithinView =
+      (out.bagLeft + out.bagW <= out.viewW) && (out.bagTop + out.bagH <= out.viewH);
+  }
+
+  // V4：第一页 5 列 × 7 行
+  out.bagCells = document.querySelectorAll('#bag .cell').length;
 ```
+
+**（B）Node 侧** —— 追加到既有断言序列末尾：
+
+```js
+console.log('\n--- 背包面板（V2 / V4）---');
+ok(r.bagExists === true, '#bag 容器存在');
+ok(r.bagOpen === true, 'BagHud.open() 后面板处于打开态');
+ok(r.bagDisplayed === true, '面板真的显示出来了（不是只有 className）');
+ok(typeof r.bagLeft === 'number' && r.bagLeft >= 0 && r.bagLeft <= r.viewW - 40,
+   '夹边后 left 在可视范围内', r.bagLeft);
+ok(typeof r.bagTop === 'number' && r.bagTop >= 0 && r.bagTop <= r.viewH - 40,
+   '夹边后 top 在可视范围内', r.bagTop);
+ok(r.bagW > 0 && r.bagH > 0, '面板有真实尺寸', r.bagW + 'x' + r.bagH);
+ok(r.bagEndsWithinView === true, '面板右下角也不越界');
+ok(r.bagCells === 35, '第一页 5×7 = 35 格', r.bagCells);
+```
+
 
 - [ ] **Step 2: 跑测试确认失败**
 
@@ -984,31 +1029,94 @@ git commit -m "feat(bag): 背包 DOM 浮层（网格/页签/拖动夹边/贴图�
 
 - [ ] **Step 1: 写测试（V3、V12、V13、V26–V29 的 UI 侧）**
 
-```js
-// V12/V13：暂停中卖出/换装后英雄图层必须更新（Review Focus #4）
-// 先在页面里暴露一个计数器：app.js 的 refreshHeroEquip 每次调用 __refreshHeroCalls++
-const before = await page.evaluate(() => window.__refreshHeroCalls);
-await page.evaluate(() => window.BagHud.testSellFirst());   // 只用于测试的出口
-const after = await page.evaluate(() => window.__refreshHeroCalls);
-ok(after > before, '卖出后 refreshHeroEquip 被显式调用过（暂停时 update 不跑）');
+**不引入测试专用出口**（不要在 `baghud.js` 里加 `testSellFirst()` 这类只为测试存在的函数）。
+断言一律读**玩家真能看到的东西**：英雄容器的图层贴图键、左栏显示的数字、网格格子数、tooltip 文案。
 
-// V12：换装后左栏数值立即变化。
-// 注意不能用 >= —— 那对"数值根本没刷新""换装失败""读到同一个缓存值"全部成立。
-// V12 原文要求的是"**上升**"，所以必须用一件**已知会提高攻击力**的武器，
-// 并断言差额恰好等于该武器声明的伤害加成。
-const atkBefore = await page.evaluate(() => window.BagHud.testReadStat('attack'));
-const expectGain = await page.evaluate(() =>
-  window.BagHud.testEquipStrongerWeapon());     // 返回该件声明的攻击加成
-const atkAfter = await page.evaluate(() => window.BagHud.testReadStat('attack'));
-ok(atkAfter > atkBefore, '换上更强武器后攻击数值严格上升（不是没刷新）');
-ok(atkAfter - atkBefore === expectGain,
-   '上升幅度等于该武器的攻击加成（不是巧合变绿）');
+**Review Focus #4 的机制在本任务就已成立**：`game/app.js:1530` 是 `if (this.panelOpen) return;`
+—— 面板一开，Hub 的 `update` 直接早退，`refreshHeroEquip` 不会被跑到，英雄贴图就停在旧样子。
+Task 9 加上 `scene.pause()` 后是同一个毛病的第二种触发方式，所以这里先测「面板开着的换装」。
+
+**（A）页面内** —— 追加到 `SCRIPT` 的 IIFE 里、`return out;` 之前：
+
+```js
+  // ---- 背包交互（V3 / V12 / V13）----
+  const stI = window.EmberfieldApp.__state;
+  const Lg = window.GameLogic;
+  const hubI = window.__game.scene.getScene('Hub');
+  const heroLayerKeys = (slot) => hubI.hero.list
+    .filter((c) => c.texture && new RegExp('^eq-' + slot + '-').test(c.texture.key) && c.visible)
+    .map((c) => c.texture.key).join(',');
+  stI.meta.coins = 99999;
+
+  // V13：面板开着时换装，英雄图层必须真的换（不是等 update）
+  const wId = 'twinBlades';
+  if (Lg.equipOwned(stI, wId) === null) Lg.buyEquipment(stI, wId);
+  window.BagHud.open(stI);
+  await wait(250);
+  out.heroWeaponBefore = heroLayerKeys('weapon');
+  const wUid = (stI.meta.bag.filter((e) => e.id === wId)[0] || {}).uid;
+  out.equipResult = Lg.equipItem(stI, wId, wUid);
+  window.BagHud.refresh();
+  await wait(300);
+  out.heroWeaponAfter = heroLayerKeys('weapon');
+
+  // V12：左栏数值必须严格上升，且差额等于该件声明的加成（不能用 >=）
+  out.dmgGainDeclared = window.GameConfig.equipDef(wId).mods.damage;
+  out.dmgAfter = Lg.playerStats(stI).damage;
+
+  // V3：悬停显示信息
+  const cell0 = document.querySelector('#bag .cell');
+  if (cell0) {
+    cell0.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }));
+    await wait(150);
+    const tip = document.getElementById('bag-tip');
+    out.tipVisible = !!(tip && getComputedStyle(tip).display !== 'none' && tip.textContent.trim().length > 0);
+    out.tipText = tip ? tip.textContent.trim().slice(0, 40) : null;
+    cell0.dispatchEvent(new MouseEvent('pointerout', { bubbles: true }));
+  }
+
+  // V26–V29 UI 侧：批量出售入口存在、空选时确认按钮禁用
+  out.batchBtn = !!document.querySelector('#bag [data-act="batch-sell"]');
+  out.sortBtn = !!document.querySelector('#bag [data-act="sort"]');
+  const bb = document.querySelector('#bag [data-act="batch-sell"]');
+  if (bb) {
+    bb.click();
+    await wait(200);
+    const confirm = document.querySelector('#bag .confirm-ok');
+    out.batchConfirmDisabledWhenEmpty = !!(confirm && confirm.disabled);
+  }
 ```
+
+**（B）Node 侧**：
+
+```js
+console.log('\n--- 背包交互（V3 / V12 / V13 / V26–V29）---');
+ok(r.equipResult && r.equipResult.ok === true, '穿戴成功', JSON.stringify(r.equipResult));
+ok(typeof r.heroWeaponBefore === 'string', '能读到英雄的武器图层（探针有效）');
+ok(r.heroWeaponAfter.indexOf('eq-weapon-twinBlades') >= 0,
+   '面板开着换装后英雄图层真的换成新武器', r.heroWeaponAfter);
+ok(r.heroWeaponAfter !== r.heroWeaponBefore,
+   '图层确实变了，不是同一张', r.heroWeaponBefore + ' -> ' + r.heroWeaponAfter);
+ok(typeof r.dmgGainDeclared === 'number' && r.dmgGainDeclared > 0,
+   '该武器声明的加成是正数', r.dmgGainDeclared);
+ok(r.dmgAfter - r.dmgBefore === r.dmgGainDeclared,
+   '伤害上升幅度恰好等于武器加成（不是巧合变绿）',
+   r.dmgBefore + ' + ' + r.dmgGainDeclared + ' vs ' + r.dmgAfter);
+ok(r.tipVisible === true, '悬停出现物品信息', r.tipText);
+ok(r.tipText && r.tipText.length > 0, '提示里有文字（不是空框）', r.tipText);
+ok(r.sortBtn === true, '有「整理」按钮');
+ok(r.batchBtn === true, '有「批量出售」按钮');
+ok(r.batchConfirmDisabledWhenEmpty === true, '没勾选任何东西时确认按钮是禁用的');
+```
+
+页面脚本里还要在读数值**之前**补一行 `out.dmgBefore = Lg.playerStats(stI).damage;`
+（在 `Lg.equipItem` 之前），否则 `dmgBefore` 是 `undefined`，差额断言会变成 `NaN === n` 恒假。
 
 - [ ] **Step 2: 跑测试确认失败**
 
 Run: `"$N" tests/browser/smoke.js`
-Expected: FAIL —— `window.BagHud.testSellFirst` 不存在。
+Expected: FAIL —— `window.BagHud.refresh is not a function`（Task 7 只做了 open/close/isOpen/clamp），
+或 `#bag .cell` 的交互断言拿不到 tooltip。
 
 - [ ] **Step 3: 实现**
 
@@ -1043,16 +1151,70 @@ git commit -m "feat(bag): 穿戴/悬停/出售/批量出售/分页交互"
 - Consumes: Task 8 的 `BagHud`
 - Produces: `scene.pause()` / `scene.resume()` 成对封装；`CODES.Tab = 'bag'`
 
-- [ ] **Step 1: 写测试（V1 的暂停侧、V21）**
+- [ ] **Step 1: 写测试（V1 的键盘侧、V21）**
+
+两条断言必须成对出现，否则「位置没变」有两种平凡解释：**按键根本没生效**、**玩家本来就不会动**。
+所以要配一条反证：关掉背包后同样的按键**必须**让位置变化。
+
+**（A）页面内** —— 追加到 `SCRIPT` 的 IIFE 里、`return out;` 之前：
 
 ```js
-// 打开背包后角色坐标不再变化
-await page.keyboard.press('Tab');
-const p1 = await page.evaluate(() => window.__game.state.run.player.x);
-await page.waitForTimeout(600);
-const p2 = await page.evaluate(() => window.__game.state.run.player.x);
-ok(p1 === p2, '背包打开时游戏暂停（模拟不推进）');
-await page.keyboard.press('Tab');
+  // ---- Tab 打开背包 + 暂停（V1 / V21）----
+  const stP = window.EmberfieldApp.__state;
+  const hubP = window.__game.scene.getScene('Hub');
+  window.BagHud.close();              // 从关闭态开始，保证 Tab 真的从无到有
+  stP.hub.x = 300; stP.hub.z = 105;   // 放在空地，避免撞到点位边界
+  await wait(350);
+  out.pauseClosedBefore = window.BagHud.isOpen();
+
+  key('keydown', 'Tab', 9); await wait(90); key('keyup', 'Tab', 9);
+  await wait(350);
+  out.pauseOpenedByTab = window.BagHud.isOpen();
+  out.pauseScenePaused = hubP.scene.isPaused();
+
+  const x0 = stP.hub.x;
+  key('keydown', 'KeyD', 68); await wait(700); key('keyup', 'KeyD', 68);
+  await wait(120);
+  out.pauseXBefore = x0;
+  out.pauseXWhileOpen = stP.hub.x;
+
+  // 关掉背包，同样的按键必须能动 —— 证明上一条的「不动」是暂停造成的
+  key('keydown', 'Tab', 9); await wait(90); key('keyup', 'Tab', 9);
+  await wait(350);
+  out.pauseClosedAfter = window.BagHud.isOpen();
+  out.pauseSceneResumed = !hubP.scene.isPaused();
+  const x1 = stP.hub.x;
+  key('keydown', 'KeyD', 68); await wait(700); key('keyup', 'KeyD', 68);
+  await wait(120);
+  out.pauseXBeforeReopen = x1;
+  out.pauseXAfterClose = stP.hub.x;
+
+  // Tab 默认会把焦点移到下一个控件，必须被 preventDefault 吃掉
+  let defaultPrevented = false;
+  const probe = (e) => { defaultPrevented = e.defaultPrevented; };
+  window.addEventListener('keydown', probe);
+  key('keydown', 'Tab', 9); await wait(60); key('keyup', 'Tab', 9);
+  window.removeEventListener('keydown', probe);
+  out.tabDefaultPrevented = defaultPrevented;
+  await wait(250);
+  window.BagHud.close();
+```
+
+**（B）Node 侧**：
+
+```js
+console.log('\n--- Tab 打开背包 + 暂停（V1 / V21）---');
+ok(r.pauseClosedBefore === false, '起始态背包是关着的（否则下面测不到 Tab）');
+ok(r.pauseOpenedByTab === true, '按 Tab 打开背包');
+ok(r.pauseScenePaused === true, '背包打开时 Hub 场景真的 pause 了');
+ok(r.pauseXWhileOpen === r.pauseXBefore,
+   '暂停期间按住 D 位置不变', r.pauseXBefore + ' -> ' + r.pauseXWhileOpen);
+ok(r.pauseClosedAfter === false, '再按 Tab 关闭背包');
+ok(r.pauseSceneResumed === true, '关闭后场景恢复运行（pause/resume 成对）');
+ok(r.pauseXAfterClose > r.pauseXBeforeReopen + 5,
+   '关闭后同样按 D 位置真的变了（反证：上一条不是按键失效）',
+   r.pauseXBeforeReopen + ' -> ' + r.pauseXAfterClose);
+ok(r.tabDefaultPrevented === true, 'Tab 的浏览器默认行为被 preventDefault 拦掉');
 ```
 
 - [ ] **Step 2: 跑测试确认失败**
@@ -1260,28 +1422,57 @@ ok((H.zoneAt(s) || {}).id === 'anvil', 'z 正确时命中铁匠铺');
 // ⚠️ 不能查 DOM：`this.prompt` 是 **Phaser 画布内的 Text 对象**（app.js:1436 创建），
 // 不是 HTML 元素。`document.querySelector('#prompt')` 永远返回 null，
 // 写成 `!el || ...` 就是**恒真空断言** —— 正好是上面注释里点名要防的写法。
-// 必须用 Phaser 侧探针：
-const promptState = await page.evaluate(() => {
-  const hub = window.__game.scene.getScene('Hub');
-  const p = hub && hub.prompt;
-  return {
-    exists: !!p,                       // 对象本身可以留着（省得删代码），但必须不可见
-    visible: !!(p && p.visible),
-    hasText: !!(p && p.text && p.text.length > 0),
-    capVisible: !!hub.__keycapVisible, // 键帽此时应当可见
-  };
-});
-ok(promptState.exists, '探针有效：改动前 prompt 对象确实存在（证明这条断言跑到了真东西）');
-ok(!promptState.visible, '长提示文字已不再显示');
-ok(!promptState.hasText || !promptState.visible, '不再向玩家展示「按 J · 点位名（提示）」长文案');
-ok(promptState.capVisible, '同一时刻键帽是可见的（删提示不是把提示和键帽一起删了）');
+// 必须用 Phaser 侧探针。另外本仓库没有 Playwright，代码要分页面内/Node 侧两段写。
+```
 
-// 键帽：靠近点位时必须出现，且是灰色底 + 黑色 J
-const cap = await page.evaluate(() => {
-  window.__game.hub.player.x = 265;      // 走到铁匠铺
-  return new Promise((r) => setTimeout(() => r(window.__keycapVisible), 300));
-});
-ok(cap === true, '靠近点位时头顶右上方出现键帽');
+**（A）页面内** —— 追加到 `SCRIPT` 的 IIFE 里、`return out;` 之前：
+
+```js
+  // ---- 基地错落 + 键帽（V16 现场 / V17）----
+  const stZ = window.EmberfieldApp.__state;
+  const hubZ = window.__game.scene.getScene('Hub');
+  const promptOf = () => {
+    const p = hubZ && hubZ.prompt;
+    return { exists: !!p, visible: !!(p && p.visible), hasText: !!(p && p.text && p.text.length > 0) };
+  };
+
+  // 远处：不应有任何提示或键帽
+  stZ.hub.x = 500; stZ.hub.z = 105;
+  await wait(500);
+  out.farPrompt = promptOf();
+  out.farCap = !!hubZ.__keycapVisible;
+
+  // 铁匠铺（x=265, z=34）
+  stZ.hub.x = 265; stZ.hub.z = 34;
+  await wait(600);
+  out.nearPrompt = promptOf();
+  out.nearCap = !!hubZ.__keycapVisible;
+  out.nearZoneId = (window.GameHub.zoneAt(stZ) || {}).id;
+
+  // 每个点位都走一遍：靠近各命中、且不是别人
+  out.zoneHits = [];
+  for (const z of window.GameHub.ZONES) {
+    stZ.hub.x = z.x; stZ.hub.z = z.z;
+    await wait(160);
+    out.zoneHits.push({ want: z.id, got: (window.GameHub.zoneAt(stZ) || {}).id });
+  }
+```
+
+**（B）Node 侧**：
+
+```js
+console.log('\n--- 基地错落 + 键帽（V16 / V17）---');
+ok(r.farPrompt && r.farPrompt.exists === true, '探针有效：prompt 对象确实存在（证明断言跑到真东西）');
+ok(r.farPrompt && r.farPrompt.visible === false, '远离点位时没有长提示文案');
+ok(r.farCap === false, '远离点位时没有键帽');
+ok(r.farPrompt && r.farPrompt.hasText === false, '长文案「按 J · 点位（提示）」已不再写入');
+ok(r.nearZoneId === 'anvil', '站在铁匠铺坐标命中 anvil', r.nearZoneId);
+ok(r.nearCap === true, '靠近点位时头顶右上方出现键帽');
+ok(r.nearPrompt && r.nearPrompt.visible === false, '靠近时也不再显示长提示文字（已删除）');
+ok(Array.isArray(r.zoneHits) && r.zoneHits.length === 6, '6 个点位全部走了一遍', r.zoneHits && r.zoneHits.length);
+ok((r.zoneHits || []).every((h) => h.got === h.want),
+   '错落后每个点位仍各自命中自己（没有相互误触）',
+   JSON.stringify((r.zoneHits || []).filter((h) => h.got !== h.want)));
 ```
 
 - [ ] **Step 2: 跑测试确认失败**
