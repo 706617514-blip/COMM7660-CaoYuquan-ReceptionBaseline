@@ -214,6 +214,142 @@ group('导出完整性：hub.js 依赖的函数必须在 API 里', function(){
   eq(typeof L.pageSlice, 'function', 'pageSlice 已导出');
 });
 
+// ---------------------------------------------------------------- 追加修复 1：通道
+section('追加修复1：overwrote 必须真的走通 equipDrops 通道');
+group('追加修复1：overwrote 必须真的走通 equipDrops 通道', function(){
+  // 上一次只断言了 rollEquipDrop 的**返回值**，没断言**通道** ——
+  // killEnemy 往 run.equipDrops 里推的时候把 overwrote 丢掉了，
+  // 于是 UI 永远看不到被覆盖的是哪一件。返回值对、通道断，等于没修。
+  const s = L.createState(51);
+  s.meta.bagPages = 1;
+  s.meta.bag.length = 0;
+  fillBag(s, 'strawShoes');                 // 塞满 35 格
+  const lastIdx = L.bagCapacity(s) - 1;
+  const victimUid = s.meta.bag[lastIdx].uid;   // 末格那件（会被覆盖）
+  const victimId = s.meta.bag[lastIdx].id;
+  L.startRun(s, 'grass');
+  const run = s.run;
+  run.equipDrops = [];
+
+  // 走真实的 killEnemy 路径（用 isBoss=false 的普通敌人触发掉落判定）。
+  // 掉落是 5% 概率，所以循环击杀直到真的掉出一件为止 ——
+  // 这比手搓一个 drop 对象更能证明"通道"通了。
+  let entry = null;
+  for (let i = 0; i < 2000 && !entry; i++) {
+    const e = L.makeEnemy(s, 'crawler', run.diff);
+    e.hp = 0;
+    L.killEnemy(s, run, e);
+    if (run.equipDrops.length) entry = run.equipDrops[run.equipDrops.length - 1];
+  }
+  ok(!!entry, '2000 次击杀内至少掉出一件（5% 掉落）');
+  ok(entry.bagFull === true, '满包时这条掉落被标记 bagFull', JSON.stringify(entry));
+  ok('overwrote' in entry, 'run.equipDrops 的那一条真的带 overwrote（通道通了）',
+    JSON.stringify(entry));
+  ok(entry.overwrote && entry.overwrote.uid === victimUid,
+    'overwrote 指向被覆盖的末格那件（不是随手编一个）', JSON.stringify(entry.overwrote));
+  eq(entry.overwrote ? entry.overwrote.id : null, victimId,
+    'overwrote 带出被覆盖装备的 id，UI 才能指名道姓');
+  eq(entry.id, s.meta.bag[lastIdx].id, '掉落的那件确实落进了末格');
+});
+
+// ---------------------------------------------------------------- 追加修复 2：输入校验
+section('追加修复2：bagPages 非法输入必须收敛，coins 不得变 NaN');
+group('追加修复2：bagPages 非法输入必须收敛，coins 不得变 NaN', function(){
+  // 存档码是玩家可达的注入入口：deserialize 不校验，'abc' / 1.5 / 7 / 0
+  // 都能原样进来，随后 pagePrices[bagPages] 取到 undefined，
+  // 一扣钱 coins 就成 NaN —— 而 NaN 会顺着存档一路传下去。
+  const bad = [1.5, 0, 7, -3, 'abc', null, undefined, NaN];
+  bad.forEach(function (v) {
+    const s = L.createState(60);
+    s.meta.coins = 100000;
+    s.meta.bagPages = v;
+    const cap = L.bagCapacity(s);
+    ok(cap >= 35 && cap <= 210 && cap % 35 === 0,
+      'bagPages=' + JSON.stringify(v) + ' 时容量收敛到合法值', String(cap));
+    const r = L.buyBagPage(s);
+    ok(!Number.isNaN(s.meta.coins),
+      'bagPages=' + JSON.stringify(v) + ' 时买页不会把 coins 变成 NaN', String(s.meta.coins));
+    ok(s.meta.bagPages >= 1 && s.meta.bagPages <= 6 && Number.isInteger(s.meta.bagPages),
+      'bagPages=' + JSON.stringify(v) + ' 时买页后仍是 1..6 的整数', String(s.meta.bagPages));
+    ok(typeof r.ok === 'boolean', 'bagPages=' + JSON.stringify(v) + ' 时返回结构正常', JSON.stringify(r));
+  });
+
+  // 存档注入：deserialize 必须拦住这些值。
+  [1.5, 0, 7, -3, 'abc', null].forEach(function (v) {
+    const s = L.createState(61);
+    const o = JSON.parse(L.serialize(s));
+    o.meta.bagPages = v;
+    const back = L.deserialize(JSON.stringify(o));
+    ok(back.meta.bagPages >= 1 && back.meta.bagPages <= 6 && Number.isInteger(back.meta.bagPages),
+      '存档里 bagPages=' + JSON.stringify(v) + ' 读出来收敛到 1..6 整数', String(back.meta.bagPages));
+    ok(!Number.isNaN(L.bagCapacity(back)), '读档后容量不是 NaN');
+  });
+
+  // 合法的值必须原样保留（校验不能把正确数据也改了）。
+  const good = L.createState(62);
+  good.meta.coins = 100000;
+  good.meta.bagPages = 3;
+  eq(L.bagCapacity(good), 105, '合法页数 3 不被校验误伤');
+  eq(L.deserialize(L.serialize(good)).meta.bagPages, 3, '合法的 3 页跨序列化仍是 3');
+});
+
+// ---------------------------------------------------------------- 追加修复 1b：UI 文案
+section('追加修复1b：满包覆盖时 UI 必须说出被顶掉的是哪一件');
+group('追加修复1b：满包覆盖时 UI 必须说出被顶掉的是哪一件', function(){
+  // 通道通了还不够 —— 接了通道却仍然印"已进背包"，玩家照样不知道
+  // 自己少了一件。这一段用真实的 app.js 代码路径驱动，不是重写一份文案。
+  const fs = require('fs');
+  const vm = require('vm');
+  const ROOT = path.join(__dirname, '..');
+  const src = fs.readFileSync(path.join(ROOT, 'game', 'app.js'), 'utf-8');
+
+  // 只抽出掉落提示那一段真实代码来跑：整份 app.js 依赖 Phaser 场景与 DOM，
+  // 在这里全量求值成本高且脆。抽段落能证明"这段代码真的会把 overwrote 印出来"。
+  const start = src.indexOf('if (run.equipDrops && run.equipDrops.length) {');
+  ok(start >= 0, 'app.js 里找得到掉落提示段');
+  const end = src.indexOf('run.equipDrops.length = 0;', start);
+  ok(end > start, '找得到段落结尾');
+  // 必须一路取到标记之后的闭合大括号，否则抽出来的片段语法不完整
+  // （vm 会报 Unexpected end of input）。
+  const close = src.indexOf('}', end + 'run.equipDrops.length = 0;'.length);
+  ok(close > end, '找得到段落的闭合花括号');
+  const snippet = src.slice(start, close + 1);
+
+  const toasts = [];
+  const ctx = {
+    C: C,
+    run: {
+      equipDrops: [{
+        id: 'rustySword', duplicate: false, bagFull: true,
+        overwrote: { id: 'strawShoes', uid: 'u35', level: 1 },
+      }],
+    },
+    global: { EmberfieldUI: { toast: function (m) { toasts.push(m); } } },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(snippet, ctx, { filename: 'app.js#equipDrops' });
+
+  eq(toasts.length, 1, '满包覆盖只弹一条提示');
+  const msg = toasts[0] || '';
+  ok(msg.indexOf('背包已满') >= 0, '提示说明背包已满', msg);
+  ok(msg.indexOf(C.equipDef('rustySword').name) >= 0,
+    '提示说出掉落的那件（' + C.equipDef('rustySword').name + '）', msg);
+  ok(msg.indexOf(C.equipDef('strawShoes').name) >= 0,
+    '提示说出被顶掉的那件（' + C.equipDef('strawShoes').name + '）', msg);
+  eq(ctx.run.equipDrops.length, 0, '提示取走后清空，不会每帧重复弹');
+
+  // 非满包的普通掉落仍走原来的文案（别把正常路径改坏了）。
+  const ctx2 = {
+    C: C,
+    run: { equipDrops: [{ id: 'rustySword', duplicate: false, bagFull: false, overwrote: null }] },
+    global: { EmberfieldUI: { toast: function (m) { toasts.push(m); } } },
+  };
+  vm.createContext(ctx2);
+  vm.runInContext(snippet, ctx2, { filename: 'app.js#equipDrops' });
+  ok(toasts[1] && toasts[1].indexOf('已进背包') >= 0,
+    '没满包时仍是「已进背包」文案', toasts[1]);
+});
+
 // ---------------------------------------------------------------- 汇总
 console.log('\n' + '='.repeat(56));
 if (fail === 0) {

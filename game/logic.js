@@ -426,9 +426,26 @@
     return 'u' + n;
   }
 
+  /**
+   * 把 bagPages 规整成 1..maxPages 的整数。
+   *
+   * 为什么要防：存档码是**玩家可达的注入入口**。旧存档里没有这个字段、
+   * 手改存档、或者跨版本读档，都可能送进 1.5 / 'abc' / 0 / 7 / null。
+   * 不拦住的话：
+   *   1.5  → 容量 52.5（半格），buyBagPage 扣钱后 coins 直接变 NaN；
+   *   'abc' → pagePrices['abc'] 是 undefined，一扣钱 coins 又是 NaN。
+   * NaN 一旦进了 coins 会顺着存档一路传下去，后面所有花钱的地方全废。
+   * 收敛而不是报错：读档不该因为一个字段就让玩家进不去游戏。
+   */
+  function normBagPages(v) {
+    const n = Math.floor(Number(v));
+    if (!Number.isFinite(n)) return 1;
+    return Math.min(Math.max(1, n), C.BAG.maxPages);
+  }
+
   /** 背包总格数 = 已解锁页数 × 每页格数。 */
   function bagCapacity(state) {
-    return (state.meta.bagPages || 1) * BAG_GRID_PER_PAGE;
+    return normBagPages(state.meta.bagPages) * BAG_GRID_PER_PAGE;
   }
 
   function bagCount(state) {
@@ -469,10 +486,13 @@
    * 钱花了页也加了，实际上什么都没发生。
    */
   function buyBagPage(state) {
-    if (!state.meta.bagPages) state.meta.bagPages = 1;
+    // 先规整再办事：传入 1.5 / 'abc' 时若不收敛，
+    // pagePrices[那种值] 就是 undefined，一扣钱 coins 立刻变 NaN。
+    state.meta.bagPages = normBagPages(state.meta.bagPages);
     const max = C.BAG.maxPages;
     if (state.meta.bagPages >= max) return { ok: false, reason: '已解锁全部 ' + max + ' 页' };
     const cost = C.BAG.pagePrices[state.meta.bagPages];
+    if (!Number.isFinite(cost)) return { ok: false, reason: '页价表缺这一档' };
     if (state.meta.coins < cost) return { ok: false, reason: '铜币不够' };
     state.meta.coins -= cost;
     state.meta.bagPages += 1;
@@ -482,7 +502,8 @@
   /** 放一件进背包，返回落位下标；容量内满了返回 -1（由调用方决定怎么办）。 */
   function bagAdd(state, id, level) {
     if (!state.meta.bag) state.meta.bag = [];
-    if (!state.meta.bagPages) state.meta.bagPages = 1;
+    // 同样先规整：bagAdd 是入口函数，不能假定上游已经把 bagPages 收拾干净。
+    state.meta.bagPages = normBagPages(state.meta.bagPages);
     if (state.meta.bag.length >= bagCapacity(state)) return -1;
     state.meta.bag.push(bagEntry(state, id, level || 1));
     return state.meta.bag.length - 1;
@@ -1414,7 +1435,15 @@
       const drop = tryEquipDrop(state);
       if (drop) {
         run.equipDrops = run.equipDrops || [];
-        run.equipDrops.push({ id: drop.id, duplicate: drop.duplicate });
+        // 满包时 drop.overwrote 带着被顶掉的那一件（tryEquipDrop → rollEquipDrop
+        // 已经算好了）。这里**必须原样传下去** —— 只推 id/duplicate 的话，
+        // UI 永远看不到"你的哪件装备没了"，玩家只会觉得背包里的东西莫名少了。
+        // 返回值对而通道断，等于没修。
+        run.equipDrops.push({
+          id: drop.id, duplicate: drop.duplicate,
+          bagFull: !!drop.bagFull,
+          overwrote: drop.overwrote || null,
+        });
       }
     }
   }
@@ -1789,7 +1818,7 @@
       });
       delete s.meta.inventory;
       delete s.meta.inventoryLevels;
-      s.meta.bagPages = 1;
+      s.meta.bagPages = normBagPages(s.meta.bagPages);
       // 音效设置也在这一版进来：老档没有，Task 12 一读就 TypeError。
       if (!s.meta.settings) s.meta.settings = { volume: 0.30, muted: false };
       s.version = 6;
@@ -1812,7 +1841,10 @@
     // 注意：兜底块在版本校验**之后**，所以它救不了迁移没抬版本的老档 ——
     // 版本链必须自己走完，这里只是防止 v6 存档缺字段。
     if (!s.meta.bag) s.meta.bag = [];
-    if (!s.meta.bagPages) s.meta.bagPages = 1;
+    // bagPages 必须**规整**而不是简单兜底：存档码是玩家可达的注入入口，
+    // 'abc' / 1.5 / 7 / 0 都能原样进来。null 是 falsy 所以旧写法能挡住空值，
+    // 却挡不住这些非空非法值 —— 它们会一路带进 bagCapacity 与页价表。
+    s.meta.bagPages = normBagPages(s.meta.bagPages);
     if (!s.meta.uidSeq) s.meta.uidSeq = 0;
     if (!s.meta.settings) s.meta.settings = { volume: 0.30, muted: false };
     if (!s.farm || !s.farm.plots) {
@@ -1850,7 +1882,7 @@
     // 函数"存在却不可达"和不存在一样会让调用方写出错的行为。
     bagAdd, bagRemove, bagAt, bagCount, bagCapacity,
     bagIndexOfId, bagIndexOfUid, bagEntry, nextUid,
-    buyBagPage, pageOf, pageSlice,
+    buyBagPage, pageOf, pageSlice, normBagPages,
     playerStats, maturePlots, passiveIncome,
     serialize, deserialize,
     nextRandom, buildWave, makeEnemy,

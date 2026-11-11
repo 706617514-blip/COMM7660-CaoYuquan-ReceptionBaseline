@@ -1662,6 +1662,17 @@
         run.equipDrops.forEach((d) => {
           const def = C.equipDef(d.id);
           const label = def ? def.name : d.id;
+          if (d.bagFull && d.overwrote) {
+            // 满包时新件顶掉了最后一格。这里**必须说出被顶掉的是哪一件** ——
+            // 只说"已进背包"的话，玩家背包里凭空少一件却毫无提示，
+            // 会以为是自己看错了或者游戏吞了装备。
+            const gone = C.equipDef(d.overwrote.id);
+            const goneLabel = gone ? gone.name : d.overwrote.id;
+            global.EmberfieldUI.toast(
+              '背包已满 · 「' + label + '」顶替了「' + goneLabel + '」',
+              true);
+            return;
+          }
           global.EmberfieldUI.toast(
             d.duplicate
               ? ('拾得「' + label + '」（重复）· 已进背包')
