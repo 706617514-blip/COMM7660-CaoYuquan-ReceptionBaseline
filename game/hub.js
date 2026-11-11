@@ -187,7 +187,11 @@
             sub = slotName + ' · Lv.' + lv + '/' + C.equipMaxLevel(id) + ' · ' + def.desc;
           } else if (owned === 'owned') {
             kind = 'equip-wear';
-            const lv = (state.meta.inventoryLevels || {})[id] || 1;
+            // 等级存在背包条目上（v6 起），按 id 找回那一条读它的 level。
+            // 以前读的是 meta.inventoryLevels —— 那个字段在 v5→v6 迁移里
+            // 已被删除，于是背包里任何装备在兵器架上都永远显示 Lv.1。
+            const bi = L.bagIndexOfId(state, id);
+            const lv = bi >= 0 ? (state.meta.bag[bi].level || 1) : 1;
             cost = 0;
             enabled = true;
             sub = slotName + ' · Lv.' + lv + ' · ' + def.desc;

@@ -476,6 +476,22 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
   };
 
   /**
+   * 背包分页与扩容（设计 §4.7）。
+   *
+   * 5×7 = 35 格一页，起手 1 页、最多 6 页，所以容量是 35 → 210。
+   * pagePrices[N] 是「从第 N 页扩到第 N+1 页」的价格，
+   * 于是买页 2 收 pagePrices[1]。价位刻意做陡：扩容是长线投入，
+   * 不该和买装备抢同一笔钱的决策权重。
+   * 数值只写在这里 —— CI 会检查逻辑层不许内联写死数值。
+   */
+  const BAG = {
+    cols: 5, rows: 7,
+    cellsPerPage: 35,
+    maxPages: 6,
+    pagePrices: [0, 200, 500, 1000, 2000, 5000],
+  };
+
+  /**
    * 藤蔓 Boss。三个设计约束（来自 PM 要求）：
    *
    * 1. **移动极慢**，靠贴身普攻与技能施压，而不是追击。
@@ -561,7 +577,7 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
     ATTACK_DURATION, ATTACK_COOLDOWN, ATTACK_RANGE, ATTACK_DEPTH, ATTACK_BACK, COMBO,
     INVULN_AFTER_HIT, WAVE_BREAK, WAVE_HEAL,
     BASE_HP, BASE_DAMAGE, BASE_ATTACK_SPEED,
-    DIFFICULTIES, ENEMIES, UPGRADES, FARM, LOOT, SKILLS, SKILL_ORDER, SPAWN, BOSS,
+    DIFFICULTIES, ENEMIES, UPGRADES, FARM, BAG, LOOT, SKILLS, SKILL_ORDER, SPAWN, BOSS,
     POTIONS, POTION_ORDER,
     EQUIP_SLOTS, EQUIP_SLOT_NAMES, EQUIPMENT, EQUIP_FX, ALL_EQUIPMENT,
     SPECIAL_SKILLS, EQUIP_DROP, EQUIP_LEVEL,

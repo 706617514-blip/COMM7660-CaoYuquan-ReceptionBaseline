@@ -412,7 +412,8 @@
   // 只能记一个等级、一个位置。改成条目数组之后，重复件各占一格、各升各的级。
   // uid 是对外的稳定标识（DOM 用「第几格」做 key 会在排序后错位），
   // 它只活在条目里，不参与战斗中掉落的其它语义。
-  const BAG_GRID_PER_PAGE = 35;
+  // 每页格数从 config 取，逻辑层不再内联写死数值（CI 会检查这一点）。
+  const BAG_GRID_PER_PAGE = C.BAG.cellsPerPage;
 
   /** 造一个带新 uid 的条目。uid 计数器挂在 state.meta 上，随存档走。 */
   function bagEntry(state, id, level) {
@@ -437,6 +438,45 @@
   function bagAt(state, index) {
     const e = (state.meta.bag || [])[index];
     return e ? { id: e.id, level: e.level, uid: e.uid } : null;
+  }
+
+  /**
+   * 下标落在第几页（0 基）。
+   * 分页只是"视图"，背包仍然是一个连续数组 —— 排序由 UI 决定，
+   * 逻辑层只负责回答"这一格在第几页"。
+   */
+  function pageOf(state, index) {
+    return Math.floor(index / BAG_GRID_PER_PAGE);
+  }
+
+  /**
+   * 第 page 页的 35 格。缺的补 null（DOM 渲染需要固定格数，
+   * 否则最后一页会塌成一行，格子位置随件数跳动）。
+   */
+  function pageSlice(state, page) {
+    const out = [];
+    const start = page * BAG_GRID_PER_PAGE;
+    for (let i = 0; i < BAG_GRID_PER_PAGE; i++) out.push(bagAt(state, start + i));
+    return out;
+  }
+
+  /**
+   * 买一页容量（设计 §4.7 的扩容线）。
+   *
+   * 页数是 1..maxPages；买第 N+1 页收 pagePrices[N] —— 页价表的第一项
+   * 是 0（没有"第 0 页"可买），所以买第 2 页落在 pagePrices[1]。
+   * 已到顶时返回 ok:false 而不是静默截断：静默截断会让玩家以为
+   * 钱花了页也加了，实际上什么都没发生。
+   */
+  function buyBagPage(state) {
+    if (!state.meta.bagPages) state.meta.bagPages = 1;
+    const max = C.BAG.maxPages;
+    if (state.meta.bagPages >= max) return { ok: false, reason: '已解锁全部 ' + max + ' 页' };
+    const cost = C.BAG.pagePrices[state.meta.bagPages];
+    if (state.meta.coins < cost) return { ok: false, reason: '铜币不够' };
+    state.meta.coins -= cost;
+    state.meta.bagPages += 1;
+    return { ok: true, cost: cost, pages: state.meta.bagPages };
   }
 
   /** 放一件进背包，返回落位下标；容量内满了返回 -1（由调用方决定怎么办）。 */
@@ -494,6 +534,9 @@
     if (!def) return { ok: false, reason: '没有这件装备' };
     if (equipOwned(state, id)) return { ok: false, reason: '已拥有' };
     if (state.meta.coins < def.price) return { ok: false, reason: '铜币不够' };
+    // 容量判定必须在扣钱**之前**：满包时先收钱再发现放不进去，
+    // 就是一台可无限重复的铜币黑洞，而且玩家什么都拿不到。
+    if (bagCount(state) >= bagCapacity(state)) return { ok: false, reason: '背包已满' };
     state.meta.coins -= def.price;
     // 新买的按 1 级入格。等级直接记在条目上，穿戴 / 卸下都跟着条目走，
     // 不会再出现"换出去再换回来就悄悄掉级"。
@@ -542,6 +585,9 @@
     if (C.EQUIP_SLOTS.indexOf(slot) < 0) return { ok: false, reason: '没有这个部位' };
     const it = state.meta.equipment[slot];
     if (!it) return { ok: false, reason: '这个部位是空的' };
+    // 满包时拒绝，**不要先把部位清空**：清空之后再发现放不进去，
+    // 装备就凭空消失了 —— 谎报成功比直接报错更糟（§4.7「不丢装备」）。
+    if (bagCount(state) >= bagCapacity(state)) return { ok: false, reason: '背包已满' };
     state.meta.equipment[slot] = null;
     // 等级跟着条目走，不需要另一张表记账。
     bagAdd(state, it.id, it.level || 1);
@@ -641,8 +687,16 @@
     const idx = bagAdd(state, id, 1);
     if (idx === -1) {
       const last = bagCapacity(state) - 1;
+      // 覆盖前先把被顶掉的那件带出去。玩家有权知道"我刚丢的是哪一件"——
+      // 只报 bagFull 而说不出覆盖了谁，UI 就只能干巴巴地说"背包已满"，
+      // 而玩家手里已经白头掉一件装备了。被覆盖的**必须**是最后一格那件，
+      // 不是随机的某一格（掉落不该变成随机销毁）。
+      const victim = state.meta.bag[last];
       state.meta.bag[last] = bagEntry(state, id, 1);
-      return { id: id, duplicate: duplicate, bagFull: true };
+      return {
+        id: id, duplicate: duplicate, bagFull: true,
+        overwrote: victim ? { id: victim.id, uid: victim.uid, level: victim.level } : null,
+      };
     }
     return { id: id, duplicate: duplicate, bagFull: false };
   }
@@ -1791,7 +1845,12 @@
     buyPotion, usePotion, hurtPlayer, potionDamageMul,
     equipBonus, hasFx, equipOwned, buyEquipment, equipItem, unequipSlot,
     equipUpgradeCost, upgradeEquipment, rollEquipDrop, tryEquipDrop,
-    bagAdd, bagRemove, bagAt, bagCount, bagCapacity, bagIndexOfUid, bagEntry, nextUid,
+    // bagIndexOfId 一直在本文件里（equipOwned 等都要用它），
+    // 但此前没进 API —— hub.js 想按 id 找背包条目读等级时拿不到它。
+    // 函数"存在却不可达"和不存在一样会让调用方写出错的行为。
+    bagAdd, bagRemove, bagAt, bagCount, bagCapacity,
+    bagIndexOfId, bagIndexOfUid, bagEntry, nextUid,
+    buyBagPage, pageOf, pageSlice,
     playerStats, maturePlots, passiveIncome,
     serialize, deserialize,
     nextRandom, buildWave, makeEnemy,
