@@ -172,6 +172,11 @@ jobs:
         # 35 格分页、6 页上限、卖价公式、批量保留一件
         run: node tests/test_bag.js
 
+      - name: Synthesised audio voices
+        # 17 个音效的声部参数、25ms 节流、静音是压增益而不是 close ctx。
+        # 用 AudioContext 桩跑，不需要真声卡；真浏览器那层在 smoke 里。
+        run: node tests/test_audio.js
+
       - name: Page wiring under a DOM shim
         # 逻辑测试抓不到接线错误：id 拼错、事件没绑、面板按钮点了没反应。
         # 这一层会执行 index.html 里真实的 inline 脚本（Phaser 用最小桩）。
