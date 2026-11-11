@@ -216,6 +216,18 @@ Expected: FAIL —— `存档版本不匹配` 或 `meta.bagPages` 为 `undefined
 
 - [ ] **Step 4: 实现条目数组与迁移**
 
+迁移块里**同时补 `meta.settings`**（Task 12 的音量/静音要存这里，而 `createState` 今天没有该字段）：
+
+```js
+// createState 的 meta 里加：
+settings: { volume: 0.30, muted: false },
+// migrate 的 5 → 6 块里加：
+if (!s.meta.settings) s.meta.settings = { volume: 0.30, muted: false };
+```
+
+测试要断言 `L.createState(1).meta.settings.volume === 0.30`，
+以及老档迁移后 `settings` 存在（否则 Task 12 一读就 TypeError）。
+
 `STATE_VERSION = 6`。`createState` 里 `meta.bag = []`、`meta.bagPages = 1`，删 `inventory`/`inventoryLevels`。
 
 `migrate(s)` **追加一段**（在既有 `v4→v5` 块之后）：
@@ -1004,6 +1016,16 @@ git commit -m "feat(hub): 六点位上下错落（含判定与绘制同步），
   - `global.GameAudio = { play(name), setMasterVolume(v01), setMuted(bool), isMuted(), ensureStarted(), context }`
   - `AUDIO.volume` 默认 **0.30**
   - `context` **必须是自建 `AudioContext`**（**不是** `game.sound.context`，那是 `null`）
+- **也必须在 `logic.js` 里建 `meta.settings`**（见下方警告）
+
+> **会崩的缺口（独立核验发现）**：`createState` **今天没有 `meta.settings`**
+> —— 全仓 `grep -n settings game/logic.js` 零命中（已实测）。
+> 设计文档 §5.5 要求音量/静音持久化，而本任务与 Task 13 原本都没写"谁负责建这个字段"。
+> 直接写 `state.meta.settings.volume = v` 会 **TypeError**。
+> 补法（**放在 Task 2 的迁移块里一并做**，避免两个任务各改一次 `STATE_VERSION`）：
+> - `createState`：`meta.settings = { volume: 0.30, muted: false }`
+> - `migrate` 的 `s.version === 5 → 6` 块：`if (!s.meta.settings) s.meta.settings = { volume: 0.30, muted: false };`
+> - 读写一律走 `state.meta.settings || (state.meta.settings = {...})` 兜底，别裸取。
 
 - [ ] **Step 1: 写测试**
 
