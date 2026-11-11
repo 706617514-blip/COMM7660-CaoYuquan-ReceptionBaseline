@@ -1483,87 +1483,145 @@ git commit -m "feat: 药水统一为治疗/力量/护盾，兵器架加页签与
 
 ---
 
-## Task 10b: 背包面板紧凑化（V2「约占 40%」尺寸修正）
+## Task 10b: 背包面板收口（收到 470×500 + 独立复审的必修项）
 
 **Files:**
-- Modify: `game/index.html`（`#bag` 尺寸与网格列宽、格子贴图尺寸、槽位尺寸、字号）
-- Modify: `game/baghud.js`（`PANEL_W`/`PANEL_H` 兜底常量、tooltip 最小宽度）
-- Modify: `docs/superpowers/specs/2026-11-12-backpack-audio-settings-design.md`（已在 `aab65f9` 改好 §4.1，**不用再改**）
+- Modify: `game/index.html`（`#bag` 尺寸、`#bag-grid` 列宽与滚动、贴图/槽位尺寸、`#toast` 层级、`aria-modal`、`#bag-x` 标题）
+- Modify: `game/baghud.js`（`PANEL_W`/`PANEL_H` 兜底常量、`CELLS` 改读 `C.BAG`、`open()` 复位页签、`close()` 清拖拽态、批量态标出「会被保留」的那件、删掉无人调用的 `_clearSpriteCache`）
+- Modify: `tests/browser/smoke.js`（尺寸、夹边两角、页签过滤、toast 可见性、真实拖动、重复 open 幂等）
 
 **Interfaces:**
-- Consumes: Task 7/8 的 `BagHud`（不改 API）
-- Produces: `#bag` 实测 **470 × 500**（= 画布 `960×600` 的 **40.8%**），5×7 网格不变
+- Consumes: Task 7/8/9 的 `BagHud`，`open / close / refresh / isOpen / clamp` 五个方法签名**一个都不改**
+- Produces: `#bag` 实测 **470 × 500**（= 画布 `960×600` 的 **40.8%**）；`#toast` 画在背包之上；窗口比面板小时不再越界
 
-> **为什么要单独做这一刀**：设计初稿写「620 × 540，占 960×600 的 ~40%」，
-> **算错了**：`620×540 / 576000 = 58%`，纵向吃掉画布 90%。用户原话是「不要占满整个屏幕，
-> 差不多 40%」，验收 **V2** 也写「面板约占 40%」——**620×540 不满足 V2**。
-> Task 8 的截图里，面板确实把基地挡掉了大半（`/tmp/bag_shot_normal.png`）。
-> 尺寸的唯一来源是 CSS：`baghud.js:846/870` 的夹边用 `root.offsetWidth/Height` 实测，
-> `PANEL_W/PANEL_H` 只是 `display:none` 时的兜底，所以**改 CSS 就能整体缩放**，
-> 但必须同步兜底常量，否则面板隐藏时算出的夹边范围是错的。
+> **为什么要单独做这一刀**：设计初稿写「620 × 540，占 960×600 的 ~40%」，**算错了**——
+> `620×540 / 576000 = 58%`，纵向吃掉画布 90%。用户原话是「不要占满整个屏幕，差不多 40%」，
+> 验收 **V2** 也写「面板约占 40%」，所以 **620×540 不满足 V2**（Task 8 截图
+> `/tmp/bag_shot_normal.png` 里面板确实把基地挡掉大半）。尺寸的唯一来源是 CSS：
+> `baghud.js` 的夹边读 `root.offsetWidth/Height`，`PANEL_W/PANEL_H` 只是 `display:none` 时的兜底，
+> 所以**改 CSS 就能整体缩放**，但兜底常量必须同步，否则面板隐藏时算出的夹边范围是错的。
+
+### 尺寸表
 
 | 项 | 现在 | 改成 |
 |---|---|---|
-| `#bag` width / height | `620px` / `540px` | **`470px`** / **`500px`** |
+| `#bag` width / height | `620px` / `540px` | **`470px` / `500px`**，并写成 `min(470px, calc(100vw - 24px))` / `min(500px, calc(100vh - 24px))` |
 | `#bag-grid` `grid-template-columns` | `repeat(5,56px)` | **`repeat(5,48px)`** |
-| `#bag .cell img` width / max-height | `40px` / `60px` | **`32px`** / **`46px`** |
+| `#bag-grid` overflow | `hidden`（靠 `1fr` 挤） | **`auto`**（小窗口时网格自己滚，不再被裁） |
+| `#bag .cell img` width / max-height | `40px` / `60px` | **`32px` / `46px`** |
 | `#bag-wear .slot` | `38×30` | **`34×27`** |
 | `#bag-wear .slot img` | `22×32` | **`20×28`** |
 | `baghud.js` `PANEL_W` / `PANEL_H` | `620` / `540` | **`470`** / **`500`** |
+| `baghud.js` `CELLS` | 字面量 `35` | **`C.BAG.cellsPerPage`**（`game/config.js` 声明「数值只写这里」） |
 
-- [ ] **Step 1: 先加尺寸断言（会红）**
+### 独立复审查出的必修项（已在本分支上逐条复现，不是推测）
 
-追加到 `tests/browser/smoke.js` 的页面内片段（`return out;` 之前）：
+| # | 缺陷 | 证据 | 修法 |
+|---|---|---|---|
+| F1 | **所有 toast 被背包面板盖住**，右键出售看不到任何反馈 | `game/index.html:181` `#bag{…z-index:40}` 对上 `:163` `#toast{position:absolute;…}`**没有 z-index** → 同一 stacking context 内 40 > auto。两者同在 `#frame`(326) 内，`#toast` 在 377、`#bag` 在 382 | `#toast{…z-index:70}`（高于 `#bag` 40 与 `#bag-tip` 60）。冒烟须断言 `toastZ > bagZ` **且** `document.elementFromPoint(toast中心)` 命中 toast 本身 |
+| F2 | **批量勾选跨页签/翻页保留**，确认后会卖掉当前看不见的件 | `baghud.js:247-251` 切页签只重置 `tab`/`page`，不清 `batch.sel`；`effectiveSelection()`/`batchTotals()` 遍历整个背包 | 切页签与翻页时 `batch.sel` 清空并重绘确认条（勾选态是"看得见的承诺"，切走后就不该还在） |
+| F3 | **面板比视口大时只夹左上角**，右/下越界且 `position:fixed` 滚不到 | `baghud.js:853-856` `maxL = Math.max(0, innerWidth - w)`，`w > innerWidth` 时 `maxL=0`，面板只能贴 0 | 尺寸表里的 `min(…, 100vw - 24px)` + `#bag-grid{overflow:auto}`。冒烟在 520×420 视口下断言 `right <= innerWidth && bottom <= innerHeight` |
+| F4 | `open()` 每次无条件回调 `host.onOpen()` | Task 9 已在 `baghud.js:935-967` 改成**边沿触发**（`wasOpen` 判断），实测 `{panelOpenAfterDoubleOpen:true, panelOpenAfterOneClose:true}` 已修好 | **不改代码**，但要补一条回归断言：连开两次 + 关一次后 `panelOpen === false` 且按 D 能移动（原缺陷会让角色永久不能动） |
+
+### 顺带修掉的小账（都在同两个文件里，一次做完比留 6 个尾巴好）
+
+- `close()` 不清 `grabbing`、不释放 pointer capture：拖到一半关闭，指针形状永久停在抓取态。→ `ui.bar.classList.remove('grabbing')` + 对 `drag.id` 做 `releasePointerCapture`（沿用文件里已有的 try/catch 写法）。
+- `open()` 复位了 `page`/`batch` 却**不复位 `tab`**：第二次打开还停在「武器」页签。→ `tab = 'all'`（与"每次打开回默认位置"一致：打开就是一次全新开始）。
+- `#bag-x` 的 `title="关闭（Esc）"` 承诺了不存在的键（Esc 属 Task 13，背包内目前按 Esc 无反应）。→ 改 **`title="关闭（Tab）"`**。
+- `_clearSpriteCache` 全仓零调用者（`grep -rn _clearSpriteCache game/ tests/` 只有定义那一行）。→ **删掉**。
+- `role="dialog"` 缺 `aria-modal="true"`。→ 补上。
+- 分页补 null 是 `baghud.js:468-470` 手写的，与 `game/logic.js` 的 `pageSlice` **语义不同**（UI 按筛选后列表分页，逻辑按整背包）。→ **不要复用**，但加一行注释说明为什么不复用，免得后来者"顺手统一"。
+- 批量态里"每 id 留一件"的**那件在格子上没标出来**：同 id 两件都标 `pickable`，勾两件只卖一件，被保留的恰好也在勾选里。→ 给会被保留的那件加 `keep` 类 + `title += '（同 id 里保留这件）'`。保留哪件由 **`L.duplicateUids` 的补集**决定（逻辑层保留等级最高那件），**不许在 UI 重算等级比较**。
+
+- [ ] **Step 1: 先加断言（会红）**
+
+追加到 `tests/browser/smoke.js` 的页面内片段（`return out;` 之前；**注释里不许出现反引号**）：
 
 ```js
-  // ---- 面板尺寸（V2：约占画布 40%）----
-  // 画布是 960×600，但 #bag 是 position:fixed（按 viewport 夹边），
-  // 所以面积比要用画布算，不能用 innerWidth/innerHeight —— 窗口大小是玩家的。
-  const bagBox = document.getElementById('bag').getBoundingClientRect();
-  out.ratioW = bagBox.width;
-  out.ratioH = bagBox.height;
-  out.areaRatio = (bagBox.width * bagBox.height) / (960 * 600);
+  // ---- 背包面板尺寸与层级（V2 约 40%，toast 必须画在面板之上）----
+  (function () {
+    var el = document.getElementById('bag');
+    var box = el.getBoundingClientRect();
+    out.ratioW = box.width; out.ratioH = box.height;
+    out.areaRatio = (box.width * box.height) / (960 * 600);
+    var cells = document.querySelectorAll('#bag .cell');
+    var last = cells[cells.length - 1];
+    out.lastRowInside = last ? (last.getBoundingClientRect().bottom <= box.bottom + 0.5) : null;
+    var toast = document.getElementById('toast');
+    toast.textContent = '探针'; toast.classList.add('on');
+    out.toastZ = parseInt(getComputedStyle(toast).zIndex, 10) || 0;
+    out.bagZ = parseInt(getComputedStyle(el).zIndex, 10) || 0;
+    var tb = toast.getBoundingClientRect();
+    var hit = document.elementFromPoint((tb.left + tb.right) / 2, (tb.top + tb.bottom) / 2);
+    out.toastHit = hit === toast || (hit && toast.contains(hit));
+    toast.classList.remove('on'); toast.textContent = '';
+    // 夹边必须两角都夹：只测左上角时 Math.min(..., maxL) 写坏也照样通过
+    el.style.left = '9999px'; el.style.top = '9999px';
+    window.BagHud.clamp(el);
+    var se = el.getBoundingClientRect();
+    out.clampSE = { right: se.right, bottom: se.bottom, vw: innerWidth, vh: innerHeight,
+                    inside: se.right <= innerWidth + 0.5 && se.bottom <= innerHeight + 0.5 };
+    // 逐页签：可见填充格数必须与逻辑层同口径
+    out.tabCounts = {};
+    var tabs = document.querySelectorAll('#bag [data-tab]');
+    for (var i = 0; i < tabs.length; i++) {
+      tabs[i].click();
+      out.tabCounts[tabs[i].getAttribute('data-tab')] =
+        document.querySelectorAll('#bag .cell.filled').length;
+    }
+    document.querySelector('#bag [data-tab="all"]').click();
+    // 重复 open 必须幂等（原缺陷：连开两次 + 关一次 = 场景永久早退、角色不能动）
+    window.BagHud.open(window.EmberfieldApp.__state);
+    window.BagHud.open(window.EmberfieldApp.__state);
+    window.BagHud.close();
+  })();
 ```
 
-Node 侧：
+Node 侧（续在既有断言之后）：
 
 ```js
-console.log('\n--- 背包面板尺寸（V2）---');
-ok(r.ratioW >= 440 && r.ratioW <= 500, '面板宽度在 440–500 之间', r.ratioW);
-ok(r.ratioH >= 460 && r.ratioH <= 540, '面板高度在 460–540 之间', r.ratioH);
+console.log('\n--- 背包面板收口 ---');
+ok(r.ratioW >= 440 && r.ratioW <= 500, '面板宽度 440–500', r.ratioW);
+ok(r.ratioH >= 460 && r.ratioH <= 540, '面板高度 460–540', r.ratioH);
 ok(r.areaRatio >= 0.36 && r.areaRatio <= 0.46,
-   '面板面积占画布 36%–46%（目标 41%）', (r.areaRatio * 100).toFixed(1) + '%');
+   '面积占画布 36%–46%（目标 41%）', (r.areaRatio * 100).toFixed(1) + '%');
+ok(r.lastRowInside === true, '第 7 行整行在面板内（没被 overflow 裁掉）', r.lastRowInside);
+ok(r.toastZ > r.bagZ, 'toast 层级高于背包面板', 'toast ' + r.toastZ + ' > bag ' + r.bagZ);
+ok(r.toastHit === true, 'toast 真的画在最上层（命中测试）', r.toastHit);
+ok(r.clampSE && r.clampSE.inside, '右下角也被夹回视口内', r.clampSE);
+ok(r.tabCounts && r.tabCounts.all > 0, '页签过滤有内容', r.tabCounts && r.tabCounts.all);
+ok(r.panelOpenAfterDoubleOpen === false, '连开两次再关一次后未卡在打开态', r.panelOpenAfterDoubleOpen);
 ```
 
-> 用区间不用等号：以后微调 10px 不该打红一整条断言，但**偏到 58% 必须红**。
+> 最后一条要在**关掉背包之后**再取 `hubP.panelOpen`，并紧接一条"按 D 位移 > 5"的反证——
+> 否则「位移为 0」既可能是正常暂停，也可能是角色被永久冻住，两种解释分不开。
 
 - [ ] **Step 2: 跑测试确认失败**
 
 Run: `"$N" tests/browser/smoke.js`
-Expected: 三条新断言 FAIL（`620×540` → 58.1%），既有 124 条仍 PASS。
+Expected: 尺寸三条（`620×540` → 58.1%）与 `toastZ > bagZ`、`tabCounts` 相关的断言 FAIL；既有 131 条仍 PASS。
 
-- [ ] **Step 3: 改 CSS 与兜底常量**（按上表）
+- [ ] **Step 3: 按尺寸表与 F1/F2/F3 改代码**
 
-- [ ] **Step 4: 跑测试确认通过 + 截图复核**
+- [ ] **Step 4: 跑测试 + 小窗口复核**
 
 Run: `"$N" tests/browser/smoke.js`
 Expected: 全绿。
-再截图确认：**7 行网格一格不少、第 7 行没有被 `overflow:hidden` 裁掉**、
-格子里的贴图仍看得出区分、左侧 10 个装备槽没被挤成一条线、四项数值没换行。
+再把 Electron 视口设成 **520×420** 打开背包截图，确认：面板完整在视口内、网格可滚动、7 行都在
+（或能滚到第 7 行）、左侧 10 个装备槽没被挤成一条线、四项数值没换行。截图存 `/tmp/t10b-bag.png`。
 
-> 这一段是本次最容易被"断言绿了但画面坏了"骗过去的地方：
-> 网格用 `1fr` 分高度，面板一矮，第 7 行会被裁掉而**格子数仍是 35**（DOM 还在，只是看不见）。
-> 所以必须看截图，或者断言"第 7 行格子的 `getBoundingClientRect().bottom` 小于面板的 bottom"。
+> 这一段是本次最容易被「断言绿了但画面坏了」骗过去的地方：网格高度若还是 `1fr`，
+> 面板一矮第 7 行会被裁掉而**格子数仍是 35**（DOM 还在，只是看不见）。
+> 所以既要有 `lastRowInside`，也要看截图。
 
 - [ ] **Step 5: 提交**
 
 ```bash
 git add game/index.html game/baghud.js tests/browser/smoke.js
-git commit -m "feat(bag): 面板收到 470x500（画布 40.8%），修正 V2 尺寸不达标"
+git commit -m "fix(bag): 面板收到 470x500（画布 40.8%）+ toast 层级 / 勾选跨页 / 小窗口越界"
 ```
 
 ---
-
 
 ## Task 11: 基地错落布局 + 键帽提示
 
