@@ -361,6 +361,75 @@ const SCRIPT = `
     }
   }
 
+  // ---- 3e. 走到田地按 J：必须真的进得去农场，不能卡在黑屏 ----
+  /*
+   * 这条来自真实反馈："按 J 进入田地渐黑之后就卡死了，什么都做不了"。
+   *
+   * 根因是 FarmScene.update() 里有一行 this.keyboardApi.keys，而
+   * keyboardApi 这个属性**从来没有被赋值过** —— 它是从 boss 那轮改动里
+   * 带进来的死代码，取到的值 k 也根本没用（下一行才是真正干活的
+   * this.input2.justPressed）。于是 Farm 的第一帧 update 就抛
+   * TypeError，场景停在渐黑之后的黑屏上。
+   *
+   * 为什么以前的测试全绿却漏掉它：DOM 桩测试不跑 Phaser 场景，
+   * 而浏览器测试从来没按过 J 走到田地。所以这条断言必须在这里，
+   * 并且要真的按 J、真的等黑屏结束、再确认农场活着。
+   */
+  {
+    const st = window.EmberfieldApp.__state;
+    window.EmberfieldUI.closePanel();
+    const hubS = globalThis.__game.scene.getScene('Hub');
+    hubS.panelOpen = false;
+    // 站到田地（field 区）上
+    st.hub.x = 100; st.hub.z = 105;
+    await wait(250);
+    out.fieldZoneId = (window.GameHub.zoneAt(st) || {}).id || null;
+
+    // 在页面内部自己收集异常：driver 那边的 errors 数组这里看不到，
+    // 而且驱动层的 console-message 会漏掉场景里抛出但没冒到 console 的错。
+    if (!window.__pageErrs) {
+      window.__pageErrs = [];
+      window.addEventListener('error', function (ev) {
+        window.__pageErrs.push(String(ev.message || ev.error));
+      });
+    }
+    const errsBefore = window.__pageErrs.length;
+    const sc = globalThis.__game.scene;
+    if (sc.isActive('Farm')) sc.stop('Farm');
+    if (sc.isActive('Run')) sc.stop('Run');
+    sc.start('Hub');
+    await wait(300);
+    const hub2 = globalThis.__game.scene.getScene('Hub');
+    hub2.panelOpen = false;
+    hub2.state.hub.x = 100; hub2.state.hub.z = 105;
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyJ', bubbles: true }));
+    await wait(60);
+    window.dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyJ', bubbles: true }));
+
+    // 渐黑是 340ms，启动后还要建场景；等足 1.2 秒
+    await wait(1200);
+
+    out.farmActive = sc.isActive('Farm');
+    const farm = sc.getScene('Farm');
+    out.farmReady = !!(farm && farm.plotGeo && farm.children && farm.children.list.length > 20);
+    // 场景必须是"活"的：切换/跳回基地仍然有响应
+    out.farmBusyFalse = !!(farm && farm.busy === false);
+    out.farmErrorsAfter = window.__pageErrs.length - errsBefore;
+    out.farmErrorSample = window.__pageErrs.slice(errsBefore, errsBefore + 2);
+
+    // 能按 ESC 回基地（证明场景没卡死）
+    if (out.farmActive) {
+      window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape', bubbles: true }));
+      await wait(50);
+      window.dispatchEvent(new KeyboardEvent('keyup', { code: 'Escape', bubbles: true }));
+      await wait(900);
+      out.backToHub = sc.isActive('Hub');
+      // 回基地后把状态复位，免得影响后续断言
+      await wait(200);
+    }
+  }
+
   // ---- 4. 重开（restart）按钮存在 ----
   out.hasAgainButton = !!document.getElementById('btn-again') ||
                        document.body.innerHTML.indexOf('再来一局') >= 0;
@@ -484,6 +553,18 @@ const SCRIPT = `
      '面板开着换装也当场换贴图（不能等关面板才变）');
   ok(r.headVisibleWhilePanelOpen === true, '面板开着换上的头盔当场可见',
      String(r.headVisibleWhilePanelOpen));
+
+  console.log('\n--- 3e. 按 J 进田地：不能卡在黑屏 ---');
+  eq(r.fieldZoneId, 'field', '站在田地区域上（不然按 J 进不去）');
+  ok(r.farmActive === true, '按 J 后农场场景真的启动了（不是停黑屏）',
+     String(r.farmActive));
+  ok(r.farmReady === true, '农场建好了（田块几何 + 场景对象齐全）',
+     String(r.farmReady));
+  ok(r.farmBusyFalse === true, '农场没有卡在 busy 状态', String(r.farmBusyFalse));
+  eq(r.farmErrorsAfter, 0, '进农场过程中没有抛异常（keyboardApi 那个 TypeError）',
+     JSON.stringify(r.farmErrorSample || []));
+  ok(r.backToHub === true, '农场里按 ESC 能回到基地（证明没卡死）',
+     String(r.backToHub));
 
   console.log('\n--- 4. 重开（restart）---');
   ok(r.hasAgainButton === true, '存在「再来一局」（restart）入口');

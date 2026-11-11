@@ -2560,7 +2560,14 @@
     update(time, delta) {
       updateGrass(this, Math.min((delta || 16) / 1000, 0.05));
       if (this.busy) return;
-      const k = this.keyboardApi.keys;
+      /*
+       * 这里原本有一行 `const k = this.keyboardApi.keys;`。
+       * keyboardApi 这个属性**从来没有被赋值过**，所以第一帧 update 就抛
+       * TypeError，整个场景停在渐黑之后的黑屏上：按 J 进田地，画面黑下来
+       * 之后什么都没有，ESC 也回不去。取到的 k 本身从没被用过 ——
+       * 真正判断按键的是下一行的 this.input2，那行纯属死代码。
+       * 删掉即可；键盘仍然走 createInput 自己维护的那套。
+       */
       if (this.input2.justPressed('esc')) this.leave();
     }
   }
