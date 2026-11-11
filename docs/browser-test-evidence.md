@@ -25,7 +25,7 @@ layer would be overstating what it tests.
 
 Playwright's browser download is not available in this environment, and pulling a ~150 MB
 browser into CI to test a static page whose rules are already covered by the Node suites
-(1,348 assertions as of 2026-11-12) is a poor trade. The honest position is to record the browser evidence here, run it locally before a
+(1,362 assertions as of 2026-11-12) is a poor trade. The honest position is to record the browser evidence here, run it locally before a
 release, and say plainly that CI does not cover it — rather than adding a `continue-on-error`
 green tick that proves nothing.
 
@@ -51,7 +51,7 @@ green tick that proves nothing.
 
 15 assertions on that day, all passing, against `http://127.0.0.1:PORT/game/` served from the
 working tree. That block records the shape of the first version of the suite, not the current
-count — the same file now reports 308 assertions (see the 2026-11-12 section below).
+count — the same file now reports 322 assertions (see the 2026-11-12 section below).
 
 ## A defect this layer found immediately
 
@@ -93,10 +93,12 @@ checked with `lsof` before and after).
 | `tests/test_game_logic.js` | 0 | 521 | |
 | `tests/test_game_meta.js` | 0 | 164 | |
 | `tests/test_game_page.js` | 0 | 80 | |
-| `tests/browser/smoke.js` | 0 | 308 | Electron, 42.7 s, real canvas |
+| `tests/browser/smoke.js` | 0 | 322 | Electron, ~43 s, real canvas |
 | `tests/test_product_app.js` | 0 | 70 | Phase 1 app; `analysis/build_report2.py` re-counts it live |
 
-103 + 172 + 521 + 164 + 80 + 308 = **1,348** assertions across the six game suites, all exit 0.
+103 + 172 + 521 + 164 + 80 + 322 = **1,362** assertions across the six game suites, all exit 0.
+
+(1,348 before Task 16 added 14 geometry assertions — see the defect note below.)
 
 The smoke run's own readout, verbatim:
 
@@ -167,8 +169,25 @@ painted where a user would click. In the screenshot the sum text itself is cut m
 ("共 328 铜" then the panel edge).
 
 `tests/browser/smoke.js` clicks these buttons with `.click()`, which ignores geometry, so the
-suite is green while the feature is unusable by hand. This was reported, not fixed: the batch
-sells rules, the panel layout contract and the acceptance table belong to the PM.
+suite was green while the feature was unusable by hand. That is the general lesson: `.click()`
+proves the handler is wired, not that a player can reach the control.
+
+**Fixed in `bad1940`.** The bar was moved out of the right column and made a direct child of
+`#bag`, spanning the full panel width (454 px of usable space). Panel height and grid height are
+unchanged — the page bar and the batch bar are mutually exclusive and shared one 24 px slot, so
+the right column loses exactly what the panel level gains. Re-measured after the fix:
+
+```
+selected 2: bar client 470 / scroll 470 | okRight 973 | cancelRight 1016 | bagRight 1024
+            okHit "b ok confirm-ok" | cancelHit "b" | gridH 394
+```
+
+Two earlier drafts of the acceptance test were useless and were replaced: asserting that the
+sum's `textContent` contains "铜币" passes even when the element is clipped (`textContent` is
+unaffected by `overflow`), and `sum.scrollWidth <= clientWidth` passes too, because the sum box
+itself was never the thing being cut. The assertion that actually fails on the broken build is
+"the sum's right edge is inside the bar's right edge", plus `elementFromPoint` on both buttons.
+14 geometry assertions were added; the suite went 308 → 322.
 
 Not a defect, but worth recording: standing at the left end of the field makes the J keycap
 cover the last character of the "田地" capsule. Both are legible in sequence, and the keycap is
