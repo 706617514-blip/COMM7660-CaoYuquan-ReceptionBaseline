@@ -548,8 +548,8 @@
   /**
    * 掉落判定（§4.3）。只掉基础装备，5% 概率。
    *
-   * 重复品折算 30% 原价 —— 这是经济闭环的关键：
-   * 否则玩家掉满 21 件后掉落完全没价值，金币出口又断掉。
+   * 重复品也一律进背包：产品决定是"每件掉落都进包，卖不卖玩家自己定"，
+   * 所以这里不再有折算，只标记 duplicate 供 UI 提示用。
    */
   function rollEquipDrop(state) {
     const pool = Object.keys(C.ALL_EQUIPMENT).filter(function (id) {
@@ -557,14 +557,9 @@
     });
     if (pool.length === 0) return null;
     const id = pool[Math.floor(nextRandom(state) * pool.length)];
-
-    if (equipOwned(state, id)) {
-      const refund = Math.round(C.equipDef(id).price * C.EQUIP_DROP.refundRatio);
-      state.meta.coins += refund;
-      return { id: id, duplicate: true, refund: refund };
-    }
+    const duplicate = !!equipOwned(state, id);
     state.meta.inventory.push(id);
-    return { id: id, duplicate: false, refund: 0 };
+    return { id: id, duplicate: duplicate };
   }
 
   /** 敌人死亡时调用：按概率决定是否掉装备。返回掉落结果或 null。 */
@@ -1280,13 +1275,7 @@
       const drop = tryEquipDrop(state);
       if (drop) {
         run.equipDrops = run.equipDrops || [];
-        run.equipDrops.push({ id: drop.id, duplicate: drop.duplicate, refund: drop.refund });
-        if (drop.duplicate) {
-          // 重复品当场折算成铜币，直接进本局战利品
-          run.loot.coins += drop.refund;
-        } else {
-          state.meta.inventory.push(drop.id);
-        }
+        run.equipDrops.push({ id: drop.id, duplicate: drop.duplicate });
       }
     }
   }

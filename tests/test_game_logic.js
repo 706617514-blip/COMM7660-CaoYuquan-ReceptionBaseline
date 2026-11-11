@@ -1357,30 +1357,42 @@ section('26. 装备（掉落 5% / 重复折算 30%）');
   }
   ok(allBase, '掉落只出基础装备（特效装备只能买）', String(seen));
 
-  // 重复品折算 30%
-  const s3 = L.createState(999);
-  s3.meta.equipment = { head: null, torso: null, back: null, weapon: null, feet: null };
-  s3.meta.inventory = ['ironHelm'];          // 已拥有
-  s3.meta.coins = 0;
-  const dup = L.rollEquipDrop(s3);
-  // 强制掉到已拥有的那件：直接调折算路径更容易断言
-  const dup2 = (function () {
-    let out = null;
-    const probe = L.createState(1001);
-    probe.meta.equipment = { head: null, torso: null, back: null, weapon: null, feet: null };
-    probe.meta.inventory = Object.keys(C.ALL_EQUIPMENT).filter(i => C.ALL_EQUIPMENT[i].kind === 'base');
-    probe.meta.coins = 0;
-    out = L.rollEquipDrop(probe);
-    return { out: out, coins: probe.meta.coins, inv: probe.meta.inventory.length };
-  })();
-  ok(dup2.out && dup2.out.duplicate === true, '已拥有的装备会判定为重复',
-    JSON.stringify(dup2.out));
-  ok(dup2.coins === Math.round(C.equipDef(dup2.out.id).price * 0.30),
-    '重复品折算 30% 原价', `${dup2.coins} vs ${Math.round(C.equipDef(dup2.out.id).price * 0.30)}`);
-  ok(dup2.inv === 21, '重复品不会进背包（不会撑爆背包）', String(dup2.inv));
+  // 重复品不再折算，而是进背包
+  const dupState = L.createState(7);
+  let dupDrop = null;
+  for (let i = 0; i < 5000 && !dupDrop; i++) {
+    const d = L.rollEquipDrop(dupState);
+    if (d && d.duplicate) dupDrop = d;
+  }
+  ok(dupDrop && dupDrop.refund === undefined, '重复掉落不再带 refund 字段');
+  ok(C.EQUIP_DROP.refundRatio === undefined, '折算比例已从配置里删除');
+  // 重复品仍然进库存，**不会**因为重复就被吞掉或折算。
+  //
+  // 注意两处顺序/命名陷阱（都踩过）：
+  //  1. 上面那个 5000 次的 warm-up 循环**每一次都在 push**，所以它结束时
+  //     inventory 已经被撑到 11 件。`invBefore` 必须在**重新播种之后**取，
+  //     否则拿到的是 11，`invBefore + 1` 就是 12，断言必挂。
+  //  2. 是 `meta.inventory.lastIndexOf`，**不是** `meta.lastIndexOf` ——
+  //     `meta` 是普通对象，写成后者会 `TypeError`，整个套件在汇总前就崩掉。
+  const seeded = Object.keys(C.ALL_EQUIPMENT)
+    .filter(function (i) { return C.ALL_EQUIPMENT[i].kind === 'base'; });   // 全部已拥有
+  dupState.meta.inventory = seeded.slice();
+  const invBefore = dupState.meta.inventory.length;        // === 21，此刻才取
+  const dupProbe = L.rollEquipDrop(dupState);
+  ok(dupProbe && dupProbe.duplicate === true, '全拥有时掉落判定为重复');
+  // 重复品"没被吞掉"的唯一含义就是库存**增长**：
+  // 全 21 件已拥有 → 再掉一件 → 22。
+  // 原稿写 === 21 是退款时代的残留（那时重复分支不 push，21 才成立）。
+  ok(dupState.meta.inventory.length === invBefore + 1, '重复品进了库存（没被吞掉）');
+  ok(dupState.meta.inventory.length === 22, '正好多一件（21 件已拥有 + 1 件重复掉落）');
+  ok(dupState.meta.inventory.lastIndexOf(dupProbe.id) === dupState.meta.inventory.length - 1,
+     '新增的那一件就是刚落下的 id（不是别处凭空多出来的）');
+  ok(dupState.meta.coins === 0, '重复品不再产生任何铜币');
 
-  // 折算比例来自配置，不是写死的魔法数
-  ok(C.EQUIP_DROP.refundRatio === 0.30, '折算比例在配置里，值 0.30');
+  // 注：`meta.inventory` 在 Task 2 会整体迁移成 `meta.bag` 条目数组。
+  // 本任务断言的是"refund 已消失、重复品不消失"，**不依赖 Task 2 的模型**；
+  // Task 2 完成后这三条会跟着迁移（Task 2 的测试负责覆盖 bag 版本）。
+
   ok(C.EQUIP_DROP.chance === 0.05, '掉落率在配置里，值 0.05');
 }
 

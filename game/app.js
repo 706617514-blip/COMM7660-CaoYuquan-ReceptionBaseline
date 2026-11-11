@@ -1655,8 +1655,8 @@
        *
        * 掉落率只有 5%，一局往往一件都不掉，掉了也一闪而过很难注意到。
        * logic 会把每件掉落追加进 run.equipDrops，这里逐帧取走并弹提示
-       * （取走即清空，所以不会每帧重复弹同一条）。重复件已经折算成铜币，
-       * 提示里要说清楚——否则玩家会以为"掉了但没进背包"。
+       * （取走即清空，所以不会每帧重复弹同一条）。重复件也已经进背包了，
+       * 只是提示里标注一下——否则玩家分不清是新件还是重复件。
        */
       if (run.equipDrops && run.equipDrops.length) {
         run.equipDrops.forEach((d) => {
@@ -1664,7 +1664,7 @@
           const label = def ? def.name : d.id;
           global.EmberfieldUI.toast(
             d.duplicate
-              ? ('掉落重复件「' + label + '」· 折算 ' + d.refund + ' 铜币')
+              ? ('拾得「' + label + '」（重复）· 已进背包')
               : ('掉落装备「' + label + '」· 已进背包'),
             true);
         });
