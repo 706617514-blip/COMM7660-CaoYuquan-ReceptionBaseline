@@ -621,13 +621,77 @@
 
   // ================================================================ 背景
   // ================================================================ 背景
+  /**
+   * 场景主题表。配色从硬编码的 isHub 三元表达式改成数据，
+   * 于是加一种地图风格就是加一条记录，不用改绘制逻辑。
+   *
+   * Boss 三档各有自己的地貌：普通是荒野、困难是密林、地狱是熔岩。
+   * 玩家一进场就该看出自己在打哪一档。
+   */
+  const THEMES = {
+    hub: {
+      skyTop: [16, 24, 33], skyBot: [58, 74, 82],
+      ridge: [0x1b2b32, 0x22343a, 0x2a3d3c],
+      groundA: 0x2b3a2c, groundB: 0x33452f,
+      road: 0x4a4030, roadAlpha: 0.38,
+      treeTint: [0x2a3a30, 0x3d5142],
+      fence: true, trees: true, grass: true,
+    },
+    run: {
+      skyTop: [26, 16, 20], skyBot: [92, 52, 40],
+      ridge: [0x2a1e22, 0x33241f, 0x3d2b22],
+      groundA: 0x2a2320, groundB: 0x352a24,
+      road: 0x4a3a2c, roadAlpha: 0.38,
+      treeTint: [0x2a3a30, 0x3d5142],
+      fence: true, trees: true, grass: true,
+    },
+    farm: {
+      skyTop: [26, 16, 20], skyBot: [92, 52, 40],
+      ridge: [0x2a1e22, 0x33241f, 0x3d2b22],
+      groundA: 0x2a2320, groundB: 0x352a24,
+      road: 0, roadAlpha: 0,
+      treeTint: [0x2a3a30, 0x3d5142],
+      fence: false, trees: false, grass: false, soil: true,
+    },
+    // ---- Boss 地图：三档三风格 ----
+    bossNormal: {
+      // 普通：干裂荒野。灰褐枯木的地盘，天色昏暗。
+      skyTop: [22, 22, 26], skyBot: [78, 70, 58],
+      ridge: [0x2e2a24, 0x3a352c, 0x474034],
+      groundA: 0x2e2a22, groundB: 0x3a3428,
+      road: 0x4a4030, roadAlpha: 0.30,
+      treeTint: [0x3a3428, 0x4a4234],
+      fence: true, trees: true, grass: true, deadTrees: true,
+    },
+    bossHard: {
+      // 困难：茂密密林。翠绿藤蔓的地盘，绿意过盛。
+      skyTop: [14, 26, 20], skyBot: [58, 92, 62],
+      ridge: [0x1c2e20, 0x24402a, 0x2e5236],
+      groundA: 0x24301f, groundB: 0x2e4026,
+      road: 0x3a4a2c, roadAlpha: 0.34,
+      treeTint: [0x2e5236, 0x3d6b44],
+      fence: true, trees: true, grass: true, lushTrees: true,
+    },
+    bossHell: {
+      // 地狱：熔岩地貌 + 火山背景。暗红荆棘的地盘。
+      skyTop: [26, 10, 10], skyBot: [120, 40, 20],
+      ridge: [0x2e1410, 0x3e1a12, 0x4e2216],
+      groundA: 0x241412, groundB: 0x301a14,
+      road: 0x5a2a1a, roadAlpha: 0.42,
+      treeTint: [0x2a1210, 0x3a1a14],
+      fence: false, trees: false, grass: false,
+      volcano: true, lava: true,
+    },
+  };
+
   function paintBackdrop(scene, mode) {
+    const th = THEMES[mode] || THEMES.run;
     const isHub = mode === 'hub';
     const g = scene.add.graphics().setDepth(-1000);
 
     // ---- 天空：四段渐变，比两段有明显更深的纵深 ----
-    const skyTop = isHub ? [16, 24, 33] : [26, 16, 20];
-    const skyBot = isHub ? [58, 74, 82] : [92, 52, 40];
+    const skyTop = th.skyTop;
+    const skyBot = th.skyBot;
     for (let i = 0; i < 64; i++) {
       const t = i / 63;
       const r = Math.round(skyTop[0] + (skyBot[0] - skyTop[0]) * t);
@@ -640,9 +704,9 @@
     // ---- 三层远景山脊：越远越淡，制造空气透视 ----
     const zFar = GROUND_Y - C.FIELD_D * Z_TO_Y;
     const ridges = [
-      { base: 250, amp: 34, col: isHub ? 0x1b2b32 : 0x2a1e22, alpha: 0.85 },
-      { base: 286, amp: 26, col: isHub ? 0x22343a : 0x33241f, alpha: 0.9 },
-      { base: 318, amp: 18, col: isHub ? 0x2a3d3c : 0x3d2b22, alpha: 1 },
+      { base: 250, amp: 34, col: th.ridge[0], alpha: 0.85 },
+      { base: 286, amp: 26, col: th.ridge[1], alpha: 0.9 },
+      { base: 318, amp: 18, col: th.ridge[2], alpha: 1 },
     ];
     ridges.forEach((rg, li) => {
       g.fillStyle(rg.col, rg.alpha);
@@ -660,7 +724,7 @@
 
     // ---- 树木：两种交替，远近不同缩放与透明度 ----
     // 农场模式跳过：耕地会盖住地平线，树画上去等于长在田中央
-    for (let i = 0; mode !== 'farm' && i < 16; i++) {
+    for (let i = 0; th.trees && i < 16; i++) {
       const key = i % 3 === 1 ? 'treeB' : 'treeA';
       const depthT = (i % 4) / 3;                     // 0..1
       const sc = 0.62 + depthT * 0.5;
@@ -668,14 +732,15 @@
       const tree = scene.add.image(30 + i * 62 + (i % 3) * 9, y, key)
         .setOrigin(0.5, 1).setScale(sc).setAlpha(0.30 + depthT * 0.38)
         .setDepth(-900 + i);
-      // 远树统一压暗并偏冷，制造空气透视；否则新加的细节会显得离得很近
-      tree.setTint(depthT < 0.5 ? 0x2a3a30 : 0x3d5142);
+      // 远树统一压暗，制造空气透视。色调按主题：
+      // 普通档偏枯黄、困难档偏翠绿、地狱档不画树（画火山与熔岩）。
+      tree.setTint(depthT < 0.5 ? th.treeTint[0] : th.treeTint[1]);
     }
 
     // ---- 地面：景深带 + 横向分道，让"能前后走"看得见 ----
-    g.fillStyle(isHub ? 0x2b3a2c : 0x2a2320, 1);
+    g.fillStyle(th.groundA, 1);
     g.fillRect(0, zFar, W, HGT - zFar);
-    g.fillStyle(isHub ? 0x33452f : 0x352a24, 1);
+    g.fillStyle(th.groundB, 1);
     g.fillRect(0, zFar + 22, W, HGT - zFar - 22);
 
     // 分道：越近越宽，暗示透视
@@ -688,8 +753,8 @@
     g.beginPath(); g.moveTo(0, zFar); g.lineTo(W, zFar); g.strokePath();
 
     // ---- 土路：横贯场景，给玩家一条视觉动线 ----
-    if (mode !== 'farm') {
-    g.fillStyle(isHub ? 0x4a4030 : 0x4a3a2c, 0.38);
+    if (th.road) {
+    g.fillStyle(th.road, th.roadAlpha);
     const roadY = GROUND_Y - 46;
     for (let x = 0; x < W; x += 60) {
       g.fillRoundedRect(x, roadY + Math.sin(x * 0.02) * 3, 62, 26, 8);
@@ -697,9 +762,72 @@
     }
 
     // ---- 围栏：沿景深带后缘一排木桩 ----
-    for (let x = 8; mode !== 'farm' && x < W; x += 26) {
+    for (let x = 8; th.fence && x < W; x += 26) {
       scene.add.image(x, zFar + 4, 'post').setOrigin(0.5, 1)
         .setScale(0.9).setAlpha(0.55).setDepth(-700);
+    }
+
+    // ---- 火山（地狱档）：远处一座活火山，带喷发与熔岩流 ----
+    if (th.volcano) {
+      const vx = W * 0.72, vbase = zFar + 8;
+      // 山体：两层三角，外暗内亮
+      g.fillStyle(0x1e0e0a, 1);
+      g.beginPath();
+      g.moveTo(vx - 200, vbase); g.lineTo(vx, vbase - 210); g.lineTo(vx + 200, vbase);
+      g.closePath(); g.fillPath();
+      g.fillStyle(0x2a1410, 1);
+      g.beginPath();
+      g.moveTo(vx - 150, vbase); g.lineTo(vx, vbase - 175); g.lineTo(vx + 150, vbase);
+      g.closePath(); g.fillPath();
+      // 火山口：炽热的橙红
+      g.fillStyle(0xff5a2a, 0.85);
+      g.beginPath();
+      g.moveTo(vx - 26, vbase - 196); g.lineTo(vx, vbase - 210); g.lineTo(vx + 26, vbase - 196);
+      g.lineTo(vx + 16, vbase - 184); g.lineTo(vx - 16, vbase - 184);
+      g.closePath(); g.fillPath();
+      g.fillStyle(0xffd08a, 0.7);
+      g.fillEllipse(vx, vbase - 194, 30, 8);
+      // 熔岩流：从火山口沿山体流下的三条
+      [0.35, 0.5, 0.62].forEach((f, i) => {
+        g.fillStyle(i === 1 ? 0xff7a3c : 0xe8532a, 0.75);
+        g.beginPath();
+        g.moveTo(vx - 8 + i * 12, vbase - 186);
+        g.lineTo(vx - 20 + i * 26, vbase - 60);
+        g.lineTo(vx - 12 + i * 26, vbase - 58);
+        g.lineTo(vx + 2 + i * 12, vbase - 186);
+        g.closePath(); g.fillPath();
+      });
+      // 上升的火山灰
+      for (let i = 0; i < 22; i++) {
+        const px = vx + Math.sin(i * 2.7) * 90;
+        const py = vbase - 210 - ((i * 37) % 180);
+        g.fillStyle(0x3a2018, 0.5 - ((i * 37) % 180) / 500);
+        g.fillCircle(px, py, 3 + (i % 3) * 2);
+      }
+    }
+
+    // ---- 熔岩（地狱档）：地面上流动的裂隙 ----
+    if (th.lava) {
+      const laneY = GROUND_Y - 30;
+      for (let x = 0; x < W; x += 46) {
+        const wob = Math.sin(x * 0.021) * 8;
+        // 外层暗红
+        g.fillStyle(0x6a1e0e, 0.55);
+        g.fillEllipse(x + 23, laneY + wob, 54, 15);
+        // 内层炽热
+        g.fillStyle(0xff5a2a, 0.42);
+        g.fillEllipse(x + 23, laneY + wob, 38, 9);
+        // 核心亮黄
+        g.fillStyle(0xffc46a, 0.30);
+        g.fillEllipse(x + 23, laneY + wob, 20, 4);
+      }
+      // 地表的火星（静态点，动态的由 ember 粒子负责）
+      for (let i = 0; i < 40; i++) {
+        const px = (i * 137) % W;
+        const py = GROUND_Y - ((i * 53) % 120);
+        g.fillStyle(0xff9a5c, 0.35);
+        g.fillCircle(px, py, 1.4 + (i % 3) * 0.8);
+      }
     }
 
     // ---- 农场模式：把中段整片铺成耕地，田直接坐在土上 ----
@@ -739,6 +867,9 @@
       fg.fillRect(0, GROUND_Y + 30 + i * 7, W, 7);
     }
 
+    // 地狱档：火星更多更密，因为熔岩地貌本身就该飘着灰烬
+    const emberFreq = th.lava ? 55 : 130;
+
     // ---- 空中火星：价格极低、对"质感"的提升却最大 ----
     if (scene.add.particles) {
       const em = scene.add.particles(0, 0, 'spark', {
@@ -749,14 +880,14 @@
         speedX: { min: -10, max: 16 },
         scale: { start: 0.85, end: 0 },
         alpha: { start: 0.55, end: 0 },
-        frequency: 130,
+        frequency: emberFreq,
         blendMode: 'ADD',
       });
       em.setDepth(4000);
     }
 
     // 地面上的草（会随风摆动）。放在背景之后种，所以天然在背景之上。
-    plantGrass(scene, mode);
+    if (th.grass) plantGrass(scene, mode);
 
     return g;
   }
@@ -974,7 +1105,13 @@
       this.input2 = createInput(this);
       this.enemyPool = [];
 
-      paintBackdrop(this, 'run');
+      // Boss 局用专属地图风格：普通=荒野、困难=密林、地狱=熔岩。
+      // 玩家一进场就该知道自己打的是哪一档。
+      const st = CURRENT_STATE;
+      const isBossRun = st && st.run && st.run.isBossRun;
+      const tier = st && st.run && st.run.bossTier;
+      const themeMap = { normal: 'bossNormal', hard: 'bossHard', hell: 'bossHell' };
+      paintBackdrop(this, isBossRun ? (themeMap[tier] || 'run') : 'run');
 
       this.effectGfx = this.add.graphics().setDepth(1050);
 
