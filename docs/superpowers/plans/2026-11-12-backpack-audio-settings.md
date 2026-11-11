@@ -996,7 +996,18 @@ Expected: FAIL —— 三段都还是原值。
 Run: `"$N" tests/test_game_logic.js && "$N" tests/test_game_logic.js && "$N" tests/bot.js 2>&1 | tail -20`
 Expected: PASS。胜率阶梯与冻结基线对比，**任一档上升超过 8 个百分点视为经济变松**。
 
-> **注意**：`tests/bot.js` 每局新建空背包存档、从不出售，所以它**测不出**本批的出售类经济变化。它的作用只是确认 +5% 没有把难度压垮。要做出售类护栏需先给 `play()` 加策略参数（设计文档 §6 已记录这条护栏被降级）。
+> **注意 1**：`tests/bot.js` 每局新建空背包存档、从不出售，所以它**测不出**本批的出售类经济变化。它的作用只是确认 +5% 没有把难度压垮。要做出售类护栏需先给 `play()` 加策略参数（设计文档 §6 已记录这条护栏被降级）。
+>
+> **注意 2（测量陷阱，已实测）**：难度 id 是 **`grass` / `wood` / `deep` / `forge`**，
+> **没有 `hard`**。`C.difficultyById(id)` 用的是
+> `DIFFICULTIES.find(...) || DIFFICULTIES[1]`（`config.js:571`）——
+> 传错 id **不抛错，静默变成「林地」**。实测 `difficultyById('hard').id === 'wood'`。
+> 后果：拿错 id 去跑 `winRate`，四档会返回**逐条种子完全一致**的结果，
+> 看上去像"难度没生效"的引擎 bug，其实是调用方传错了名字。
+> 写平衡脚本时先用 `console.log(C.difficultyById(d).id)` 回显一次。
+>
+> **基线形状（本轮实测，n=24，零强化）**：`grass 100% / wood 96% / deep 42% / forge 0%`，
+> 与设计文档冻结的 `100/94/54/1`（n=100）在抽样误差内一致。
 
 - [ ] **Step 5: 提交**
 
