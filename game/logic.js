@@ -1931,12 +1931,27 @@
   }
 
   // ---------------------------------------------------------------- 结算
-  function endRun(state, won) {
+  /**
+   * 一局结束（胜 / 败 / 主动退出）。
+   *
+   * opts（可选，Task 13 起）：
+   *   keep    保留率，缺省按胜负取 1 或 C.LOOT.lossKeep
+   *   round   取整函数，缺省 Math.floor
+   *   exited  是否是「主动退出」（写进 lastResult，结算文案据此区分）
+   */
+  function endRun(state, won, opts) {
     const run = state.run;
+    const o = opts || {};
     run.status = won ? 'won' : 'lost';
-    const keep = won ? 1 : C.LOOT.lossKeep;
-    const coins = Math.floor(run.loot.coins * keep);
-    const seeds = Math.floor(run.loot.seeds * keep);
+    /*
+     * 「退出战斗」会传进来一个按剩余血量折算的保留率（设计 §3.4），
+     * 并且要求四舍五入：早退是玩家主动做的决定，不该像战败那样
+     * 把他本就不多的一半再往下抹一次零。
+     */
+    const keep = won ? 1 : (typeof o.keep === 'number' ? o.keep : C.LOOT.lossKeep);
+    const round = typeof o.round === 'function' ? o.round : Math.floor;
+    const coins = round(run.loot.coins * keep);
+    const seeds = round(run.loot.seeds * keep);
 
     state.meta.coins += coins;
     state.meta.seeds += seeds;
@@ -1965,6 +1980,9 @@
 
     state.lastResult = {
       won: won,
+      // Task 13：主动退出按战败入账，但文案与「倒下」不同，所以要留痕。
+      exited: !!o.exited,
+      keep: won ? 1 : keep,
       difficultyId: run.difficultyId,
       wavesCleared: won ? run.diff.waves : run.waveIndex,
       coins: coins, seeds: seeds,
@@ -1973,6 +1991,56 @@
     };
     state.phase = 'result';
     state.run = null;
+  }
+
+  /**
+   * ESC 菜单的行（Task 13 / 设计 §5.6）。
+   *
+   * 只返回 id/label，长什么样由 index.html 决定。
+   * 「哪一行该出现」放在逻辑层而不是 UI：它取决于 state.phase，
+   * 散在界面里就会长出第二份"什么时候算在战斗中"的判断，
+   * 迟早出现"已经结算了菜单还挂着退出按钮"这种不一致。
+   */
+  function escMenuRows(state) {
+    const rows = [{ id: 'settings', label: '设置' }];
+    if (state && state.phase === 'run' && state.run) {
+      rows.push({ id: 'quit', label: '退出战斗' });
+    }
+    return rows;
+  }
+
+  /**
+   * 主动退出的保留率（设计 §3.4）：
+   *   保留率 = 50% × (0.5 + 0.5 × 剩余血量比)
+   * 满血 0.5、空血 0.25。这样「早退」既拿不到打赢的比例（1.0），
+   * 也不比打到倒下（lossKeep = 0.5）更划算 —— 早退永远不是最优解。
+   */
+  function exitKeepRate(state) {
+    const run = state && state.run;
+    const player = run && run.player;
+    const maxHp = player && player.maxHp > 0 ? player.maxHp : 1;
+    const hp = player ? player.hp : 0;
+    const ratio = Math.max(0, Math.min(1, hp / maxHp));
+    return 0.5 * (0.5 + 0.5 * ratio);
+  }
+
+  /**
+   * 「退出战斗」：按血量折扣结算，视为战败（Task 13 / §3.4）。
+   *
+   * 复用 endRun，所以药水回写、农庄生长、被动收益的口径和正常结束完全一致；
+   * 另写一份结算逻辑必然会漏掉其中一两项。
+   * 没有进行中的局（或已经结算过）返回 ok:false —— 而且一分钱都不付：
+   * 结算会把 state.run 置空，连点第二次必须落进这里，而不是再发一份战利品。
+   */
+  function exitRun(state) {
+    if (!state || !state.run) return { ok: false, reason: '没有进行中的远征' };
+    if (state.run.status && state.run.status !== 'active') {
+      return { ok: false, reason: '这一局已经结束' };
+    }
+    const keep = exitKeepRate(state);
+    endRun(state, false, { keep: keep, round: Math.round, exited: true });
+    const r = state.lastResult;
+    return { ok: true, keep: keep, coins: r.coins, seeds: r.seeds };
   }
 
   function returnToFarm(state) {
@@ -2084,6 +2152,9 @@
   const API = {
     STATE_VERSION,
     createState, startRun, step, endRun, returnToFarm,
+    // ESC 菜单与主动退出结算（Task 13）。漏挂 API 这个坑踩过两次
+    // （bagIndexOfId、sortBag），加完顺手看一眼这里。
+    escMenuRows, exitKeepRate, exitRun,
     plant, buyUpgrade, upgradeCost,
     buySkill, skillCost, skillStats, tryCastSkill, currentDamage,
     stepProjectiles, stepRanged, spawnProjectile, stepPickups, collectAll, killEnemy,

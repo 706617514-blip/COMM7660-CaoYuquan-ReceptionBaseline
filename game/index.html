@@ -331,6 +331,67 @@
     border-radius:10px;background:#0d131ac2;color:#6d7f90;font-size:12px;
     pointer-events:none}
   #bag-empty.on{display:flex}
+
+  /* ---------------------------------------------------------------
+     ESC 菜单（Task 13 / 设计 §5.6）
+     z-index 72：要盖住背包（40）、悬停浮层（60）、结算卡与提示条（70）。
+     显隐只用 class（display:none ↔ flex）：inline style 会被 resize/复位的
+     代码顺手清掉，class 不会。
+     --------------------------------------------------------------- */
+  #esc{position:absolute;inset:0;z-index:72;display:none;align-items:center;
+    justify-content:center;background:#060a0ec2;backdrop-filter:blur(4px);padding:20px}
+  #esc.on{display:flex}
+  .esc-card{width:100%;max-width:340px;padding:14px;
+    background:linear-gradient(180deg,#18202b,#121820);border-radius:14px;
+    box-shadow:0 0 0 1px #33455a, 0 22px 50px -18px #000}
+  .esc-h{padding:2px 4px 12px}
+  .esc-h h2{margin:0;font-size:15px;letter-spacing:3px;color:#dbe6f0}
+  .esc-h .sub{font-size:11px;color:var(--dim);margin-top:3px;letter-spacing:0}
+  #esc-list.off,#esc-settings.off{display:none}
+  .esc-row{display:block;width:100%;box-sizing:border-box;margin-bottom:8px;
+    padding:13px 14px;border-radius:10px;text-align:left;
+    background:#141b24;border:1px solid #232f3c;color:#e6eef6;
+    font-family:inherit;font-size:14px;letter-spacing:2px;cursor:pointer}
+  .esc-row:last-child{margin-bottom:0}
+  .esc-row:hover{background:#1d2836;border-color:#3c5166}
+  .esc-row:focus-visible{outline:none;border-color:#6fb1e0;
+    box-shadow:0 0 0 2px #6fb1e055}
+  /* 「退出战斗」是破坏性动作：颜色上先和其它行分开，别让手指顺手点过去 */
+  .esc-row.quit{color:#ffb4a8;border-color:#4a2b26;background:#1b1210}
+  .esc-row.quit:hover{background:#261713;border-color:#7a3a2e}
+
+  /* 滑块：左侧"已划过"的部分填绿（--fill 由脚本按百分比写），右侧是轨道底色。
+     渐变画在 input 自身而不是 ::-webkit-slider-runnable-track 上：
+     轨道伪元素在部分浏览器里拿不到自定义属性，而且 getComputedStyle(input)
+     读不到伪元素的背景 —— 测试与调试都没法验证"绿色到底有没有画上"。
+     圆钮用 ::-webkit-slider-thumb（Chromium/Electron 唯一的钩子）。 */
+  .vol-row{display:flex;align-items:center;gap:10px;margin:16px 2px 6px}
+  .vol-lab{width:46px;font-size:13px;color:#cfdae6;letter-spacing:1px}
+  .vol-val{width:34px;text-align:right;font-size:13px;color:var(--gold);
+    font-variant-numeric:tabular-nums}
+  input[type=range].vol{-webkit-appearance:none;appearance:none;flex:1;height:22px;
+    margin:0;padding:0;border:none;outline:none;cursor:pointer;
+    background-color:transparent;
+    background-image:linear-gradient(to right,
+      #7fc45c 0%, #7fc45c var(--fill,30%), #24313f var(--fill,30%), #24313f 100%);
+    background-size:100% 8px;background-position:center center;
+    background-repeat:no-repeat;border-radius:5px;
+    box-shadow:inset 0 0 0 1px #3a4a5c}
+  input[type=range].vol::-webkit-slider-runnable-track{height:8px;
+    background:transparent;border-radius:4px}
+  input[type=range].vol::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
+    width:16px;height:16px;margin-top:-4px;border:none;border-radius:50%;
+    background:#f2f7fb;box-shadow:0 0 0 3px #161d26, 0 2px 6px -1px #000}
+  input[type=range].vol:focus-visible::-webkit-slider-thumb{
+    box-shadow:0 0 0 3px #161d26, 0 0 0 5px #6fb1e0}
+  /* 没有 BGM：滑块是"先落地"的通道，界面必须自己说明，别让玩家以为调了没反应 */
+  #vol-music-note{font-size:11px;color:#7d8fa1;margin:0 2px 0 56px;
+    letter-spacing:.2px}
+  .esc-foot{display:flex;justify-content:flex-end;margin-top:16px}
+  .esc-foot button{background:#222d3a;border:1px solid #33455a;color:#c9d6e2;
+    border-radius:8px;padding:8px 16px;font-family:inherit;font-size:13px;
+    cursor:pointer}
+  .esc-foot button:hover{background:#2c3a4a;color:#eaf2f9}
 </style>
 </head>
 <body>
@@ -394,6 +455,35 @@
   </div>
 
   <div id="toast"></div>
+
+  <!-- ESC 菜单（Task 13 / 设计 §5.6）。基地只有「设置」一行，战斗中有两行。
+       行由 logic.escMenuRows 决定，这里只负责长什么样：缺哪一行不要在模板里
+       用 state.phase 现判断，否则会多出第二份"什么时候算在战斗中"的口径。 -->
+  <div id="esc" role="dialog" aria-modal="true" aria-label="暂停菜单">
+    <div class="esc-card">
+      <div class="esc-h">
+        <h2 id="esc-title">菜　单</h2>
+        <div class="sub">ESC 关闭 · 游戏已暂停</div>
+      </div>
+      <div id="esc-list"></div>
+      <div id="esc-settings" class="off">
+        <div class="vol-row">
+          <span class="vol-lab">音乐</span>
+          <input id="vol-music" class="vol" type="range" min="0" max="100" step="1"
+                 aria-label="音乐音量">
+          <span class="vol-val" id="vol-music-val">30</span>
+        </div>
+        <div id="vol-music-note">暂无 BGM · 音乐通道未接入（滑块只保存设置，不发声）</div>
+        <div class="vol-row">
+          <span class="vol-lab">音量</span>
+          <input id="vol-master" class="vol" type="range" min="0" max="100" step="1"
+                 aria-label="总音量">
+          <span class="vol-val" id="vol-master-val">30</span>
+        </div>
+        <div class="esc-foot"><button id="esc-back" type="button">返回</button></div>
+      </div>
+    </div>
+  </div>
 
   <!-- 背包浮层：标题栏可拖，左栏 40%（上 70% 角色 + 10 个装备槽 / 下 30% 四项数值），
        右栏 60%（7 个页签 + 5×7 网格 + 页脚）。所有格子与槽位都是空壳，
@@ -733,15 +823,26 @@
     const r = s.lastResult;
     if (!r) { onBack(); return; }
     const d = C.difficultyById(r.difficultyId);
-    $('panelTitle').textContent = r.won ? '清空林场' : '倒下了';
+    /*
+     * 三种结局要分得开（Task 13）：
+     *   打赢 → 清空林场；打到倒下 → 倒下了；自己按 ESC 退的 → 主动退出。
+     * 主动退出也按战败入账，但必须让玩家一眼看出是"我自己退的"、
+     * 而且拿得比倒下少（保留率按剩余血量折扣，§3.4）—— 否则会以为结算坏了。
+     */
+    const lost = !r.won;
+    const exited = lost && !!r.exited;
+    $('panelTitle').textContent = r.won ? '清空林场' : (exited ? '主动退出' : '倒下了');
     $('panelSub').textContent = '难度 ' + d.name + ' · ' + r.wavesCleared + ' / ' +
       d.waves + ' 波 · ' + r.elapsed + ' 秒';
+    const keepPct = Math.round((typeof r.keep === 'number' ? r.keep : 0.5) * 100);
     const body = $('panelBody');
     body.innerHTML =
       '<div style="font-size:13px;line-height:2;color:#cfdae6">' +
       '带回铜币 <b style="color:#e8b04b">' + r.coins + '</b>　' +
       '种子 <b style="color:#e8b04b">' + r.seeds + '</b>' +
-      (!r.won ? '<span style="color:#e8574a">（倒下只保留一半）</span>' : '') + '<br>' +
+      (exited
+        ? '<span style="color:#e8b04b">（主动退出，按剩余血量保留 ' + keepPct + '%）</span>'
+        : (lost ? '<span style="color:#e8574a">（倒下只保留一半）</span>' : '')) + '<br>' +
       (r.matured > 0
         ? '农庄有 <b style="color:#7fc45c">' + r.matured + '</b> 块田成熟了<br>'
         : (r.passive > 0
@@ -876,9 +977,171 @@
     refreshProfileList();
   });
 
+  // ---------------------------------------------------------------- ESC 菜单 + 设置页（Task 13）
+  /*
+   * 这一层只管 DOM 与"点哪一行做什么"。**暂停/恢复归场景**（app.js 的
+   * toggleEscMenu）：菜单自己 pause 的话，关闭路径会散在两边 ——
+   * 一条走 scene.resume()，一条走菜单回调，迟早有一边漏掉，
+   * 于是玩家卡在一张关不掉的菜单前面。
+   *
+   * 为什么 ESC 的开关不在 update() 里判 justPressed('esc')：菜单会把场景
+   * pause 住，pause 之后 update 不再执行，就再也没人能把场景恢复 ——
+   * 实测按一下就永久冻结。所以按键在 createInput 的 onDown 里当场处理。
+   */
+  const escRoot = $('esc');
+  const escList = $('esc-list');
+  const escSettings = $('esc-settings');
+  let escOpenFlag = false;
+  let escView = 'root';        // 'root' | 'settings'
+  let escState = null;         // 打开时那份 state（写音量/音乐设置用）
+  let escCtx = null;           // { state, onClose, onQuit }
+  let escSaveTimer = null;
+
+  function escIsOpen() { return escOpenFlag; }
+
+  /*
+   * 绿色填充宽度写进 CSS 变量 --fill。
+   * DOM 桩（tests/test_game_page.js）的 style 只有 cssText、没有 setProperty，
+   * 所以退回直接写 background-image —— 桩里也不该抛异常，那是测试设施的问题，
+   * 不是被测代码的自由。
+   */
+  function setFill(el, pct) {
+    if (!el || !el.style) return;
+    if (typeof el.style.setProperty === 'function') {
+      el.style.setProperty('--fill', pct + '%');
+    } else {
+      el.style.backgroundImage = 'linear-gradient(to right,#7fc45c 0%,#7fc45c ' +
+        pct + '%,#24313f ' + pct + '%,#24313f 100%)';
+    }
+  }
+
+  // 把 0..1 的音量画到滑块上：value、绿色段、右端数值三处必须同步，
+  // 少一处就会出现"滑块在 70 但写着 30"这种自相矛盾的界面。
+  function paintVol(input, valEl, v) {
+    const pct = Math.max(0, Math.min(100, Math.round((Number(v) || 0) * 100)));
+    if (input) input.value = String(pct);
+    setFill(input, pct);
+    if (valEl) valEl.textContent = String(pct);
+    return pct;
+  }
+
+  function settingsDefaultVol() {
+    return (C.AUDIO && typeof C.AUDIO.volume === 'number') ? C.AUDIO.volume : 0.3;
+  }
+
+  function escSetView(view) {
+    escView = view === 'settings' ? 'settings' : 'root';
+    const on = escView === 'settings';
+    escSettings.className = on ? '' : 'off';
+    escList.className = on ? 'off' : '';
+    $('esc-title').textContent = on ? '设　置' : '菜　单';
+  }
+
+  function openEscSettings() {
+    const s = (escState && escState.meta && escState.meta.settings) || {};
+    paintVol($('vol-master'), $('vol-master-val'),
+      typeof s.volume === 'number' ? s.volume : settingsDefaultVol());
+    // 音乐通道的值也存（§5.5），但没有 BGM 可接，所以只画数字
+    paintVol($('vol-music'), $('vol-music-val'),
+      typeof s.music === 'number' ? s.music : settingsDefaultVol());
+    escSetView('settings');
+  }
+
+  function openEsc(rows, ctx) {
+    if (!escRoot) return false;
+    escState = (ctx && ctx.state) || null;
+    escCtx = ctx || null;
+    escList.innerHTML = '';
+    (rows || []).forEach(function (row) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'esc-row' + (row.id === 'quit' ? ' quit' : '');
+      // data-act 是"哪一行"的锚点（浏览器测试与埋点都靠它），不参与渲染判断
+      if (typeof b.setAttribute === 'function') b.setAttribute('data-act', row.id);
+      b.textContent = row.label;
+      b.addEventListener('click', function () {
+        if (row.id === 'settings') { openEscSettings(); return; }
+        if (row.id === 'quit' && escCtx && typeof escCtx.onQuit === 'function') {
+          escCtx.onQuit();
+        }
+      });
+      escList.appendChild(b);
+    });
+    escSetView('root');
+    escRoot.className = 'on';
+    escOpenFlag = true;
+    return true;
+  }
+
+  function closeEsc() {
+    if (!escOpenFlag) return false;
+    const ctx = escCtx;
+    escOpenFlag = false;
+    escView = 'root';
+    escRoot.className = '';
+    escList.innerHTML = '';
+    escSettings.className = 'off';
+    escState = null;
+    escCtx = null;
+    clearTimeout(escSaveTimer);
+    // onClose 负责恢复场景 —— 顺序必须在"关掉视图"之后，
+    // 否则场景先恢复一帧、菜单还在屏幕上，那一帧的输入会被菜单吃掉一半。
+    if (ctx && typeof ctx.onClose === 'function') ctx.onClose();
+    return true;
+  }
+
+  function saveEscSettings() {
+    if (!escState) return;
+    clearTimeout(escSaveTimer);
+    // 拖动时 input 事件一秒能来几十次，每次都写 localStorage 会卡；
+    // 但松手（change）必须立刻落盘，别让玩家关掉页面就丢设置。
+    escSaveTimer = setTimeout(function () { if (escState) save(escState); }, 120);
+  }
+
+  const volMasterEl = $('vol-master');
+  const volMusicEl = $('vol-music');
+
+  volMasterEl.addEventListener('input', function () {
+    const pct = Math.max(0, Math.min(100, Math.round(Number(volMasterEl.value) || 0)));
+    setFill(volMasterEl, pct);
+    $('vol-master-val').textContent = String(pct);
+    const v = pct / 100;
+    // 两条路都要走：音频层负责真实增益（含 clamp），meta 负责跨会话保留。
+    // 只写 meta 的话滑块动了但声音不变；只调音频的话关掉再开就回到 30%。
+    if (globalThis.GameAudio && typeof globalThis.GameAudio.setMasterVolume === 'function') {
+      globalThis.GameAudio.setMasterVolume(v);
+    }
+    if (escState && escState.meta) {
+      if (!escState.meta.settings) escState.meta.settings = { volume: v, muted: false };
+      escState.meta.settings.volume = v;
+    }
+    saveEscSettings();
+  });
+  volMasterEl.addEventListener('change', function () { if (escState) save(escState); });
+  volMusicEl.addEventListener('input', function () {
+    const pct = Math.max(0, Math.min(100, Math.round(Number(volMusicEl.value) || 0)));
+    setFill(volMusicEl, pct);
+    $('vol-music-val').textContent = String(pct);
+    // 音乐滑块只存值：本作没有 BGM（§5.5），这里**不许**去碰 GameAudio 的
+    // masterGain —— 否则玩家拖"音乐"会看到总音量一起变，那是假的。
+    if (escState && escState.meta) {
+      if (!escState.meta.settings) escState.meta.settings = { volume: settingsDefaultVol(), muted: false };
+      escState.meta.settings.music = pct / 100;
+    }
+    saveEscSettings();
+  });
+  volMusicEl.addEventListener('change', function () { if (escState) save(escState); });
+
+  $('esc-back').addEventListener('click', function () { escSetView('root'); });
+
   window.EmberfieldUI = {
     openPanel: openPanel, refreshPanel: refreshPanel, closePanel: closePanel,
     toast: toast, showHud: showHud, updateHud: updateHud, showResult: showResult, save: save,
+    // ESC 菜单（Task 13）：场景只调这四个 + isEscOpen/isEscSettings
+    openEsc: openEsc, closeEsc: closeEsc,
+    isEscOpen: escIsOpen,
+    isEscSettings: function () { return escView === 'settings'; },
+    escBack: function () { escSetView('root'); },
   };
 
   // RunScene 在结算时会注册"再来一局"的具体实现（重开同难度的一局）

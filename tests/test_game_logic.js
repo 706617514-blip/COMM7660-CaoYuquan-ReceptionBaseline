@@ -1991,6 +1991,137 @@ section('32. 基地六点位错落：判定必须是二维的');
     (H.zoneAt(s) || {}).id);
 }
 
+// ---------------------------------------------------------------- ESC 菜单 / 主动退出（Task 13）
+section('ESC 菜单与「退出战斗」结算（Task 13）');
+{
+  /*
+   * 菜单行由逻辑层决定、由 index.html 渲染。
+   * 为什么"哪一行该出现"要放在 logic 里：它取决于 state.phase，
+   * 散在 UI 里就会变成第二份"什么时候算在战斗中"的判断，
+   * 迟早和 logic 的口径不一致（比如 phase 已经是 result 了菜单还挂着退出按钮）。
+   */
+  const sh = L.createState(4242);
+  const rowsHub = L.escMenuRows(sh);
+  ok(Array.isArray(rowsHub), 'escMenuRows 已挂到 API 上并返回数组',
+     typeof L.escMenuRows);
+  eq(rowsHub.length, 1, '基地 ESC 菜单只有一行', JSON.stringify(rowsHub));
+  eq(rowsHub[0].id, 'settings', '基地唯一一行的 id 是 settings');
+  eq(rowsHub[0].label, '设置', '基地唯一一行写「设置」');
+  ok(!rowsHub.some(function (r) { return r.id === 'quit'; }),
+     '基地没有「退出战斗」（没有局可退）');
+
+  L.startRun(sh, 'wood');
+  const rowsRun = L.escMenuRows(sh);
+  eq(rowsRun.length, 2, '战斗中 ESC 菜单两行', JSON.stringify(rowsRun));
+  eq(rowsRun[0].id, 'settings', '战斗中第一行仍是设置');
+  eq(rowsRun[1].id, 'quit', '战斗中第二行是退出战斗');
+  eq(rowsRun[1].label, '退出战斗', '第二行文案是「退出战斗」');
+
+  L.exitRun(sh);
+  eq(L.escMenuRows(sh).length, 1, '结算后菜单退回一行（不再提供退出战斗）');
+
+  // ---- 满血退出：保留 50% ----
+  {
+    const s = L.createState(11);
+    L.startRun(s, 'wood');
+    s.run.loot.coins = 1000;
+    s.run.loot.seeds = 200;
+    s.run.player.hp = s.run.player.maxHp;
+    const runsBefore = s.meta.runsCompleted, wonBefore = s.meta.runsWon;
+    const coinsBefore = s.meta.coins;
+    const res = L.exitRun(s);
+    ok(res && res.ok === true, '满血退出结算成功', JSON.stringify(res));
+    eq(s.phase, 'result', '退出后进入结算阶段');
+    eq(s.run, null, '退出后 run 被清空（同一个 run 不能再结算一次）');
+    eq(s.lastResult.won, false, '主动退出按战败记账（won = false）');
+    eq(s.lastResult.exited, true, '结算结果带 exited 标记（文案要区分主动退出）');
+    eq(s.lastResult.coins, 500, '满血退出保留 50% 铜币');
+    eq(s.lastResult.seeds, 100, '满血退出种子同样 50%');
+    eq(s.meta.runsCompleted - runsBefore, 1, '主动退出也算打完一局');
+    eq(s.meta.runsWon - wonBefore, 0, '主动退出不算胜利');
+    ok(s.meta.coins >= coinsBefore + 500, '铜币真的进了钱包（还要加上被动收益）',
+       s.meta.coins - coinsBefore);
+  }
+
+  // ---- 残血退出：公式 0.5 × (0.5 + 0.5 × 血量比) ----
+  {
+    const s = L.createState(12);
+    L.startRun(s, 'wood');
+    s.run.loot.coins = 1000;
+    s.run.loot.seeds = 200;
+    const maxHp = s.run.player.maxHp;
+    s.run.player.hp = 1;
+    // 期望值在测试里独立算一遍，而不是抄实现里的中间变量
+    const keep = 0.5 * (0.5 + 0.5 * (1 / maxHp));
+    const res = L.exitRun(s);
+    eq(res.ok, true, '残血退出也能结算');
+    near(res.keep, keep, 1e-9, '残血退出的保留率走血量折扣公式');
+    eq(s.lastResult.coins, Math.round(1000 * keep),
+       '残血退出的铜币是折扣后的值（四舍五入）', s.lastResult.coins);
+    eq(s.lastResult.seeds, Math.round(200 * keep), '残血退出的种子同比例');
+    ok(keep < 0.5 && keep >= 0.25, '残血保留率落在 [25%, 50%) 之间', keep);
+    ok(s.lastResult.coins < 500, '残血退出比满血退出拿得少', s.lastResult.coins);
+  }
+
+  // ---- 空血退出：下限 25%，不会掉到 0 ----
+  {
+    const s = L.createState(13);
+    L.startRun(s, 'wood');
+    s.run.loot.coins = 1000;
+    s.run.player.hp = 0;
+    L.exitRun(s);
+    eq(s.lastResult.coins, 250, '空血退出保留 25%（下限）');
+  }
+
+  // ---- 重复退出：不能靠连点刷钱 ----
+  {
+    const s = L.createState(14);
+    L.startRun(s, 'wood');
+    s.run.loot.coins = 1000;
+    s.run.loot.seeds = 100;
+    s.run.player.hp = s.run.player.maxHp;
+    L.exitRun(s);
+    const coins = s.meta.coins, seeds = s.meta.seeds, runs = s.meta.runsCompleted;
+    const again = L.exitRun(s);
+    ok(again && again.ok === false, '重复退出被拒绝（ok = false）', JSON.stringify(again));
+    eq(s.meta.coins, coins, '重复退出不再发铜币');
+    eq(s.meta.seeds, seeds, '重复退出不再发种子');
+    eq(s.meta.runsCompleted, runs, '重复退出不重复计一局');
+    eq(s.lastResult.coins, 500, '重复退出不改写上一次的结算');
+  }
+
+  // ---- 没有进行中的局：拒绝，而且不把状态改成 result ----
+  {
+    const s = L.createState(15);
+    eq(L.exitRun(s).ok, false, '没有进行中的局时退出被拒绝');
+    eq(s.phase, 'farm', '被拒绝时状态保持原样（不会卡在结算阶段）');
+  }
+
+  // ---- 「早退」的经济学：不优于打输，永远不如打赢 ----
+  {
+    const lootCoins = 800;
+    const mk = function (hpRatio) {
+      const s = L.createState(16);
+      L.startRun(s, 'wood');
+      s.run.loot.coins = lootCoins;
+      s.run.player.hp = Math.max(0, Math.round(s.run.player.maxHp * hpRatio));
+      return s;
+    };
+    const exitFull = mk(1); L.exitRun(exitFull);
+    const lost = mk(1); L.endRun(lost, false);
+    const exitLow = mk(1 / 70); L.exitRun(exitLow);
+    const wonS = mk(1); L.endRun(wonS, true);
+    eq(exitFull.lastResult.coins, lost.lastResult.coins,
+       '满血早退与打输拿一样多（不优于打输）', exitFull.lastResult.coins);
+    ok(exitLow.lastResult.coins <= lost.lastResult.coins,
+       '残血早退不会比打输拿得多', exitLow.lastResult.coins);
+    ok(exitFull.lastResult.coins < wonS.lastResult.coins, '早退永远不如打赢',
+       exitFull.lastResult.coins + ' vs ' + wonS.lastResult.coins);
+    ok(exitLow.lastResult.coins < exitFull.lastResult.coins,
+       '血越少早退拿得越少', exitLow.lastResult.coins);
+  }
+}
+
 // ---------------------------------------------------------------- 汇总
 console.log('\n' + '='.repeat(56));
 if (fail === 0) {

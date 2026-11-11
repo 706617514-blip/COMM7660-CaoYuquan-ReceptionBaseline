@@ -1263,6 +1263,199 @@ const SCRIPT = `
     });
   }
 
+  // ---- ESC 菜单 / 音量滑块 / 退出战斗（Task 13）----
+  // 注意：这一段在 SCRIPT 这个模板字符串里，**一个反引号都不许出现**，
+  // 也不能出现"美元符号 + 左花括号"（会被外层模板字符串当插值吞掉）。
+  //
+  // 整段包在 typeof 守卫里：本文件在实现之前就要能跑（红阶段要的是"新断言红、
+  // 旧断言绿"），裸调 window.EmberfieldUI.openEsc 会把上面 200+ 条既有断言
+  // 一起带走 —— 那时红的是"脚本抛异常"，不是"功能没做"。
+  out.escUiExists = !!(window.EmberfieldUI &&
+    typeof window.EmberfieldUI.openEsc === 'function');
+  out.escDomExists = !!document.getElementById('esc');
+  if (out.escUiExists && out.escDomExists) {
+    const escUi = window.EmberfieldUI;
+    const escRoot = document.getElementById('esc');
+    const stE = window.EmberfieldApp.__state;
+    const hubE = globalThis.__game.scene.getScene('Hub');
+    // 0) 收拾前置：上面的段落是用 Run 场景自己 scene.start('Hub') 切回来的，
+    //    并没有走结算 —— state.phase 还停在 'run'。而菜单行是按 state.phase 决定的
+    //    （设计 §5.6：在战斗中才有「退出战斗」），不清掉这一局的残留，
+    //    这一节测到的就不是基地。
+    out.escPhaseBefore = String(stE.phase);
+    if (stE.phase === 'run' && stE.run) window.GameLogic.exitRun(stE);
+    if (stE.phase === 'result') window.GameLogic.returnToFarm(stE);
+    out.escPhaseNorm = String(stE.phase);
+    await wait(250);
+
+    // 1) 背包开着时按 ESC：先关背包，不叠第二层暂停
+    //    （两层 pause 叠起来时，关掉上面那层的 resume 只解掉一层，玩家会被冻住）
+    window.BagHud.open(stE);
+    await wait(250);
+    out.escBagWasOpen = window.BagHud.isOpen();
+    key('keydown', 'Escape', 27); await wait(60); key('keyup', 'Escape', 27);
+    await wait(300);
+    out.escBagClosedFirst = !window.BagHud.isOpen();
+    out.escMenuNotOpenedOverBag = !escUi.isEscOpen();
+    out.escHubResumedAfterBag = !hubE.scene.isPaused();
+
+    // 2) 基地 ESC：只有「设置」一行，游戏真的停住
+    stE.hub.x = 300; stE.hub.z = 105;
+    await wait(200);
+    out.escDisplayedBefore = getComputedStyle(escRoot).display;
+    key('keydown', 'Escape', 27); await wait(60); key('keyup', 'Escape', 27);
+    await wait(320);
+    out.escOpenedHub = escUi.isEscOpen();
+    out.escDisplayedHub = getComputedStyle(escRoot).display;
+    out.escPausedHub = hubE.scene.isPaused();
+    const rowsHubE = document.querySelectorAll('#esc .esc-row');
+    out.escRowsHub = rowsHubE.length;
+    out.escRowLabelsHub = Array.prototype.map.call(rowsHubE,
+      function (b) { return String(b.textContent); });
+    out.escQuitInHub = !!document.querySelector('#esc [data-act="quit"]');
+    // 暂停的硬证据：按 D 半秒，坐标不该动（isPaused() 只是个标志位，能自己写）
+    const hx0 = stE.hub.x;
+    key('keydown', 'KeyD', 68); await wait(600); key('keyup', 'KeyD', 68);
+    await wait(200);
+    out.escXDeltaPaused = Math.round((stE.hub.x - hx0) * 100) / 100;
+
+    // 3) 设置页：两个原生 range、左侧填绿、圆钮、拖动真落地
+    const rowSet = document.querySelector('#esc .esc-row[data-act="settings"]');
+    out.escSettingsRow = !!rowSet;
+    if (rowSet) { rowSet.click(); await wait(280); }
+    const volM = document.getElementById('vol-master');
+    const volS = document.getElementById('vol-music');
+    out.volMaster = volM ? { tag: volM.tagName, type: volM.type, min: volM.min,
+      max: volM.max, value: volM.value, h: volM.getBoundingClientRect().height } : null;
+    out.volMusic = volS ? { tag: volS.tagName, type: volS.type, min: volS.min,
+      max: volS.max, value: volS.value } : null;
+    const bgM = volM ? String(getComputedStyle(volM).backgroundImage) : '';
+    out.volMasterBg = bgM.slice(0, 160);
+    out.volMasterBgIsGradient = bgM.indexOf('linear-gradient') >= 0;
+    // 绿色必须出现在"已划过的那一段"上：127,196,92 = #7fc45c
+    out.volMasterBgHasGreen = /127,\\s*196,\\s*92/.test(bgM);
+    // 圆钮：样式表里要真的有 ::-webkit-slider-thumb 规则且是 50%
+    // 滑块有两条 thumb 规则（常态 + :focus-visible），逐条读、拼起来判 ——
+    // 只留"最后一条"会读到 focus 那条，它没有 border-radius。
+    let thumbRule = '';
+    const sheetsE = document.styleSheets;
+    for (let si = 0; si < sheetsE.length; si++) {
+      const rs = sheetsE[si].cssRules;
+      for (let ri = 0; ri < rs.length; ri++) {
+        const txt = String(rs[ri].cssText || '');
+        if (txt.indexOf('::-webkit-slider-thumb') >= 0 && txt.indexOf('vol') >= 0) {
+          thumbRule += txt + ' ';
+        }
+      }
+    }
+    out.volThumbRule = thumbRule.slice(0, 200);
+    out.volThumbRound = /border-radius:\\s*50%/.test(thumbRule);
+    out.musicNote = (document.getElementById('vol-music-note') || {}).textContent || '';
+    out.volMasterValueText = (document.getElementById('vol-master-val') || {}).textContent || '';
+    // 拖到 40：值必须同时落到存档与真实增益上（只写 meta = 滑块没接上音频；
+    // 只调音频 = 关掉再开就回到 30%）
+    if (volM) {
+      volM.value = '40';
+      volM.dispatchEvent(new Event('input', { bubbles: true }));
+      // 先响一声再读增益：AudioParam 的自动化要等音频图真的被拉取
+      // 才会反映到 .value 上（实测：只排梯度不播声音，读数停在旧值）。
+      // 这也更接近真实用法 —— 玩家调完音量通常马上就会有音效。
+      if (window.GameAudio && typeof window.GameAudio.play === 'function') {
+        window.GameAudio.play('coin');
+      }
+      await wait(300);
+    }
+    out.volMetaAfter = stE.meta.settings ? stE.meta.settings.volume : null;
+    out.volGainAfter = window.GameAudio && window.GameAudio.masterGain
+      ? window.GameAudio.masterGain.gain.value : null;
+    out.volFillAfter = volM ? (volM.style.getPropertyValue('--fill') || '') : '';
+    out.volValueTextAfter = (document.getElementById('vol-master-val') || {}).textContent || '';
+    // 音乐滑块：存值、但不接任何声源（本作没有 BGM），界面必须自己说明
+    if (volS) {
+      volS.value = '70';
+      volS.dispatchEvent(new Event('input', { bubbles: true }));
+      await wait(200);
+    }
+    out.musicMetaAfter = stE.meta.settings ? stE.meta.settings.music : null;
+    out.musicGainUnaffected = window.GameAudio && window.GameAudio.masterGain
+      ? window.GameAudio.masterGain.gain.value : null;
+    // 4) 设置页里按 ESC：先退回菜单页（不直接关，少一层误触），再按一次才关
+    key('keydown', 'Escape', 27); await wait(60); key('keyup', 'Escape', 27);
+    await wait(320);
+    out.escFromSettingsStillOpen = escUi.isEscOpen();
+    out.escSettingsDisplayAfterEsc = getComputedStyle(
+      document.getElementById('esc-settings')).display;
+    out.escPausedAfterEscBack = hubE.scene.isPaused();
+    key('keydown', 'Escape', 27); await wait(60); key('keyup', 'Escape', 27);
+    await wait(320);
+    out.escClosedAgain = !escUi.isEscOpen();
+    out.escDisplayedAfterClose = getComputedStyle(escRoot).display;
+    out.escPausedAfterClose = hubE.scene.isPaused();
+    const hx1 = stE.hub.x;
+    key('keydown', 'KeyD', 68); await wait(600); key('keyup', 'KeyD', 68);
+    await wait(200);
+    out.escXDeltaResumed = Math.round((stE.hub.x - hx1) * 100) / 100;
+
+    // 5) 战斗中 ESC：两行，且「退出战斗」按血量折扣结算
+    stE.meta.potions = { heal: 0, strength: 0, wall: 0 };
+    hubE.startRun('wood');
+    await until(function () { return !!(stE.run && stE.run.player); }, 8000, 'escRun');
+    await wait(500);
+    const runE = stE.run;
+    const runSc = globalThis.__game.scene.getScene('Run');
+    out.escRunFound = !!runE && !!runSc;
+    if (runE && runSc) {
+      runE.loot.coins = 1000;
+      runE.loot.seeds = 200;
+      runE.player.hp = runE.player.maxHp;
+      const runMaxHp = runE.player.maxHp;
+      await wait(200);
+      key('keydown', 'Escape', 27); await wait(60); key('keyup', 'Escape', 27);
+      await wait(320);
+      out.escOpenedRun = escUi.isEscOpen();
+      out.escPausedRun = runSc.scene.isPaused();
+      const rowsRunE = document.querySelectorAll('#esc .esc-row');
+      out.escRowsRun = rowsRunE.length;
+      out.escRowLabelsRun = Array.prototype.map.call(rowsRunE,
+        function (b) { return String(b.textContent); });
+      const quitBtn = document.querySelector('#esc [data-act="quit"]');
+      out.escQuitInRun = !!quitBtn;
+      // 战斗停住的硬证据：elapsed 由 logic 每帧 += dt，update 不跑就不会涨
+      const e0 = runE.elapsed;
+      await wait(450);
+      out.escElapsedWhilePaused = Math.round((runE.elapsed - e0) * 1000) / 1000;
+
+      const coinsBefore = stE.meta.coins;
+      if (quitBtn) { quitBtn.click(); await wait(500); }
+      out.escPhaseAfterQuit = stE.phase;
+      out.escRunClearedAfterQuit = stE.run === null;
+      out.escResultTitle = (document.getElementById('panelTitle') || {}).textContent || '';
+      out.escResultBody = String((document.getElementById('panelBody') || {}).innerHTML || '')
+        .replace(/\\s+/g, ' ');
+      out.escResultCoins = stE.lastResult ? stE.lastResult.coins : null;
+      out.escResultSeeds = stE.lastResult ? stE.lastResult.seeds : null;
+      out.escResultExited = stE.lastResult ? !!stE.lastResult.exited : null;
+      out.escResultKeep = stE.lastResult ? stE.lastResult.keep : null;
+      out.escCoinsGained = stE.meta.coins - coinsBefore;
+      out.escPanelOpen = !!document.querySelector('#panel.overlay.on');
+      // 连点第二次：不许再发一份钱（反刷）
+      const coinsAfter = stE.meta.coins;
+      const dup = window.GameLogic.exitRun(stE);
+      out.escDupOk = dup && dup.ok;
+      out.escDupCoinsDelta = stE.meta.coins - coinsAfter;
+      // 收尾：点「回基地」回到基地，再把背包打开 ——
+      // 后面的 resize 段要的是"基地 + 背包面板开着"，别把它要的前置状态换掉。
+      const backBtn = document.getElementById('btn-back');
+      if (backBtn) backBtn.click();
+      await wait(500);
+      out.escPhaseBackHub = stE.phase;
+      window.BagHud.open(stE);
+      await wait(350);
+      out.escBagReopened = window.BagHud.isOpen();
+      out.escRunMaxHp = runMaxHp;
+    }
+  }
+
   // ---- 面板开着时缩小窗口：先把大窗口下的矩形记下来（Task 10c）----
   // 主段结束时必须保持面板打开，driver 会在 RESULT 之后把窗口缩到 520x420，
   // 再由 RESIZESCRIPT 量一次。这里记的是反证素材：如果"缩小前有一截在 520
@@ -1848,6 +2041,103 @@ const SMALLSCRIPT = `
     ok(bad.length === 0, '每个设施的坐标上都能判定到自己（走到跟前就能按 J）',
        JSON.stringify(bad));
     ok(noCap.length === 0, '每个设施前头顶都出现了键帽', JSON.stringify(noCap));
+  }
+
+  console.log('\n--- ESC 菜单 / 音量滑块 / 退出战斗（Task 13）---');
+  // 断言的判据全部取自真浏览器读数：computed style、真实的 input 事件、
+  // 真实的 scene.isPaused() 与"暂停时按 D 坐标不动"。
+  eq(r.escUiExists, true, '页面暴露 ESC 菜单 API（EmberfieldUI.openEsc）');
+  eq(r.escDomExists, true, '页面里有 #esc 容器');
+  if (r.escUiExists && r.escDomExists) {
+    // ⓪ 前置清理：这一段要求"人在基地"，而上面的段落留下了 phase='run' 的残留
+    eq(r.escPhaseNorm, 'farm', '前置：清掉残留的远征，真的回到基地', r.escPhaseBefore);
+    // ① 背包开着时按 ESC：只关背包，不叠第二层暂停
+    eq(r.escBagWasOpen, true, '前置：背包确实开着');
+    console.log('  [读数] 滑块拖到 40：meta=' + r.volMetaAfter +
+      ' gain=' + r.volGainAfter + ' fill=' + r.volFillAfter +
+      ' 圆钮50%=' + r.volThumbRound + ' | 菜单行=' + JSON.stringify(r.escRowLabelsHub));
+    eq(r.escBagClosedFirst, true, '背包开着时按 ESC 先关背包');
+    eq(r.escMenuNotOpenedOverBag, true, '这一下不会同时弹出 ESC 菜单（两层暂停会互相锁死）');
+    eq(r.escHubResumedAfterBag, true, '关掉背包后场景已恢复（不是卡在暂停）');
+
+    // ② 基地 ESC：一行「设置」，游戏停住
+    eq(r.escDisplayedBefore, 'none', '未打开时 #esc 是 display:none');
+    eq(r.escOpenedHub, true, '基地按 ESC 打开菜单');
+    ok(r.escDisplayedHub && r.escDisplayedHub !== 'none', '#esc 真的显示了',
+       r.escDisplayedHub);
+    eq(r.escRowsHub, 1, '基地菜单只有一行', JSON.stringify(r.escRowLabelsHub));
+    eq(JSON.stringify(r.escRowLabelsHub), JSON.stringify(['设置']),
+       '基地这一行写「设置」', JSON.stringify(r.escRowLabelsHub));
+    eq(r.escQuitInHub, false, '基地没有「退出战斗」行');
+    eq(r.escPausedHub, true, '打开菜单时基地场景被暂停（scene.isPaused()）');
+    ok(Math.abs(r.escXDeltaPaused) < 0.5, '暂停期间按 D 角色不动（暂停是真的）',
+       'Δx = ' + r.escXDeltaPaused);
+
+    // ③ 设置页：两个原生滑块 + 绿色已划段 + 圆钮 + 拖动真落地
+    eq(r.escSettingsRow, true, '菜单里有「设置」行');
+    ok(r.volMaster && r.volMaster.tag === 'INPUT' && r.volMaster.type === 'range',
+       '总音量是原生 input[type=range]', JSON.stringify(r.volMaster));
+    eq(r.volMaster && r.volMaster.min, '0', '总音量滑块最左是 0');
+    eq(r.volMaster && r.volMaster.max, '100', '总音量滑块最右是 100');
+    ok(r.volMusic && r.volMusic.tag === 'INPUT' && r.volMusic.type === 'range',
+       '音乐音量是原生 input[type=range]', JSON.stringify(r.volMusic));
+    eq(r.volMusic && r.volMusic.min, '0', '音乐滑块最左是 0');
+    eq(r.volMusic && r.volMusic.max, '100', '音乐滑块最右是 100');
+    eq(r.volMasterBgIsGradient, true, '轨道用渐变画"已划过的那一段"',
+       r.volMasterBg);
+    eq(r.volMasterBgHasGreen, true, '已划过的部分是绿色 #7fc45c', r.volMasterBg);
+    eq(r.volThumbRound, true, '滑钮是圆的（::-webkit-slider-thumb border-radius:50%）',
+       r.volThumbRule);
+    ok(/BGM|未接入|暂无/.test(r.musicNote), '音乐滑块旁明确写了"没有 BGM / 未接入"',
+       r.musicNote);
+    ok(Math.abs(Number(r.volMetaAfter) - 0.4) < 0.001,
+       '拖到 40 后存档里的音量是 0.4', r.volMetaAfter);
+    ok(typeof r.volGainAfter === 'number' && Math.abs(r.volGainAfter - 0.4) < 0.02,
+       '拖到 40 后 masterGain.gain 真的跟着变（滑块接上了音频层）', r.volGainAfter);
+    eq(r.volFillAfter, '40%', '绿色填充宽度跟着滑块走（--fill = 40%）', r.volFillAfter);
+    eq(r.volValueTextAfter, '40', '右端数值显示 40', r.volValueTextAfter);
+    ok(Math.abs(Number(r.musicMetaAfter) - 0.7) < 0.001,
+       '音乐滑块的值也存进存档（0.7）', r.musicMetaAfter);
+    ok(Math.abs(r.musicGainUnaffected - r.volGainAfter) < 0.001,
+       '音乐滑块不改变总音量（没有接任何声源，不能假装有声音）',
+       r.musicGainUnaffected + ' vs ' + r.volGainAfter);
+
+    // ④ 设置页里按 ESC 先退一层：菜单还在、设置页收起、场景仍暂停
+    eq(r.escFromSettingsStillOpen, true, '设置页里按 ESC 只退回菜单页（不直接关）');
+    eq(r.escSettingsDisplayAfterEsc, 'none', '退回后设置页收起来了');
+    eq(r.escPausedAfterEscBack, true, '退回菜单页时场景仍在暂停');
+    // 再按一次：关掉并恢复
+    eq(r.escClosedAgain, true, '再按 ESC 关掉菜单');
+    eq(r.escDisplayedAfterClose, 'none', '关掉后 #esc 回到 display:none');
+    eq(r.escPausedAfterClose, false, '关掉菜单后场景恢复（isPaused() = false）');
+    ok(r.escXDeltaResumed > 1, '恢复后按 D 角色真的动了（不是冻住的）',
+       'Δx = ' + r.escXDeltaResumed);
+
+    // ⑤ 战斗中两行 + 主动退出结算
+    eq(r.escRunFound, true, '前置：进入了 Run 场景');
+    eq(r.escOpenedRun, true, '战斗中按 ESC 打开菜单');
+    eq(r.escRowsRun, 2, '战斗中菜单两行', JSON.stringify(r.escRowLabelsRun));
+    eq(JSON.stringify(r.escRowLabelsRun), JSON.stringify(['设置', '退出战斗']),
+       '两行依次是「设置」「退出战斗」', JSON.stringify(r.escRowLabelsRun));
+    eq(r.escQuitInRun, true, '战斗中有「退出战斗」行（data-act=quit）');
+    eq(r.escPausedRun, true, '战斗中打开菜单会把 Run 场景暂停');
+    ok(Math.abs(r.escElapsedWhilePaused) < 0.001,
+       '暂停期间战斗计时一秒都没走（update 真停了）', r.escElapsedWhilePaused);
+    eq(r.escPhaseAfterQuit, 'result', '退出后进入结算阶段，不是直接回基地');
+    eq(r.escRunClearedAfterQuit, true, '退出后这一局被清空（不能二次结算）');
+    eq(r.escResultTitle, '主动退出', '结算标题区分「主动退出」与「倒下了」', r.escResultTitle);
+    ok(r.escResultBody.indexOf('主动退出') >= 0 &&
+       /保留\s*50%/.test(r.escResultBody),
+       '结算卡写明主动退出与保留比例', r.escResultBody.slice(0, 160));
+    eq(r.escResultExited, true, '结算结果带 exited 标记');
+    eq(r.escResultCoins, 500, '满血退出：1000 铜币保留 50%', r.escResultCoins);
+    eq(r.escResultSeeds, 100, '满血退出：200 种子保留 50%', r.escResultSeeds);
+    ok(Math.abs(r.escResultKeep - 0.5) < 1e-9, '满血保留率是 0.5', r.escResultKeep);
+    eq(r.escPanelOpen, true, '结算卡真的弹出来了（复用 showResult）');
+    eq(r.escDupOk, false, '连点第二次退出被拒绝（ok = false）');
+    eq(r.escDupCoinsDelta, 0, '连点第二次一分钱都不发（反刷）');
+    eq(r.escPhaseBackHub, 'farm', '点「回基地」后回到基地');
+    eq(r.escBagReopened, true, '收尾：背包已重新打开（后续 resize 段的前置状态）');
   }
 
   console.log('\n--- 音效层：真浏览器里的 AudioContext（Task 12）---');

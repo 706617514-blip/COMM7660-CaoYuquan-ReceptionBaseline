@@ -929,6 +929,22 @@
         if (typeof scene.toggleBag === 'function') scene.toggleBag();
         return;
       }
+      /**
+       * ESC：和 Tab 同样的边沿处理（Task 13）。
+       *
+       * 三个约束一起决定了它必须写在这里：
+       *  1. 不能放 update() 里判 justPressed('esc')：菜单一开就 scene.pause()，
+       *     pause 之后 update 不再执行，就再也没人能把菜单关掉（实测永久冻结）。
+       *  2. 不能无条件拦下：FarmScene 没有 toggleEscMenu，那边的 ESC 仍然是
+       *     "退出田地回基地"，靠 down.esc 走 justPressed —— 所以要 typeof 守卫，
+       *     场景没这个能力就让它落到下面的 down 表。
+       *  3. 必须 return 在 down[name] = true 之前：ESC 不进按键表，避免
+       *     同一帧里既开了菜单又被 FarmScene 的 justPressed 读到。
+       */
+      if (name === 'esc' && typeof scene.toggleEscMenu === 'function') {
+        scene.toggleEscMenu();
+        return;
+      }
       down[name] = true;
       down['confirm'] = down['confirm'] || name === 'attack';
     };
@@ -1573,6 +1589,10 @@
     toggleBag() {
       const hud = global.BagHud;
       if (!hud || typeof hud.open !== 'function') return;
+      // ESC 菜单开着时不接 Tab：两层都会暂停场景，而抽屉那层的 resume 只解一层，
+      // 结果是"菜单还显示着、游戏却已经在跑"。让玩家先按 ESC 出来。
+      const uiE = global.EmberfieldUI;
+      if (uiE && typeof uiE.isEscOpen === 'function' && uiE.isEscOpen()) return;
       if (hud.isOpen()) { hud.close(); return; }   // 恢复在 onClose 里，成对
       // 先开面板再暂停：反过来的话一暂停就轮不到渲染，玩家会看到半张面板。
       const okOpen = hud.open(this.state, {
@@ -1583,6 +1603,40 @@
       // 开背包音（Task 12）。只在**真的开了**之后响；关闭不响 ——
       // 关闭是回到游戏，安静的返回比再来一声"唰"更不打扰。
       GameAudio.play('bagOpen');
+      this.scene.pause();
+    }
+
+    /**
+     * ESC 菜单（Task 13 / 设计 §5.6）：基地只有「设置」一行。
+     *
+     * 调用点只有一个：createInput 的 onDown（ESC 分支）。**不要**改成
+     * update() 里判 justPressed('esc') —— 下面的 scene.pause() 会把 update 停掉，
+     * 再按一次就没人处理，菜单永远关不掉（Tab 踩过同一个坑）。
+     */
+    toggleEscMenu() {
+      const ui = global.EmberfieldUI;
+      if (!ui || typeof ui.openEsc !== 'function') return;
+      if (typeof ui.isEscOpen === 'function' && ui.isEscOpen()) {
+        // 已经开着：设置页先退回菜单页，菜单页再按一次才关（少一层误触）
+        if (typeof ui.isEscSettings === 'function' && ui.isEscSettings()) {
+          ui.escBack();
+          return;
+        }
+        ui.closeEsc();                 // 恢复在 onClose 里，成对
+        return;
+      }
+      // 背包开着时 ESC 先关背包：两层暂停叠在一起时，关掉上面那层的 resume
+      // 只解掉一层，玩家会被冻在"游戏看起来在跑、实际一动不动"的状态。
+      const hud = global.BagHud;
+      if (hud && typeof hud.isOpen === 'function' && hud.isOpen()) {
+        hud.close();
+        return;
+      }
+      const okOpen = ui.openEsc(L.escMenuRows(this.state), {
+        state: this.state,
+        onClose: () => { if (this.scene && this.scene.isPaused()) this.scene.resume(); },
+      });
+      if (!okOpen) return;             // 菜单建不出来就别暂停，否则游戏冻住还没出口
       this.scene.pause();
     }
 
@@ -1818,6 +1872,9 @@
     toggleBag() {
       const hud = global.BagHud;
       if (!hud || typeof hud.open !== 'function') return;
+      // 同 HubScene：ESC 菜单开着时不让 Tab 再叠一层暂停（关背包时的 resume 只解一层）
+      const uiE = global.EmberfieldUI;
+      if (uiE && typeof uiE.isEscOpen === 'function' && uiE.isEscOpen()) return;
       if (hud.isOpen()) { hud.close(); return; }
       const okOpen = hud.open(this.state, {
         onChange: () => refreshHeroEquip(this.hero, this.state),
@@ -1827,6 +1884,82 @@
       // 否则玩家会以为"战斗里 Tab 没生效"。
       GameAudio.play('bagOpen');
       this.scene.pause();
+    }
+
+    /**
+     * ESC 菜单（Task 13 / 设计 §5.6）：战斗里两行「设置」「退出战斗」。
+     *
+     * 和 HubScene 的同名方法结构一致，唯一的差别是传了 onQuit ——
+     * 基地里没有"退出战斗"这一行，所以那边不给这个回调。
+     * 同样只能从 createInput 的 onDown 调用（见那边的注释）。
+     */
+    toggleEscMenu() {
+      const ui = global.EmberfieldUI;
+      if (!ui || typeof ui.openEsc !== 'function') return;
+      if (typeof ui.isEscOpen === 'function' && ui.isEscOpen()) {
+        if (typeof ui.isEscSettings === 'function' && ui.isEscSettings()) {
+          ui.escBack();
+          return;
+        }
+        ui.closeEsc();
+        return;
+      }
+      // 背包与菜单都会暂停场景，两层叠着关不干净：先关背包，让玩家再按一次 ESC。
+      const hud = global.BagHud;
+      if (hud && typeof hud.isOpen === 'function' && hud.isOpen()) {
+        hud.close();
+        return;
+      }
+      // 结算卡已经弹出来时不接 ESC：那一层自己有「再来一局 / 回基地」两个出口，
+      // 再叠一个暂停菜单只会让玩家分不清现在该点哪里。
+      if (this.state.phase === 'result') return;
+      const okOpen = ui.openEsc(L.escMenuRows(this.state), {
+        state: this.state,
+        onQuit: () => this.quitRun(),
+        onClose: () => { if (this.scene && this.scene.isPaused()) this.scene.resume(); },
+      });
+      if (!okOpen) return;
+      // 战斗里菜单一开就全暂停：怪不许在菜单后面继续咬人（设计 §5.6）
+      this.scene.pause();
+      GameAudio.play('bagOpen');
+    }
+
+    /**
+     * 「退出战斗」（Task 13）：按战败入账，但保留率按剩余血量折扣（设计 §3.4）。
+     *
+     * 结算本身全在 L.exitRun 里（Node 测试直接测它）；这里只做三件事：
+     * 关菜单 → 恢复场景（否则结算面板在暂停的场景后面）→ 走原有的 showResult。
+     * 重复退出 / 已经结算过的局由 L.exitRun 拒绝，这里只把原因说出来。
+     */
+    quitRun() {
+      const ui = global.EmberfieldUI;
+      const st = this.state;
+      const res = L.exitRun(st);
+      if (!res || !res.ok) {
+        if (ui && typeof ui.toast === 'function') {
+          ui.toast((res && res.reason) || '现在不能退出', false);
+        }
+        // 拒绝之后菜单还开着，玩家得能自己出去 —— 别顺手关掉当成"退成功了"
+        return;
+      }
+      if (ui && typeof ui.closeEsc === 'function') ui.closeEsc();   // 顺带 resume
+      if (ui && typeof ui.showHud === 'function') ui.showHud(false);
+      if (ui && typeof ui.save === 'function') ui.save(st);
+      const finishedDiff = st.lastResult && st.lastResult.difficultyId;
+      if (ui && typeof ui.setAgainHandler === 'function') {
+        ui.setAgainHandler(() => {
+          L.returnToFarm(st);
+          L.startRun(st, finishedDiff);
+          if (ui && typeof ui.save === 'function') ui.save(st);
+          this.scene.restart();
+        });
+      }
+      if (ui && typeof ui.showResult === 'function') {
+        ui.showResult(st, () => {
+          L.returnToFarm(st);
+          this.scene.start('Hub');
+        });
+      }
     }
 
     getEnemySprite(i, kind) {
