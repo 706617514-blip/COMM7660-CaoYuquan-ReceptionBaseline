@@ -1835,7 +1835,14 @@ git commit -m "feat: ESC 菜单（战斗中两行）、音量滑块、退出战�
 
 **Files:**
 - Modify: `game/config.js:44-53`（`COMBO.steps`、`ATTACK_RANGE`、`ATTACK_DEPTH`、`ATTACK_BACK`）
+- **Modify: `tests/bot.js:77` 与 `tests/test_game_logic.js:664`（把硬编码的 `d < 62` 改成 `d < C.ATTACK_RANGE`）**
 - Test: `tests/test_game_logic.js`（V18）
+
+> **两处硬编码 62（实测）**：`tests/bot.js:77` 和 `tests/test_game_logic.js:664` 都是
+> `if (d < 62 && Math.abs(dz) <= C.ATTACK_DEPTH * 0.85) i.attack = true;` ——
+> 机器人出招阈值被写死成 62。配置改到 66 之后，机器人仍然只在 62 内出手，
+> **胜率漂移会把"射程变长"的效果系统性低估**，看起来像"改了没用"。
+> 必须同步改成 `C.ATTACK_RANGE`（`bot.js` 顶部已 `require` 了 config，直接可用）。
 
 **Interfaces:**
 - Consumes: 无
@@ -1880,10 +1887,11 @@ Expected: FAIL —— 三段都还是原值。
 - [ ] **Step 3: 改配置**
 
 **三段都要改**，不能只改 `ATTACK_RANGE`（那只影响第一段基准）。`ATTACK_DEPTH` 与 `ATTACK_BACK` 同比放大。
+同时把 `tests/bot.js:77` 与 `tests/test_game_logic.js:664` 的 `62` 换成 `C.ATTACK_RANGE`。
 
 - [ ] **Step 4: 跑测试确认通过 + 经济漂移检查**
 
-Run: `"$N" tests/test_game_logic.js && "$N" tests/test_game_logic.js && "$N" tests/bot.js 2>&1 | tail -20`
+Run: `"$N" tests/test_game_logic.js && "$N" tests/bot.js 2>&1 | tail -20`
 Expected: PASS。胜率阶梯与冻结基线对比，**任一档上升超过 8 个百分点视为经济变松**。
 
 > **注意 1**：`tests/bot.js` 每局新建空背包存档、从不出售，所以它**测不出**本批的出售类经济变化。它的作用只是确认 +5% 没有把难度压垮。要做出售类护栏需先给 `play()` 加策略参数（设计文档 §6 已记录这条护栏被降级）。
