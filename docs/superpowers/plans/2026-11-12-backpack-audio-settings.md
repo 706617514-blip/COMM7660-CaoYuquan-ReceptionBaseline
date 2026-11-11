@@ -90,17 +90,26 @@ for (let i = 0; i < 5000 && !dupDrop; i++) {
 }
 ok(dupDrop && dupDrop.refund === undefined, '重复掉落不再带 refund 字段');
 ok(C.EQUIP_DROP.refundRatio === undefined, '折算比例已从配置里删除');
-const before = dupState.meta.bag.length;
-L.rollEquipDrop(dupState);   // 已知存在的 id，必然重复
-ok(dupState.meta.bag.length === before + 1, '重复品也进背包（不会撑爆背包）');
-// 注：meta.bag 由 Task 2 引入。本任务先只断言 refund 已删除，
-// 上面这条 bag 断言在 Task 2 完成后才可能通过 —— Step 2 的失败是预期的。
+// 重复品仍然进库存，**不会**因为重复就被吞掉或折算
+const invBefore = dupState.meta.inventory.length;
+dupState.meta.inventory = Object.keys(C.ALL_EQUIPMENT)
+  .filter(function (i) { return C.ALL_EQUIPMENT[i].kind === 'base'; });   // 全部已拥有
+const dupProbe = L.rollEquipDrop(dupState);
+ok(dupProbe && dupProbe.duplicate === true, '全拥有时掉落判定为重复');
+ok(dupState.meta.inventory.length === 21, '重复品数量不变（不是被吞掉）');
+ok(dupState.meta.coins === 0, '重复品不再产生任何铜币');
+
+// 注：`meta.inventory` 在 Task 2 会整体迁移成 `meta.bag` 条目数组。
+// 本任务断言的是"refund 已消失、重复品不消失"，**不依赖 Task 2 的模型**；
+// Task 2 完成后这三条会跟着迁移（Task 2 的测试负责覆盖 bag 版本）。
 ```
 
 - [ ] **Step 2: 跑测试确认失败**
 
 Run: `"$N" tests/test_game_logic.js`
-Expected: FAIL —— `meta.bag` 是 `undefined`，`TypeError`。**这是预期的**：本任务先删退款，`meta.bag` 由 Task 2 引入。
+Expected: FAIL —— 仍是旧行为：`refundRatio` 存在、重复品折算铜币、`rollEquipDrop` 返回里带 `refund`。
+（**不应出现 `TypeError`**：本任务的断言只用 `meta.inventory`/`meta.coins`，
+不依赖 Task 2 才引入的 `meta.bag`。）
 
 - [ ] **Step 3: 删除退款路径**
 
@@ -138,7 +147,8 @@ if (!e.isBoss) {
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `"$N" tests/test_game_logic.js`
-Expected: 断言数由 **389** 变为新的数字（约 387–389），**全部通过**。
+Expected: **全部通过**。断言数会变化（删掉 2 条退款断言、新增 3 条重复品断言），
+实际数字记在 implementer 的报告里；Task 15 会核对总数。
 
 - [ ] **Step 5: 提交**
 
