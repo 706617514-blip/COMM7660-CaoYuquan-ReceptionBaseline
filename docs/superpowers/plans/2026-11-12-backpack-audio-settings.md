@@ -190,8 +190,29 @@ git commit -m "feat(bag): 删除重复件 30% 自动退款，掉落全部进背�
   - `bagCount(state) -> number`
   - `bagCapacity(state) -> number`（= `bagPages × 35`）
   - `bagIndexOfUid(state, uid) -> number`
-  - `meta.settings = { volume: 0.30, muted: false }`（Task 12 的音效层要用；`createState` 今天没有这个字段）
-  - **`meta.inventory` / `meta.inventoryLevels` 本任务后不再存在**
+  - `bagEntry(state, id, level) -> { id, level, uid }`（**内部辅助**：生成一个带新 uid 的条目）
+  - `nextUid(state) -> string`（**内部辅助**：`id + '#' + 自增数`；计数器挂在 `state.meta` 上，随存档走）
+
+> **`uid` 怎么生成（原稿只用了没定义，必须补）**：`bagEntry(state, id, level)`
+> 造条目并分配 uid；`nextUid(state)` 是它内部用的计数器。
+> ```js
+> function nextUid(state) {
+>   const n = (state.meta.uidSeq || 0) + 1;
+>   state.meta.uidSeq = n;
+>   return 'u' + n;
+> }
+> ```
+> 关键是：
+> 1. **同一存档内绝不重复**；
+> 2. **跨序列化保留**（计数器存 `meta.uidSeq`，否则读档后新条目会撞旧 uid）；
+> 3. `bagEntry(state, id, level)` = `{ id: id, level: level || 1, uid: nextUid(state) }`
+>    （**必须带 `state`**：uid 计数器存在 `state.meta` 上）
+>
+> `createState` 里加 `uidSeq: 0`。
+
+- **也产出** `meta.settings = { volume: 0.30, muted: false }`（Task 12 的音效层要用；
+  `createState` 今天没有这个字段，所以由本任务的迁移块一并创建）
+- **`meta.inventory` / `meta.inventoryLevels` 本任务后不再存在**
 
 > **为什么要 `uid`**：同一 id 可能有两件（重复掉落）。DOM 上用「第几格」做 key 会在排序后错位，所以每件给一个稳定 `uid`（`id + '#' + 自增数`），只存在于 `bag` 条目内、不进存档的语义层。
 
@@ -205,7 +226,7 @@ const idx = bagAdd(state, id, 1);            // 容量内：正常入格
 if (idx === -1) {
   // 全满：不丢、也不越界 —— 落进最后已解锁页的末格，由 UI 提示"背包已满"
   const last = bagCapacity(state) - 1;
-  state.meta.bag[last] = { id: id, level: 1, uid: nextUid(state) };
+  state.meta.bag[last] = bagEntry(state, id, 1);
   return { id: id, duplicate: duplicate, bagFull: true };
 }
 return { id: id, duplicate: duplicate, bagFull: false };
@@ -270,7 +291,7 @@ if (s.version === 5) {
   oldIds.forEach(function (id) {
     if (seen[id]) return;
     seen[id] = true;
-    s.meta.bag.push(bagEntry(id, oldLv[id] || 1));
+    s.meta.bag.push(bagEntry(s, id, oldLv[id] || 1));
   });
   delete s.meta.inventory;
   delete s.meta.inventoryLevels;
@@ -286,7 +307,7 @@ if (s.version === 5) {
 ```js
 function bagAdd(state, id, level) {
   if (state.meta.bag.length >= bagCapacity(state)) return -1;
-  state.meta.bag.push(bagEntry(id, level || 1));
+  state.meta.bag.push(bagEntry(state, id, level || 1));
   return state.meta.bag.length - 1;
 }
 ```
