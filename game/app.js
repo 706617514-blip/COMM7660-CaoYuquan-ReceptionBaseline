@@ -859,6 +859,9 @@
       KeyJ: 'attack', KeyJConfirm: 'confirm',
       ShiftLeft: 'sprint', ShiftRight: 'sprint',
       KeyU: 'whirl', KeyI: 'blink', KeyO: 'slam', KeyK: 'cry', KeyL: 'nova',
+      // V：武器专属技能（誓约剑的格挡 / 秘法典的二段闪）。
+      // 只有装了带 grantSkill 的武器才有这个技能，没装时按键无效。
+      KeyV: 'special',
       Digit1: 'potion1', Digit2: 'potion2', Digit3: 'potion3',
       Numpad1: 'potion1', Numpad2: 'potion2', Numpad3: 'potion3',
       Escape: 'esc',
@@ -911,12 +914,29 @@
     };
     const prevPotion = Object.create(null);
 
+    /*
+     * 专属技能（V）同样走**边沿触发**。
+     *
+     * 上面五个技能用的是按住状态（!!down.whirl），因为它们冷却很短、
+     * 按住连发是符合预期的。但 V 的冷却长达 9~12 秒：如果也用按住状态，
+     * 玩家按一下不松手，冷却一归零就会立刻自动再放一次 —— 手感上像
+     * "技能自己乱放"，而不是自己按出来的。
+     */
+    const specialEdge = () => {
+      const now = !!down.special;
+      const was = !!prevSpecial.special;
+      prevSpecial.special = now;
+      return now && !was;
+    };
+    const prevSpecial = Object.create(null);
+
     const read = () => ({
       up: !!down.up, down: !!down.down,
       left: !!down.left, right: !!down.right,
       jump: !!down.jump, attack: !!down.attack, sprint: !!down.sprint,
       whirl: !!down.whirl, blink: !!down.blink, slam: !!down.slam,
       cry: !!down.cry, nova: !!down.nova,
+      special: specialEdge(),
       potion1: potionEdge('potion1'),
       potion2: potionEdge('potion2'),
       potion3: potionEdge('potion3'),

@@ -1640,6 +1640,64 @@ section('30. 装备（不破坏既有平衡）');
   });
 }
 
+// ---------------------------------------------------------------- 31. 专属技能（V）接进输入层
+section('31. 专属技能：按键 -> 释放 -> 冷却 -> 失去');
+
+{
+  // 装了誓约剑才有格挡
+  const a = armedRunWithEquip({ oathkeeper: 1 });
+  ok(L.specialSkillOf(a.s) === 'block', '誓约剑授予「格挡」',
+    String(L.specialSkillOf(a.s)));
+
+  // 没装授予技能的武器就没有
+  const b = armedRunWithEquip({ twinBlades: 1 });
+  ok(L.specialSkillOf(b.s) === null, '普通武器不授予专属技能',
+    String(L.specialSkillOf(b.s)));
+
+  // 空武器位也没有
+  const c = armedRunWithEquip({});
+  ok(L.specialSkillOf(c.s) === null, '没装武器时没有专属技能');
+
+  // 按下 V：进入冷却 + 格挡生效
+  ok(a.p.specialCd === 0, '开局专属技能无冷却');
+  L.step(a.s, { special: true }, 1 / 60);
+  ok(a.p.specialCd > 0, '释放后进入冷却', a.p.specialCd.toFixed(2));
+  ok(a.p.blockTimer > 0, '格挡在生效', a.p.blockTimer.toFixed(2));
+
+  /*
+   * 冷却必须随时间递减。
+   * 这正是这次接输入时漏掉的一环：castSpecial 只"设"冷却，
+   * stepPlayer 里没有对应的减法，技能一辈子只能放一次。
+   * 这条断言就是钉住它。
+   */
+  const cdBefore = a.p.specialCd;
+  for (let i = 0; i < 60; i++) L.step(a.s, {}, 1 / 60);
+  ok(a.p.specialCd < cdBefore, '冷却随时间递减（不会卡住不放）',
+    `${cdBefore.toFixed(2)} -> ${a.p.specialCd.toFixed(2)}`);
+
+  // 冷却中再按不出第二发
+  const held = armedRunWithEquip({ oathkeeper: 1 });
+  L.step(held.s, { special: true }, 1 / 60);
+  const afterFirst = held.p.blockTimer;
+  L.step(held.s, { special: true }, 1 / 60);
+  ok(held.p.blockTimer <= afterFirst, '冷却中按 V 不会刷新/叠加格挡');
+
+  // 二段闪：位移 + 无敌帧
+  const d = armedRunWithEquip({ arcaneTome: 1 });
+  ok(L.specialSkillOf(d.s) === 'blink2', '秘法典授予「二段闪」');
+  const x0 = d.p.x, face = d.p.facing;
+  L.step(d.s, { special: true }, 1 / 60);
+  ok(d.p.x !== x0, '二段闪真的位移了', `${x0} -> ${d.p.x}`);
+  ok(Math.sign(d.p.x - x0) === Math.sign(face), '朝面向方向闪');
+  ok(d.p.invuln > 0, '二段闪带无敌帧', d.p.invuln.toFixed(2));
+
+  // 卸下武器即失去技能，且再调用返回 false
+  const e = armedRunWithEquip({ oathkeeper: 1 });
+  L.unequipSlot(e.s, 'weapon');
+  ok(L.specialSkillOf(e.s) === null, '卸下授予类武器后技能消失');
+  eq(L.castSpecial(e.s, e.run, e.p), false, '无武器时 castSpecial 返回 false');
+}
+
 // ---------------------------------------------------------------- 汇总
 console.log('\n' + '='.repeat(56));
 if (fail === 0) {

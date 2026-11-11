@@ -278,10 +278,10 @@
 
   function showHud(on, s) {
     $('hud').className = on ? 'on' : '';
-    if (on && s) { buildSkillBar(); updateHud(s); }
+    if (on && s) { buildSkillBar(s); updateHud(s); }
   }
 
-  function buildSkillBar() {
+  function buildSkillBar(s) {
     const bar = $('skills');
     bar.innerHTML = '';
     C.SKILL_ORDER.forEach(function (key) {
@@ -294,7 +294,29 @@
                      '<div class="cd"></div>';
       bar.appendChild(el);
     });
+
+    /*
+     * 武器专属技能格（V）：有才显示。
+     *
+     * 和药水条刻意相反 —— 药水常驻三格是为了让玩家记住 1/2/3 的位置；
+     * 但 V 不是每个角色都有，只有装了誓约剑（格挡）或秘法典（二段闪）才有。
+     * 常驻一个永远不能按的格子只会让人反复试错，所以按需出现。
+     */
+    const special = s && L.specialSkillOf ? L.specialSkillOf(s) : null;
+    if (special) {
+      const d = C.SPECIAL_SKILLS[special];
+      if (d) {
+        const el = document.createElement('div');
+        el.className = 'sk ult';
+        el.id = 'sk-special';
+        el.innerHTML = '<div class="k">V</div>' +
+                       '<div class="n">' + d.short + '</div>' +
+                       '<div class="cd"></div>';
+        bar.appendChild(el);
+      }
+    }
     buildPotionBar();
+    return special;
   }
 
   /**
@@ -348,6 +370,19 @@
         el.className = 'sk' + ult;
       }
     });
+
+    // 武器专属技能（V）的冷却。格子只在装了对应武器时才存在，
+    // 所以这里要容错取不到元素的情况。
+    const spEl = $('sk-special');
+    if (spEl) {
+      const cd = p.specialCd || 0;
+      if (cd > 0.05) {
+        spEl.className = 'sk cooling ult';
+        spEl.querySelector('.cd').textContent = cd >= 1 ? Math.ceil(cd) : cd.toFixed(1);
+      } else {
+        spEl.className = 'sk ult';
+      }
+    }
 
     // 药水条：数量 + 生效倒计时
     const bar = $('potions');

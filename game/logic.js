@@ -781,6 +781,16 @@
       if (input[k]) tryCastSkill(state, run, p, k);
     });
 
+    /*
+     * 武器专属技能（V）。
+     *
+     * 与上面五个技能不同，它不是"天生就会"：只有装了带 grantSkill 的武器
+     * （誓约剑 → 格挡、秘法典 → 二段闪）才有，卸下就没有。
+     * castSpecial 内部会自己检查是否有对应武器，所以这里无脑转交即可 ——
+     * 没装武器时它会直接返回 false，不需要在这里重复判断。
+     */
+    if (input.special) castSpecial(state, run, p);
+
     // 连击窗口倒计时：超时就回到第 1 段
     if (p.comboTimer > 0) {
       p.comboTimer = Math.max(0, p.comboTimer - dt);
