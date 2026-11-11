@@ -15,3 +15,6 @@ venv/
 
 # 由 analysis/export_docs_to_docx.py 生成，可用一条命令重建
 exports/
+
+# 检索索引（本地生成，非交付物）
+.memsearch/
