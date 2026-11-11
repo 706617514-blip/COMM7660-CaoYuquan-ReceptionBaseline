@@ -18,3 +18,7 @@ exports/
 
 # 检索索引（本地生成，非交付物）
 .memsearch/
+
+# smoke.js 每次运行重写，是生成物不是源码
+.tests/browser/_driver.js
+tests/browser/_driver.js
