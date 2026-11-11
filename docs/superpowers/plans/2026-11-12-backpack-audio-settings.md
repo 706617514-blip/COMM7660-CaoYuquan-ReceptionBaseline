@@ -854,9 +854,19 @@ L.sortBag(s);
 ok(s.meta.bag[0].id === 'thornMail', '特殊件排在基础件前');
 ok(s.meta.bag[1].level === 3, '同 id 内等级高的在前');
 
-// 连续填充：不同种类不独占一行（相同 id 必须相邻）
+// 「不同种类不独占一行」= 相同 id 必须挨在一起。
+// ⚠ 不要写成 `ids.indexOf(X) + 1 === ids.lastIndexOf(X)` —— 实测该表达式
+//   **等价于「恰好出现两次且相邻」**，对数量敏感：只出现一次时为 false
+//   （会把正确实现判失败），三件同 id 时也为 false。要断言的是"分组连续"，
+//   与出现几次无关，所以写成「对每个 id，其首次与末次出现之间不含别的 id」：
 const ids = s.meta.bag.map((e) => e.id);
-ok(ids.indexOf('longCloak') + 1 === ids.lastIndexOf('longCloak'), '同 id 相邻，不独占行');
+const grouped = ids.every((id) => {
+  const seg = ids.slice(ids.indexOf(id), ids.lastIndexOf(id) + 1);
+  return seg.every((x) => x === id);
+});
+ok(grouped === true, '同 id 的元素连续挨在一起，不被别的装备隔开（不独占行）');
+ok(ids.indexOf('longCloak') >= 0 && ids.filter((x) => x === 'longCloak').length >= 2,
+   '前提成立：确实有两件 longCloak，否则上一条是空转');
 
 // V11：页签过滤
 ok(L.bagFilter(s.meta.bag, 'special').length === 1, '特殊页签只出特殊件');
