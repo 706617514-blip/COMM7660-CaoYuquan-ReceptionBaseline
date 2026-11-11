@@ -1621,6 +1621,15 @@ git commit -m "feat(hub): 六点位上下错落（含判定与绘制同步），
 
 - [ ] **Step 1: 写测试**
 
+> 新文件 `tests/test_audio.js` 先照抄 `tests/test_bag.js` 顶部的
+> `ok()` / `eq()` / 计数与汇总块（本项目测试不共用 runner），再写下面的内容。
+>
+> **stub 只桩了 `play()` 真正会用到的方法**。实现时若要用到别的 WebAudio API
+> （比如 `createDynamicsCompressor`、`createStereoPanner`、`createWaveShaper`），
+> **必须同时在测试的 stub 里补上同名方法**，否则 Node 里会
+> `TypeError: ... is not a function` —— 那不是"音效坏了"，是 stub 不完整。
+> 提交前用 `grep -o 'create[A-Za-z]*' game/audio.js | sort -u` 对一遍 stub。
+
 ```js
 global.AudioContext = function () {           // stub
   this.state = 'running'; this.currentTime = 0;
