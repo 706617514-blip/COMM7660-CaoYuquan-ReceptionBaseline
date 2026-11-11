@@ -94,6 +94,30 @@ def check_numbers() -> dict:
     tags = subprocess.run(["git", "tag", "-l", "v0.2*"], cwd=ROOT,
                           capture_output=True, text=True).stdout.split()
     vals["tags"] = len(tags)
+
+    # 装备系统的规模：现场从 config 里数，而不是在正文里写死。
+    # 装备数量是会变的（这次从 0 加到 35），写死的话改一次就要手动同步一次。
+    cfg = subprocess.run([node, "-e",
+                          "require('./game/config.js');"
+                          "const C=globalThis.GameConfig;"
+                          "console.log(JSON.stringify({"
+                          " all:Object.keys(C.ALL_EQUIPMENT).length,"
+                          " base:Object.keys(C.EQUIPMENT).length,"
+                          " special:Object.keys(C.EQUIP_FX).length,"
+                          " slots:C.EQUIP_SLOTS.length,"
+                          " cut:C.EQUIP_DROP.chance*100,"
+                          " refund:Math.round(C.EQUIP_DROP.refundRatio*100)"
+                          "}))"],
+                         cwd=ROOT, capture_output=True, text=True).stdout
+    import json as _json
+    eq = _json.loads(cfg.strip().splitlines()[-1])
+    vals["equip_total"] = eq["all"]
+    vals["equip_base"] = eq["base"]
+    vals["equip_special"] = eq["special"]
+    vals["equip_slots"] = eq["slots"]
+    vals["drop_pct"] = int(round(eq["cut"]))
+    vals["refund_pct"] = eq["refund"]
+
     return vals
 
 
@@ -237,7 +261,9 @@ def build(pilot: Path | None) -> None:
 
     doc.add_paragraph()
 
-    # ---- 正文（500–700 词，作业 Table 7 硬要求） ----
+    # ---- 正文（目标 900–1,300 词；Phase 2 无硬性字数上限，见文件头说明） ----
+    # 注意：500–700 词是**Phase 1** Table 7 的要求，不是 Phase 2 的。
+    # 这里曾经误抄过那句话，容易让人把报告砍到不完整。
     heading(doc, "1. From Phase 1 to the prototype")
     para(doc,
          "Phase 1 tested five declared attributes of a released Steam title: business model, "
@@ -257,13 +283,29 @@ def build(pilot: Path | None) -> None:
          "crowded tag.")
     para(doc,
          "Emberfield is a browser roguelite in which combat funds a farming economy that "
-         "determines how hard the next run can be. Three decisions carry the argument. It has a "
+         "determines how hard the next run can be. Four decisions carry the argument. It has a "
          "**depth axis**: movement, hit resolution and enemy behaviour all use (x, z), and one "
          "enemy fires down a straight line in both axes, so stepping in depth is the dodge. "
          "**Difficulty replaces level count**: four tiers differ in enemy strength and loot, "
          "making risk and reward one decision. The economy gates the risk tier: measured with a "
          "scripted agent, the hardest tier is not reliably winnable without upgrades and "
-         "becomes so once they are bought.")
+         "becomes so once they are bought. The fourth is a "
+         f"**{v['equip_total']}-item equipment system** across {v['equip_slots']} slots, which "
+         "makes a run's outcome depend on choices made before it, not only on execution "
+         "within it.")
+    para(doc,
+         "The equipment layer is where the roguelite and the economy meet. Each of the "
+         f"{v['equip_slots']} slots holds one of {v['equip_base']} basic or "
+         f"{v['equip_special']} special items; upgrades scale strength parameters only, never "
+         "the mechanic, so a stronger item is not a different one. Special items carry one of "
+         "fourteen effects, and two grant a skill rather than a stat, so the weapon slot can "
+         f"change what the player can do. Items drop at {v['drop_pct']}% and a duplicate is "
+         f"refunded at {v['refund_pct']}%, because otherwise a drop is worthless once the "
+         "collection is complete. Bosses are excluded from drops, since a farmable boss would "
+         "make repetition optimal. Two asserted bounds stop the layer from flattening the "
+         "ladder it feeds: upgrades may reduce damage taken but never increase it, and a full "
+         "basic set stays under twice the unarmoured damage and two and a half times the "
+         "unarmoured health.")
     para(doc,
          f"Delivery is complete: {v['assertions_total']} assertions across four "
          "headless suites, five CI jobs on every push, a live deployment loaded with no console errors, "
