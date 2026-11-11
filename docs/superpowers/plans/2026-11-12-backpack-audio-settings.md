@@ -90,18 +90,26 @@ for (let i = 0; i < 5000 && !dupDrop; i++) {
 }
 ok(dupDrop && dupDrop.refund === undefined, '重复掉落不再带 refund 字段');
 ok(C.EQUIP_DROP.refundRatio === undefined, '折算比例已从配置里删除');
-// 重复品仍然进库存，**不会**因为重复就被吞掉或折算
-const invBefore = dupState.meta.inventory.length;
-dupState.meta.inventory = Object.keys(C.ALL_EQUIPMENT)
+// 重复品仍然进库存，**不会**因为重复就被吞掉或折算。
+//
+// 注意两处顺序/命名陷阱（都踩过）：
+//  1. 上面那个 5000 次的 warm-up 循环**每一次都在 push**，所以它结束时
+//     inventory 已经被撑到 11 件。`invBefore` 必须在**重新播种之后**取，
+//     否则拿到的是 11，`invBefore + 1` 就是 12，断言必挂。
+//  2. 是 `meta.inventory.lastIndexOf`，**不是** `meta.lastIndexOf` ——
+//     `meta` 是普通对象，写成后者会 `TypeError`，整个套件在汇总前就崩掉。
+const seeded = Object.keys(C.ALL_EQUIPMENT)
   .filter(function (i) { return C.ALL_EQUIPMENT[i].kind === 'base'; });   // 全部已拥有
+dupState.meta.inventory = seeded.slice();
+const invBefore = dupState.meta.inventory.length;        // === 21，此刻才取
 const dupProbe = L.rollEquipDrop(dupState);
 ok(dupProbe && dupProbe.duplicate === true, '全拥有时掉落判定为重复');
 // 重复品"没被吞掉"的唯一含义就是库存**增长**：
-// 全 21 件已拥有 → 再掉一件 → 22。原稿写 === 21 是退款时代的残留
-// （那时重复分支不 push，所以 21 才成立），现在必然失败。
+// 全 21 件已拥有 → 再掉一件 → 22。
+// 原稿写 === 21 是退款时代的残留（那时重复分支不 push，21 才成立）。
 ok(dupState.meta.inventory.length === invBefore + 1, '重复品进了库存（没被吞掉）');
 ok(dupState.meta.inventory.length === 22, '正好多一件（21 件已拥有 + 1 件重复掉落）');
-ok(dupState.meta.lastIndexOf(dupProbe.id) === dupState.meta.inventory.length - 1,
+ok(dupState.meta.inventory.lastIndexOf(dupProbe.id) === dupState.meta.inventory.length - 1,
    '新增的那一件就是刚落下的 id（不是别处凭空多出来的）');
 ok(dupState.meta.coins === 0, '重复品不再产生任何铜币');
 
