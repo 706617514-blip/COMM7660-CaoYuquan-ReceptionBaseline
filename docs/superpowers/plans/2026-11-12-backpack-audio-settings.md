@@ -757,6 +757,21 @@ function sellValue(id, level) {
 
 > **不要用 `equipUpgradeCost` 加总** —— 它返回的是「下一级」的价，不是历史累计。
 
+**`sellItem(state, uid)` 的四种语义（都要有断言）**：
+1. uid 在背包 → 卖出，`{ ok:true, value }`，`meta.coins += value`，从 `meta.bag` 移除。
+2. uid 不存在 → `{ ok:false, reason }`，**不动铜币**。
+3. uid 指向已穿戴 → 理论上不可达（穿戴即离包），但要防御：返回 `{ ok:false }`。
+4. **该 id 是背包里仅剩的一件**（不穿在身上）→ 允许卖，卖完背包里就没有这个 id 了。
+   规则「每 id 至少留一件」**只作用于 `sellBatch`**，单件出售是玩家明确点击的结果，不该被拦。
+   这条必须有断言，否则实现者容易把「留一件」错写进 `sellItem`，导致单件也卖不掉。
+
+**`duplicateUids(state)`**：返回「同 id 有多件时，除等级最高那件外其余」的 uid 列表。
+同 id 只有一件时不出现在结果里。等级相同时保留 `meta.bag` 里**下标靠前**那件（稳定、可复现）。
+
+**`sellableUids(state)`**：`meta.bag` 里除「每 id 等级最高那件」外的所有 uid ——
+即「全选」卖出去之后每个 id 还剩一件。**注意这与 `duplicateUids` 等价**，
+实现时让一个调用另一个，别写两套分组逻辑（两份必然分叉）。
+
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `"$N" tests/test_bag.js`
