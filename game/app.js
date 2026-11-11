@@ -24,6 +24,17 @@
   const H = global.GameHub;
   const P = global.GameProfile;
 
+  /*
+   * 音效层（Task 12）。audio.js 必须在本文件之前加载。
+   *
+   * 这里取一个本地常量而不是每处写 global.GameAudio，有两个原因：
+   *   1. 每个触发点都写一次 global.GameAudio 的判空会让噪音盖过意图；
+   *   2. audio.js 万一没加载（例如有人只引 app.js 做静态分析），
+   *      这里退回空实现，游戏照常跑，而不是每一次挥击都抛
+   *      TypeError: Cannot read properties of undefined。
+   */
+  const GameAudio = global.GameAudio || { play: function () { return false; } };
+
   const W = 960, HGT = 600;
   const GROUND_Y = C.GROUND_Y;
   // 每单位 z 对应的屏幕竖直位移。
@@ -1569,6 +1580,9 @@
       });
       // 面板建不出来（没有 DOM / 贴图缺失）就不要暂停，否则游戏冻住还没有出口
       if (!okOpen) return;
+      // 开背包音（Task 12）。只在**真的开了**之后响；关闭不响 ——
+      // 关闭是回到游戏，安静的返回比再来一声"唰"更不打扰。
+      GameAudio.play('bagOpen');
       this.scene.pause();
     }
 
@@ -1625,7 +1639,13 @@
          * 换上头盔，主角毫无变化，要关掉面板才更新 —— 换装这个动作
          * 等于没有反馈。所以这里在动作成功后就地刷一次。
          */
-        if (r && r.ok) refreshHeroEquip(this.hero, this.state);
+        if (r && r.ok) {
+          // 成功音（Task 12）：购买 / 穿戴 / 升级 / 播种 / 卸下都走这里。
+          // 一个"确认"音比五种不同的音更省心 —— 玩家要的是"成了"，
+          // 具体是哪一种已经写在 toast 里。
+          GameAudio.play('upgrade');
+          refreshHeroEquip(this.hero, this.state);
+        }
         global.EmberfieldUI.refreshPanel(zone, this.state);
         this.refreshPlots();
         global.EmberfieldUI.save(this.state);
@@ -1755,6 +1775,19 @@
       this.lastEnemyHp = {};
       this.lastShake = 0;
 
+      /*
+       * 音效用的"上一帧快照"（Task 12）。
+       *
+       * 全都只在场景里活着，不进 logic、不进存档 —— 声音是表现层的事。
+       * 初值一律 null 而不是 0：第一次 update 只负责记录基线，
+       * 不能把"进入场景"误读成"刚挥了一刀 / 刚掉了一件装备"。
+       */
+      this.sfxPrev = {
+        swingId: null, playerHp: null, loot: null, potions: null,
+        cooldowns: null, specialCd: null, waveIndex: null, status: null,
+      };
+      this.sfxBossSeen = false;
+
       this.events.on('wake', () => { this.state = CURRENT_STATE; });
 
       /*
@@ -1790,6 +1823,9 @@
         onChange: () => refreshHeroEquip(this.hero, this.state),
       });
       if (!okOpen) return;
+      // 战斗里开背包同样要有声音：两个场景各有一个 toggleBag，两边都要接，
+      // 否则玩家会以为"战斗里 Tab 没生效"。
+      GameAudio.play('bagOpen');
       this.scene.pause();
     }
 
@@ -1809,6 +1845,107 @@
       return sp;
     }
 
+    /**
+     * 远征中的音效触发（Task 12）。
+     *
+     * 为什么全部靠"快照对比"而不是让 logic 回调
+     * -----------------------------------------
+     * 逻辑层刻意不认识渲染层（测试在 Node 里跑 logic，不该碰 AudioContext）。
+     * 而状态本身就带着足够的信息：挥击 id、血量、战利品、冷却、波次、status。
+     * 每帧把它们和上一帧比一下，谁变了就响谁的音 —— 同一个变化只会被观察到
+     * 一次，天然不会重复触发，也不需要改一行 logic。
+     *
+     * 注意每一条都是"下降/上升"而不是"不相等"：药水被喝是下降，
+     * 清波回血会让 hp 上升（那不该响受伤声），冷却在倒计时所以是持续变化，
+     * 只有"从 0 跳到 >0"才代表这次真的放出去了。
+     */
+    playRunSfx(run, input) {
+      const prev = this.sfxPrev;
+      const p = run.player;
+      if (!p) return;
+
+      // ① 挥击出手：logic 每次出手 p.swingId += 1
+      if (prev.swingId !== null && p.swingId > prev.swingId) GameAudio.play('slash');
+      prev.swingId = p.swingId;
+
+      // ② 玩家受伤：只在血量下降时响（回血不响）
+      if (prev.playerHp !== null && p.hp < prev.playerHp) GameAudio.play('hurt');
+      prev.playerHp = p.hp;
+
+      // ③ 战利品入账：铜币与种子分开两个音，玩家能听出"这波值不值"
+      const loot = run.loot || { coins: 0, seeds: 0 };
+      if (prev.loot) {
+        if (loot.coins > prev.loot.coins) GameAudio.play('coin');
+        if (loot.seeds > prev.loot.seeds) GameAudio.play('seed');
+      }
+      prev.loot = { coins: loot.coins, seeds: loot.seeds };
+
+      /*
+       * ③b 装备掉落：equipDrops 是本帧新填进来、下面那段提示会立刻排空的。
+       * 在这里读它而不是写在提示循环里，是因为提示循环已经被 test_bag 单独
+       * 抽出来求值（那段代码不该为了"响一声"而依赖 audio 层）。
+       * 同帧掉多件时只响一声：只要有一件是新的就响 dropNew，全重复才响 dropDup。
+       */
+      const drops = run.equipDrops;
+      if (drops && drops.length) {
+        // 同帧掉多件只响一声：有一件新的就算新件，全是重复才响重复音。
+        GameAudio.play(drops.every((d) => d.duplicate) ? 'dropDup' : 'dropNew');
+      }
+
+      // ④ 喝药：药水数量下降才算"真的喝掉了"（库存为 0 时按键不该有声音）
+      if (prev.potions) {
+        for (let i = 0; i < C.POTION_ORDER.length; i += 1) {
+          const id = C.POTION_ORDER[i];
+          if ((run.potions[id] || 0) < (prev.potions[id] || 0)) {
+            GameAudio.play('potion');
+            break;
+          }
+        }
+      }
+      const potions = {};
+      C.POTION_ORDER.forEach((id) => { potions[id] = run.potions[id] || 0; });
+      prev.potions = potions;
+
+      // ⑤ 技能：冷却从 0 跳到 >0 才是"这次真的放出去了"。
+      // 只看按键边沿不够 —— 冷却期间按键同样有边沿，但不该出声。
+      if (prev.cooldowns) {
+        for (let i = 0; i < C.SKILL_ORDER.length; i += 1) {
+          const k = C.SKILL_ORDER[i];
+          if (prev.cooldowns[k] === 0 && p.cooldowns[k] > 0) {
+            GameAudio.play('skill');
+            break;
+          }
+        }
+      }
+      const cooldowns = {};
+      C.SKILL_ORDER.forEach((k) => { cooldowns[k] = p.cooldowns[k] || 0; });
+      prev.cooldowns = cooldowns;
+
+      // ⑥ 专属技（V）：同一个判据 —— 冷却从 0 起跳
+      if (prev.specialCd !== null && prev.specialCd === 0 && p.specialCd > 0) {
+        GameAudio.play('special');
+      }
+      prev.specialCd = p.specialCd;
+
+      // ⑦ 新一波：waveIndex 前进（buildWave 已经换了刷怪表，这里只是报信）
+      if (prev.waveIndex !== null && run.waveIndex > prev.waveIndex) GameAudio.play('wave');
+      prev.waveIndex = run.waveIndex;
+
+      // ⑧ 玩家倒下：status 变 'lost'。local run 在 endRun 之后仍指向那个对象，
+      // 所以即使 state.run 已经被置空，这里也读得到。
+      if (prev.status !== null && prev.status !== 'lost' && run.status === 'lost') {
+        GameAudio.play('death');
+      }
+      prev.status = run.status;
+
+      // ⑨ Boss 出场：场上第一次出现 isBoss。Boss 局是预先生成的，
+      // 普通局则由 spawnBoss 在波次里塞进来 —— 两种都走这一条。
+      if (!this.sfxBossSeen && run.enemies.some((e) => e.isBoss)) {
+        this.sfxBossSeen = true;
+        GameAudio.play('boss');
+      }
+    }
+
     update(time, delta) {
       const dt = Math.min(delta / 1000, 0.05);
       const run = this.state.run;
@@ -1816,6 +1953,10 @@
 
       const input = this.input2.read();
       L.step(this.state, input, dt);
+
+      // 音效要在 step 之后、任何渲染之前触发：声音跟规则走，不跟画面走。
+      // （命中声不在这里 —— 它需要"掉了多少血"，由下面的伤害数字块负责。）
+      this.playRunSfx(run, input);
 
       updateGrass(this, dt);
 
@@ -2382,6 +2523,17 @@
         const prev = this.lastEnemyHp[e.id];
         if (prev !== undefined && e.hp < prev) {
           const dmg = Math.round(prev - e.hp);
+          /*
+           * 命中音（Task 12）。这是整个渲染层里唯一"知道打中了谁、掉了多少"
+           * 的地方，所以命中声在这里，而不是在 playRunSfx 的通用快照里。
+           *
+           * 重击的分流依据是连段第三段（C.COMBO.steps 里 1.85 倍的那一下）：
+           * 本游戏**没有暴击机制**（全仓没有 crit 字段，伤害也没有随机浮动），
+           * 所以"crit 音"落在玩家能感知的"重劈"上，而不是虚构一个不存在的暴击。
+           *
+           * 同帧多只怪被一刀扫到时会连着调多次 —— 25ms 节流让它们合成一声。
+           */
+          GameAudio.play(p.comboSwingStep === 3 ? 'crit' : 'hit');
           const es = toScreen(e.x, e.z, e.h);
           let tb = this.dmgPool.pop();
           if (!tb) tb = this.add.text(0, 0, '', {
@@ -2794,6 +2946,16 @@
 
   function boot(state, parentId) {
     CURRENT_STATE = state;
+    /*
+     * 音效音量/静音从存档接过来（Task 12）。
+     *
+     * 放在 boot 里而不是 RunScene.create：换档案、回基地都不该丢设置，
+     * 而 boot 正好是"这份 state 成为当前档案"的唯一入口（建档与切换都走它）。
+     * syncSettings 会补上旧存档缺失的字段，所以没有 settings 的老档也不会哑掉。
+     */
+    if (global.GameAudio && typeof global.GameAudio.syncSettings === 'function') {
+      global.GameAudio.syncSettings(state);
+    }
     // 场景数组的第一项会被自动启动 —— BootScene 必须先跑，否则纹理还没生成
     const game = new Phaser.Game({
       type: Phaser.AUTO,

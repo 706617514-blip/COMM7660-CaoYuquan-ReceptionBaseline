@@ -183,6 +183,80 @@ const SCRIPT = `
     ? window.EmberfieldApp.__scene.scene.key : null;
   out.state = !!window.EmberfieldApp.__state;
 
+  // ---- 1b. 音效层（Task 12）----
+  // 这里量的是"真浏览器里的 AudioContext"，桩测试证明不了这件事：
+  // 桩里 currentTime 是手动 tick 的，state 是自己写的字符串。
+  // 建档点击已经是一次真实手势，所以此刻 ctx 应该已被创建并被 resume。
+  const GA = window.GameAudio;
+  out.audioExists = !!GA && typeof GA.play === 'function';
+  out.audioSfxNames = GA && GA.sfxNames ? GA.sfxNames.slice() : null;
+  out.audioSfxCount = out.audioSfxNames ? out.audioSfxNames.length : -1;
+  if (GA) {
+    /*
+     * 先量"还没有任何手势时"的状态，再主动走一次启动路径。
+     *
+     * 建档按钮是 btn.click() 点出来的 —— 合成的 click() 不带用户激活，
+     * 也不会派发 pointerdown，所以那一下**不该**被当成手势：
+     * 此时 GA.context 必须是 null（惰性创建，页面加载不建 AudioContext）。
+     * 上一版探针正是在这里直接读 state，读到 null 才暴露了这个假设。
+     */
+    out.audioCtxBeforeGesture = GA.context === null;
+    GA.ensureStarted();          // 与页面手势监听里调的是同一个函数
+    const cA = GA.context;
+    out.audioState0 = cA ? cA.state : null;
+    out.audioTime0 = cA ? cA.currentTime : -1;
+    // 300ms 之后 currentTime 必须往前走：这是"音频时钟真的在跑"的唯一证据。
+    // 只看 state === 'running' 会被实现骗过去（state 是字符串，谁都写得出来）。
+    await wait(300);
+    const cB = GA.context;
+    out.audioTime1 = cB ? cB.currentTime : -1;
+    out.audioSampleRate = cB ? cB.sampleRate : -1;
+    out.audioSameCtx = cA === cB;
+
+    // 17 个音效逐个真播一次。返回 true = 真的建了振荡器/噪声源。
+    out.audioPlayed = {};
+    out.audioPlayThrew = null;
+    (out.audioSfxNames || []).forEach(function (n) {
+      try { out.audioPlayed[n] = GA.play(n) === true; }
+      catch (e) { out.audioPlayThrew = n + ': ' + e.message; out.audioPlayed[n] = false; }
+    });
+
+    out.audioMaster = GA.masterGain ? GA.masterGain.gain.value : null;
+    GA.setMasterVolume(0);
+    await wait(150);
+    out.audioMasterMuted = GA.masterGain ? GA.masterGain.gain.value : null;
+    out.audioClosedAfterMute = GA.context ? GA.context.state === 'closed' : true;
+    out.audioTimeMuted = GA.context ? GA.context.currentTime : -1;
+    // 静音期间也要能播（只是听不见）—— 静音不是"关掉音频"。
+    // 必须在恢复音量**之前**量，否则这一条就变成了"正常音量下能播"。
+    out.audioPlayWhileMuted = GA.play('hit') === true;
+    GA.setMasterVolume(0.5);
+    await wait(150);
+    out.audioMasterRestored = GA.masterGain ? GA.masterGain.gain.value : null;
+    out.audioStateEnd = GA.context ? GA.context.state : null;
+
+    /*
+     * 同帧连打：连段攻击一刀扫三下时，渲染层会在同一帧里调三次 play。
+     * 25ms 节流必须把后两次吃掉 —— 不节流就是三份波形叠在一起爆音。
+     * 这一条在真浏览器里量，是因为节流用的就是真 ctx.currentTime。
+     */
+    out.audioThrottle = [GA.play('slash'), GA.play('slash'), GA.play('slash')];
+
+    /*
+     * 观测点：从这一行往后，每一次经 GameAudio.play 的调用都被计数。
+     *
+     * 上面那 17 次是"我直接喊它播"，只能证明音效本身出得来。真正的验收问题是
+     * "在游戏里按 J / 按 Tab / 按 1，代码会不会自己去播" —— 只有计数能证明。
+     * 计数器放在调试探针里、不放进 audio.js：生产代码不该为测试留后门。
+     */
+    out.audioCalls = {};
+    const origPlay = GA.play;
+    GA.play = function (n) {
+      out.audioCalls[n] = (out.audioCalls[n] || 0) + 1;
+      return origPlay.call(GA, n);
+    };
+  }
+
   // ---- 2. 主操作：按键真的移动了玩家 ----
   const st = window.EmberfieldApp.__state;
   const hub = st && st.hub;
@@ -208,6 +282,20 @@ const SCRIPT = `
     out.playerHp = r ? Math.round(r.player.hp) : -1;
     out.sceneDuringRun = window.EmberfieldApp.__scene
       ? window.EmberfieldApp.__scene.scene.key : null;
+  }
+
+  // ---- 3a2. 战斗动作真的接到了音效（Task 12）----
+  // 桩测试只能证明"17 个音效各自播得出来"，证明不了"游戏里按 J 会去播"。
+  // 这里按四下 J（间隔 230ms，远大于 25ms 节流窗口），期望 slash 计数上涨。
+  if (window.EmberfieldApp.__state && window.EmberfieldApp.__state.run) {
+    const b0 = (out.audioCalls && out.audioCalls.slash) || 0;
+    for (let i = 0; i < 4; i++) {
+      key('keydown', 'KeyJ', 74);
+      await wait(70);
+      key('keyup', 'KeyJ', 74);
+      await wait(230);
+    }
+    out.audioSlashDelta = ((out.audioCalls && out.audioCalls.slash) || 0) - b0;
   }
 
   // ---- 3b. 草在动（视觉参数化，不是静态贴图）----
@@ -1760,6 +1848,77 @@ const SMALLSCRIPT = `
     ok(bad.length === 0, '每个设施的坐标上都能判定到自己（走到跟前就能按 J）',
        JSON.stringify(bad));
     ok(noCap.length === 0, '每个设施前头顶都出现了键帽', JSON.stringify(noCap));
+  }
+
+  console.log('\n--- 音效层：真浏览器里的 AudioContext（Task 12）---');
+  // 这一段的判据全部来自真浏览器读数。桩测试（tests/test_audio.js）里
+  // currentTime 是手动 tick 的、state 是自己写的字符串，两者都证明不了
+  // "这台机器上音频时钟真的在跑"。这里读的是 Electron 里的真 AudioContext。
+  ok(r.audioExists === true, '音效层已加载（window.GameAudio 存在且可调用 play）');
+  if (r.audioExists) {
+    eq(r.audioSfxCount, 17, '配置里有 17 个音效');
+    eq(r.audioCtxBeforeGesture, true,
+       '手势之前没有建 AudioContext（惰性创建，页面加载不白占一个音频设备）');
+    // ensureStarted 就是页面手势监听里调的那个函数。
+    eq(r.audioState0, 'running', '触发启动路径之后 AudioContext 是 running');
+    ok(r.audioSameCtx === true, '全程是同一个 AudioContext（没有被悄悄关掉重建）');
+    ok(typeof r.audioTime0 === 'number' && typeof r.audioTime1 === 'number' &&
+       r.audioTime1 > r.audioTime0 + 0.15,
+       'currentTime 在真的往前走（音频时钟在跑，不是挂起的空壳）',
+       r.audioTime0 + ' -> ' + r.audioTime1);
+    ok(r.audioSampleRate >= 8000, 'sampleRate 是真实设备的采样率', r.audioSampleRate);
+
+    {
+      const names = r.audioSfxNames || [];
+      const unplayable = names.filter(function (n) { return r.audioPlayed[n] !== true; });
+      eq(unplayable.length, 0, '17 个音效在真浏览器里逐个播放都返回 true',
+         unplayable.join(','));
+      ok(r.audioPlayThrew === null, '没有任何音效抛异常', r.audioPlayThrew);
+    }
+
+    ok(typeof r.audioMaster === 'number' && r.audioMaster > 0.01,
+       '默认总音量不是 0', r.audioMaster);
+    ok(typeof r.audioMasterMuted === 'number' && r.audioMasterMuted <= 0.001,
+       'setMasterVolume(0) 之后 masterGain.gain 真的归零（不是只翻了某个标志位）',
+       r.audioMasterMuted);
+    eq(r.audioClosedAfterMute, false, '静音没有 close 掉 context（关了就再也读不回来）');
+    ok(typeof r.audioTimeMuted === 'number' && r.audioTimeMuted > r.audioTime1,
+       '静音期间音频时钟继续走（静音 ≠ 停掉音频）',
+       r.audioTime1 + ' -> ' + r.audioTimeMuted);
+    eq(r.audioPlayWhileMuted, true, '静音状态下 play 仍然返回 true');
+    ok(Math.abs(r.audioMasterRestored - 0.5) < 0.02,
+       '把音量调回 0.5 后 masterGain.gain 跟随', r.audioMasterRestored);
+    eq(r.audioStateEnd, 'running', '探针结束时 context 仍是 running');
+
+    {
+      const th = r.audioThrottle || [];
+      eq(th.length, 3, '同帧连打三次，三次都有返回');
+      eq(th[0], true, '第一次允许播放');
+      eq(th[1], false, '同帧第二次被 25ms 节流吃掉（否则三份波形叠在一起爆音）');
+      eq(th[2], false, '同帧第三次同样被吃掉');
+    }
+
+    // 读数集中打印一行：报告里的"真浏览器读数"直接抄这一行，
+    // 而不是回头去猜实现里写了什么。
+    console.log('  [读数] state=' + r.audioState0 +
+      ' currentTime=' + (typeof r.audioTime0 === 'number' ? r.audioTime0.toFixed(3) : r.audioTime0) +
+      '->' + (typeof r.audioTime1 === 'number' ? r.audioTime1.toFixed(3) : r.audioTime1) +
+      ' sampleRate=' + r.audioSampleRate +
+      ' gain=' + r.audioMaster + '->' + r.audioMasterMuted +
+      '->' + r.audioMasterRestored +
+      ' 节流=' + JSON.stringify(r.audioThrottle) +
+      ' 局内计数=' + JSON.stringify(r.audioCalls));
+
+    // 接线：这些计数来自"游戏里按键"，不是测试直接喊 play。
+    const calls = r.audioCalls || {};
+    ok((calls.slash || 0) >= 1,
+       '在 Run 场景按 J 挥击会触发 slash（触发点真的接上了）', JSON.stringify(calls));
+    ok((calls.bagOpen || 0) >= 1,
+       '按 Tab 开背包会触发 bagOpen', JSON.stringify(calls));
+    ok((calls.potion || 0) >= 1,
+       '按 1 喝药会触发 potion', JSON.stringify(calls));
+    ok(r.audioSlashDelta >= 1,
+       '四连挥击里至少响过一次 slash（不是只在首帧响）', r.audioSlashDelta);
   }
 
   console.log('\n' + '='.repeat(56));

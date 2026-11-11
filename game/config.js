@@ -569,6 +569,152 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
     burstGap: 2.6,          // 批与批之间的停顿（秒）
   };
 
+  /**
+   * 音效（Task 12）：自建 AudioContext 合成，不借 Phaser 的音频系统。
+   *
+   * 为什么参数在数据层
+   * ------------------
+   * 音色是**手感**的一部分，和伤害数值一样会被反复调。把它写成数据表，
+   * 调音只改这里，audio.js 里没有任何一个音效专属的分支。
+   *
+   * 声部（voice）字段
+   * -----------------
+   *   wave    sine / triangle / square / sawtooth / noise
+   *   at      相对起奏的秒数（和弦、双音靠这个错开）
+   *   dur     声部时长（约等于包络衰减到静音的时间）
+   *   gain    峰值增益（相对 masterGain，全部汇总后仍 < 1，不会削波）
+   *   f0/f1   频率起点/终点；给了 f1 就做指数滑动（下滑=打击，上扬=蓄力）
+   *   attack  起音时间，太长会糊、太短会"啪"（默认 4ms）
+   *   filter  噪声成形（{type,f0,f1,q}）；噪声声部没有滤波器就是一片白噪
+   *   am      振幅调制（{rate,depth}），做气泡/颤音的质感
+   *
+   * 音量与静音存在 meta.settings.volume / muted（logic.js 的 createState 里
+   * 已经留好了这两个字段），跨会话保留。
+   */
+  const AUDIO = {
+    volume: 0.30,           // 总音量（masterGain），首次进入的默认值
+    throttle: 0.025,        // 同一音效 25ms 内只响一次（连段同帧三下会爆音）
+    sfx: {
+      // ---- 战斗 ----
+      slash: { voices: [
+        // 刀刃破风：带通噪声从 3.2kHz 扫到 1.1kHz，高频先起、快速衰减
+        { wave: 'noise', dur: 0.075, gain: 0.30,
+          filter: { type: 'bandpass', f0: 3200, f1: 1100, q: 1.2 } },
+        // 加一条很轻的锯波下滑，给"挥"一个音高感，不然只是沙沙声
+        { wave: 'sawtooth', dur: 0.055, gain: 0.06, f0: 420, f1: 180 },
+      ] },
+      hit: { voices: [
+        // 入肉：低频正弦 180→70Hz 的短促下坠（身体能感到的那一下）
+        { wave: 'sine', dur: 0.06, gain: 0.32, f0: 180, f1: 70 },
+        // 叠一点低通噪声做"噗"，纯正弦会像木鱼
+        { wave: 'noise', dur: 0.045, gain: 0.16,
+          filter: { type: 'lowpass', f0: 1500, f1: 500, q: 0.8 } },
+      ] },
+      crit: { voices: [
+        // 重劈：高频泛音（1046→1568 上扬）+ 三角波，短促 150ms
+        { wave: 'triangle', dur: 0.14, gain: 0.22, f0: 1046, f1: 1568 },
+        { wave: 'sine', dur: 0.10, gain: 0.20, f0: 2093 },
+        // 一点高通噪声当"金属划痕"，让重击和普通命中区分得开
+        { wave: 'noise', dur: 0.09, gain: 0.14,
+          filter: { type: 'highpass', f0: 2600, f1: 5200, q: 0.7 } },
+      ] },
+      hurt: { voices: [
+        // 玩家受伤：方波 220→90Hz 闷哼，低通压住高频（不能比命中还亮）
+        { wave: 'square', dur: 0.20, gain: 0.20, f0: 220, f1: 90,
+          filter: { type: 'lowpass', f0: 900, f1: 500, q: 0.9 } },
+        { wave: 'sine', dur: 0.16, gain: 0.18, f0: 110, f1: 70 },
+      ] },
+      // ---- 战利品 ----
+      coin: { voices: [
+        // 铜币：两枚先后落在 1046 / 1568Hz，60ms 一颗，干净的正弦
+        { wave: 'sine', dur: 0.06, gain: 0.22, f0: 1046 },
+        { wave: 'sine', at: 0.045, dur: 0.07, gain: 0.18, f0: 1568 },
+      ] },
+      seed: { voices: [
+        // 种子：比铜币更高更薄（1568→2093），三角波，音量更小
+        { wave: 'triangle', dur: 0.05, gain: 0.16, f0: 1568, f1: 2093 },
+      ] },
+      dropNew: { voices: [
+        // 掉落新件：C-E-G 三连上行（523/659/784），每音 90ms，庆祝但克制
+        { wave: 'triangle', dur: 0.11, gain: 0.18, f0: 523 },
+        { wave: 'triangle', at: 0.055, dur: 0.11, gain: 0.18, f0: 659 },
+        { wave: 'triangle', at: 0.11, dur: 0.12, gain: 0.20, f0: 784 },
+      ] },
+      dropDup: { voices: [
+        // 重复件：两个下行短音（392→294），方波但音量低，避免听着像惩罚
+        { wave: 'square', dur: 0.07, gain: 0.10, f0: 392,
+          filter: { type: 'lowpass', f0: 1800, f1: 1200, q: 0.8 } },
+        { wave: 'square', at: 0.07, dur: 0.08, gain: 0.10, f0: 294,
+          filter: { type: 'lowpass', f0: 1600, f1: 1000, q: 0.8 } },
+      ] },
+      // ---- 系统动作 ----
+      potion: { voices: [
+        // 喝药：150→210Hz 低频 + 22Hz 振幅调制 = 咕嘟气泡；0.28s 收住
+        { wave: 'sine', dur: 0.28, gain: 0.26, f0: 150, f1: 210,
+          am: { rate: 22, depth: 0.85 } },
+        { wave: 'noise', at: 0.06, dur: 0.18, gain: 0.07,
+          filter: { type: 'lowpass', f0: 700, f1: 400, q: 1.4 } },
+      ] },
+      skill: { voices: [
+        // 技能：锯波 300→1200 上扬（蓄力），尾部接带通噪声"释放"
+        { wave: 'sawtooth', dur: 0.18, gain: 0.14, f0: 300, f1: 1200,
+          filter: { type: 'lowpass', f0: 2400, f1: 4000, q: 0.9 } },
+        { wave: 'noise', at: 0.10, dur: 0.16, gain: 0.12,
+          filter: { type: 'bandpass', f0: 1200, f1: 3000, q: 1.1 } },
+      ] },
+      special: { voices: [
+        // 专属技：110→220 锯波 + 55Hz 方波低音 + 2.6kHz 三角尾，厚且沉
+        { wave: 'sawtooth', dur: 0.28, gain: 0.16, f0: 110, f1: 220,
+          filter: { type: 'lowpass', f0: 1600, f1: 2600, q: 1.0 } },
+        { wave: 'square', dur: 0.30, gain: 0.14, f0: 55,
+          filter: { type: 'lowpass', f0: 400, f1: 300, q: 0.9 } },
+        { wave: 'triangle', at: 0.02, dur: 0.34, gain: 0.10, f0: 2600, f1: 1400 },
+      ] },
+      upgrade: { voices: [
+        // 购买/穿戴/升级/播种成功：两声上行确认（1318→1760），短、轻、不烦
+        { wave: 'sine', dur: 0.07, gain: 0.18, f0: 1318 },
+        { wave: 'sine', at: 0.06, dur: 0.10, gain: 0.16, f0: 1760 },
+      ] },
+      sell: { voices: [
+        // 出售：1568→2093 两个方波短音（收银机叮），音量压得很低
+        { wave: 'square', dur: 0.05, gain: 0.07, f0: 1568,
+          filter: { type: 'highpass', f0: 800, f1: 1200, q: 0.7 } },
+        { wave: 'square', at: 0.05, dur: 0.07, gain: 0.07, f0: 2093,
+          filter: { type: 'highpass', f0: 900, f1: 1400, q: 0.7 } },
+      ] },
+      bagOpen: { voices: [
+        // 开背包：带通噪声 400→3000Hz 的"唰"（拉链/布料），0.14s
+        { wave: 'noise', dur: 0.14, gain: 0.16,
+          filter: { type: 'bandpass', f0: 400, f1: 3000, q: 0.9 } },
+        { wave: 'triangle', at: 0.02, dur: 0.10, gain: 0.08, f0: 660, f1: 990 },
+      ] },
+      // ---- 进程 ----
+      wave: { voices: [
+        // 新一波：G-B-D（196/247/294）三音和声，22ms 错开成"号角"
+        { wave: 'sawtooth', dur: 0.22, gain: 0.10, f0: 196,
+          filter: { type: 'lowpass', f0: 1800, f1: 1200, q: 0.8 } },
+        { wave: 'sawtooth', at: 0.01, dur: 0.22, gain: 0.09, f0: 247,
+          filter: { type: 'lowpass', f0: 1800, f1: 1200, q: 0.8 } },
+        { wave: 'sawtooth', at: 0.02, dur: 0.24, gain: 0.09, f0: 294,
+          filter: { type: 'lowpass', f0: 2000, f1: 1300, q: 0.8 } },
+      ] },
+      boss: { voices: [
+        // Boss 出场：55→38Hz 正弦超低 + 300Hz 低通噪声，0.5s 的地面震动
+        { wave: 'sine', dur: 0.50, gain: 0.34, f0: 55, f1: 38 },
+        { wave: 'noise', dur: 0.35, gain: 0.18,
+          filter: { type: 'lowpass', f0: 320, f1: 180, q: 0.9 } },
+        { wave: 'sawtooth', at: 0.04, dur: 0.40, gain: 0.08, f0: 82, f1: 55,
+          filter: { type: 'lowpass', f0: 600, f1: 300, q: 1.0 } },
+      ] },
+      death: { voices: [
+        // 玩家倒下：392 / 294 / 196 下行三音，每音 0.3s 指数衰减，收得干净
+        { wave: 'triangle', dur: 0.30, gain: 0.18, f0: 392 },
+        { wave: 'triangle', at: 0.11, dur: 0.30, gain: 0.18, f0: 294 },
+        { wave: 'triangle', at: 0.22, dur: 0.32, gain: 0.20, f0: 196 },
+      ] },
+    },
+  };
+
   const API = {
     FIELD_W, FIELD_D, GROUND_Y,
     PLAYER_W, PLAYER_H, PLAYER_SPEED, PLAYER_DEPTH_SPEED,
@@ -581,6 +727,7 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
     POTIONS, POTION_ORDER,
     EQUIP_SLOTS, EQUIP_SLOT_NAMES, EQUIPMENT, EQUIP_FX, ALL_EQUIPMENT,
     SPECIAL_SKILLS, EQUIP_DROP, EQUIP_LEVEL,
+    AUDIO,
     equipDef, equipPrice, equipMaxLevel, equipEffectMul,
     waveComposition,
     difficultyById: function (id) {

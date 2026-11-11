@@ -95,6 +95,14 @@
 
   function cfg() { return global.GameConfig; }
   function logic() { return global.GameLogic; }
+  /*
+   * 音效（Task 12）：出售成功的"收银机叮"。
+   *
+   * audio.js 在 index.html 里先于本文件加载，但这里仍然要退回空实现：
+   * 背包浮层被单独引用（例如某个测试只加载 baghud.js）时，一个未定义的
+   * GameAudio 会让"出售"这个按钮直接抛异常 —— 那代价太大。
+   */
+  const GameAudio = global.GameAudio || { play: function () { return false; } };
 
   function equipmentOf() {
     return (state && state.meta && state.meta.equipment) || {};
@@ -675,8 +683,11 @@
     const name = def ? def.name : entry.id;
     const res = L && typeof L.sellItem === 'function'
       ? L.sellItem(state, entry.uid) : null;
-    if (res && res.ok) notify('卖掉 ' + name + ' · +' + res.value + ' 铜币', true);
-    else notify((res && res.reason) || '卖不掉', false);
+    if (res && res.ok) {
+      // 只有真的卖掉才响（"卖不掉"是拒绝，不该有成交音）
+      GameAudio.play('sell');
+      notify('卖掉 ' + name + ' · +' + res.value + ' 铜币', true);
+    } else notify((res && res.reason) || '卖不掉', false);
     hideTip();
     persist();
     refresh();
@@ -828,6 +839,8 @@
     const res = L && typeof L.sellBatch === 'function'
       ? L.sellBatch(state, totals.uids) : null;
     if (res && res.ok) {
+      // 批量出售同样给成交音；数量写在 toast 里，声音只负责"成了"
+      GameAudio.play('sell');
       notify('出售 ' + res.count + ' 件 · +' + res.total + ' 铜币', true);
     } else {
       notify((res && res.reason) || '没有可出售的装备', false);
