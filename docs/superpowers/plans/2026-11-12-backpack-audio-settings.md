@@ -69,7 +69,7 @@
 **Files:**
 - Modify: `game/config.js:416`（删 `refundRatio`）
 - Modify: `game/logic.js:548-568`（`rollEquipDrop`）、`game/logic.js:1281-1291`（`killEnemy` 掉落块）
-- Modify: `game/app.js:1661-1672`（掉落提示文案）
+- Modify: `game/app.js:1661-1671`（掉落提示文案；`d.refund` 的引用在 **1667** 行）
 - Test: `tests/test_game_logic.js:1360-1390`
 
 **Interfaces:**
@@ -93,6 +93,8 @@ ok(C.EQUIP_DROP.refundRatio === undefined, '折算比例已从配置里删除');
 const before = dupState.meta.bag.length;
 L.rollEquipDrop(dupState);   // 已知存在的 id，必然重复
 ok(dupState.meta.bag.length === before + 1, '重复品也进背包（不会撑爆背包）');
+// 注：meta.bag 由 Task 2 引入。本任务先只断言 refund 已删除，
+// 上面这条 bag 断言在 Task 2 完成后才可能通过 —— Step 2 的失败是预期的。
 ```
 
 - [ ] **Step 2: 跑测试确认失败**
@@ -745,7 +747,15 @@ git commit -m "feat: 药水统一为治疗/力量/护盾，兵器架加页签与
 
 **Interfaces:**
 - Consumes: 无
-- Produces: `ZONES` 每项新增 `z`；`zoneAt(hub, x, z)` 按屏幕距离判定。**`x` 值保持不变。**
+- Produces: `ZONES` 每项新增 `z`；`zoneAt(state)` 改按屏幕距离判定。**`x` 值保持不变。**
+
+> **先核实（原文写错了）**：`zoneAt` 在 **`game/hub.js:54`**，**不在 `logic.js`**，
+> 导出名是 **`global.GameHub.zoneAt`**（`hub.js:294`）。
+> 签名是 **`zoneAt(state)`——只收一个 `state`**，不是 `zoneAt(hub, x, z)`。
+> 它内部先 `ensureHub(state)` 拿 `hub`，再读 `hub.x` / `hub.z`。
+> 所以「改判定」改的是这个函数体，调用方一行都不用动。
+> 目前的判定是 `Math.abs(hub.x - z.x) <= z.reach`——**一维对称容差**，
+> 不是半径。改二维后 `reach` 的语义要重新定义（见 Step 3）。
 
 | id | x | z |
 |---|---|---|
@@ -759,14 +769,26 @@ git commit -m "feat: 药水统一为治疗/力量/护盾，兵器架加页签与
 - [ ] **Step 1: 写测试**
 
 ```js
-// V16：错落后每个点位都还能走到并触发
-const h = L.ensureHub(L.createState(51));
-C.HUB ? null : null;
+// V16：错落后每个点位都还能走到并触发。
+// 注意命名空间：zoneAt 属于 GameHub，不属于 GameLogic。
+const H = require('../game/hub.js');
+const s = L.createState(51);
+const h = H.ensureHub(s);
 [['field',100,0],['anvil',265,34],['forgewear',415,0],
  ['shop',565,34],['altar',720,0],['gate',880,17]].forEach(function (t) {
-  const z = L.zoneAt ? L.zoneAt(h, t[1], t[2]) : null;
-  ok(!z || z.id === t[0], '站在 ' + t[0] + ' 的点位坐标上命中自己');
+  h.x = t[1]; h.z = t[2];
+  const z = H.zoneAt(s);
+  ok(z && z.id === t[0], '站在 ' + t[0] + ' 的点位坐标上命中自己（实际 ' +
+     (z ? z.id : 'null') + '）');
 });
+
+// 错落的关键回归：上排点位的 z 明显不同于下排，
+// 且站在两个相邻点位中间时不能同时命中两个（zoneAt 只返回一个，
+// 所以更该断言的是"没有误触发上排"）。
+h.x = 265; h.z = 0;                    // 铁匠铺的 x，但用下排的 z
+ok((H.zoneAt(s) || {}).id !== 'anvil', 'z 不对时不该命中上排点位');
+h.x = 265; h.z = 34;                   // 正确 z
+ok((H.zoneAt(s) || {}).id === 'anvil', 'z 正确时命中铁匠铺');
 ```
 
 ```js
@@ -797,7 +819,14 @@ Expected: FAIL / 报 `zoneAt` 只有两个参数。
 - [ ] **Step 3: 实现**
 
 1. `ZONES` 加 `z`（表见上）
-2. `zoneAt` 改成**屏幕距离**判定：用 `toScreen` 把 `(x, z)` 投到屏幕，比较与点位投影点的距离是否在 `reach` 内
+2. `zoneAt(state)`（`hub.js:54`）改成**屏幕距离**判定。注意 `hub.js` 是纯逻辑层，
+   **不能调 `app.js` 的 `toScreen`**（那是渲染层函数）。两个选择，取前者：
+   - **在 `hub.js` 里放一份等价的投影常量/小函数**（`Z_TO_Y` / `Z_SCALE` / `FIELD_D`
+     本来就该是共享常量）；或
+   - 把 `reach` 改成「x 与 z 各自一个容差」（`reachX` / `reachZ`）——
+     最简单、无跨层依赖，**本计划采用这个**。
+   判定写成 `Math.abs(hub.x - z.x) <= z.reachX && Math.abs(hub.z - z.z) <= z.reachZ`。
+   `reachX` 沿用原 `reach` 值，`reachZ` 取约 40（够覆盖错落的 34 深度且不跨排误触）。
 3. **绘制端必须同步改**：`app.js:1340` 目前把所有点位画在同一个固定 y 上，改为逐点 `toScreen(x, z, 0)`，并按 `sc` 缩放 —— **数据改了画面没改等于没做**
 4. **删掉**`app.js:1550` 一带的 `this.prompt.setText('按 J · ' + zone.name + '（' + zone.hint + '）')`
 5. 画**灰色圆角键帽 + 黑色 `J`**（约 26×26）在角色**头顶右上方**，150ms 淡入淡出
