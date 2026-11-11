@@ -601,9 +601,29 @@ Expected: FAIL —— `Cannot find module` 或 `L.buyBagPage is not a function`�
 
 - [ ] **Step 3: 实现**
 
-`config.js` 加 `BAG`（值见 Interfaces）。`logic.js` 加 `buyBagPage`（校验 `bagPages < maxPages` 与铜币，按 `pagePrices[bagPages]` 收费，成功后 `bagPages += 1`）与 `pageOf`/`pageSlice`。
+**先做「前置修复」①②，再做分页。**
+
+**① `game/hub.js:190`**：`(state.meta.inventoryLevels || {})[id] || 1` → 从 `meta.bag` 按 id 取条目读 `level`：
+```js
+const bi = bagIndexOfId(state, id);
+const lv = bi >= 0 ? (state.meta.bag[bi].level || 1) : 1;
+```
+（`bagIndexOfId` 需从 `logic.js` 导出；Task 2 已有该函数，确认它在 `API` 里。）
+
+**② `game/logic.js` 三个满包静默吞件**：
+- `buyEquipment`（`:497`）：`if (bagAdd(state, id, 1) === -1) return { ok: false, reason: '背包已满' };`
+  ——**必须在扣钱之前判定**，否则钱扣了、件没了。
+- `unequipSlot`（`:544`）：`bagAdd` 返回 `-1` 时**不要清空 `equipment[slot]`**，
+  直接 `return { ok: false, reason: '背包已满' }`。
+- `rollEquipDrop`（`:622`）的 `bagFull` 覆盖路径保留，但返回值加 `overwrote`（被覆盖那件的 `id`/`uid`），
+  并在 `run.equipDrops` 里带出去。
+
+**③ 分页**：`config.js` 加 `BAG`（值见 Interfaces）。`logic.js` 加 `buyBagPage`
+（校验 `bagPages < maxPages` 与铜币，按 `pagePrices[bagPages]` 收费，成功后 `bagPages += 1`）
+与 `pageOf`/`pageSlice`。
 
 > **页价索引**：`pagePrices = [0, 200, 500, 1000, 2000, 5000]` 对应「从第 N 页扩到第 N+1 页」的价格，所以买页 2 用 `pagePrices[1]`。
+> `bagPages` 的合法值是 **1..6**，买第 7 页要返回 `ok:false`（不是静默截断到 6）。
 
 - [ ] **Step 4: 跑测试确认通过**
 
@@ -613,9 +633,14 @@ Expected: PASS。
 - [ ] **Step 5: 提交**
 
 ```bash
-git add game/config.js game/logic.js tests/test_bag.js
-git commit -m "feat(bag): 分页容量 5x7、最多 6 页、逐页涨价扩容"
+git add game/config.js game/logic.js game/hub.js tests/test_bag.js .github/workflows/ci.yml
+git commit -m "feat(bag): 分页容量 5x7、最多 6 页、逐页涨价扩容；满包不再静默吞件"
 ```
+
+> **`git add` 必须点名这 5 个文件**：`game/hub.js`（前置修复①）、
+> `.github/workflows/ci.yml`（否则新测试在 CI 里永不运行）。
+> 这是 Task 2 踩过的坑——Files 列表漏了 `tests/test_game_meta.js`，
+> 差点把"绿测试的坏构建"提交上去。
 
 ---
 
