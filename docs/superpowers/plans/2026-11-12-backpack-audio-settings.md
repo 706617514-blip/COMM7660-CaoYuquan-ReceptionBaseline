@@ -755,7 +755,13 @@ function sellValue(id, level) {
 
 `sellBatch` 的实现顺序**很重要**：先按 id 分组 → 每组按 level 降序 → 每组除第一个外全部可卖 → 与传入 `uids` 取交集 → 求和扣款移除。
 
-> **不要用 `equipUpgradeCost` 加总** —— 它返回的是「下一级」的价，不是历史累计。
+> **为什么用 `equipPrice` 求和，而不是 `equipUpgradeCost` 加总**（实测校准，原批注理由说错了）：
+> 两者**数值上恰好相等** —— `equipUpgradeCost(state,'longCloak')` 在 Lv1 时报 290，
+> 升到 Lv2 后报 421，而 `equipPrice('longCloak',2)=290`、`equipPrice('longCloak',3)=421`，
+> 即 `equipUpgradeCost` 本身就是「升到该级的单价」，两者和为 711 = `equipInvested(longCloak,3)`。
+> 真正该避免的是**在循环里调 `equipUpgradeCost`**：它需要 `state`、会随状态变化
+> （已穿戴时读身上那件的等级）、且满级返回 `null`（`null + n` 变 NaN）。
+> `equipInvested(id, level)` 是纯函数，只依赖 id 与等级，**必须这样写**，不要绕 `state`。
 
 **`sellItem(state, uid)` 的四种语义（都要有断言）**：
 1. uid 在背包 → 卖出，`{ ok:true, value }`，`meta.coins += value`，从 `meta.bag` 移除。
