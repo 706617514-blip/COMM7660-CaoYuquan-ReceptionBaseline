@@ -540,11 +540,27 @@ Task 2 删除，于是**任何背包里的装备在兵器架上都显示 Lv.1**�
 
 - [ ] **Step 1: 写测试（覆盖 Review Focus #1、#2）**
 
+> **两条实测警示（Task 4 实施者测量、我复现确认）**
+>
+> **① `bagAdd` 不校验 id —— 写错 id 会静默造出无效条目。**
+> 本步骤原稿用 `bagAdd(..., 'grassShoes', 1)` 填满 35 格，但实测
+> `C.equipDef('grassShoes') === null`，35 件全是垃圾数据；测试照样"通过"，
+> 因为它只数长度。**正确 id 是 `strawShoes`（草鞋，tier 0，价 80）。**
+> 这类错误的可怕之处就在于长这样：套件全绿、什么都没验证。
+> 任何时候用 `bagAdd` 造测试数据，先 `C.equipDef(id)` 确认非 null。
+>
+> **② `createState` 的初始铜币实测为 0。**
+> 本步骤原稿断言连买 6 页 cost 为 200/500/1000/2000/5000（合计 8700 铜币），
+> 但 0 铜币下 `buyBagPage` 返回 `{ok:false,reason:'铜币不够'}` —— **没有 `cost` 字段**，
+> `cost === 200` 会以"铜币不够"这个错误理由失败。必须显式 `s.meta.coins = 100000`。
+> 同时补一条「199 铜币（差 1 枚）→ ok:false、不扣钱、不加页」的边界断言，
+> 让定价与拒绝两条路径都有覆盖。
+
 ```js
 // 满包时不许静默吞装备（Task 2 复审实测的三个缺陷）
 const full = L.createState(41);
 full.meta.bagPages = 1;
-while (full.meta.bag.length < 35) L.bagAdd(full, 'grassShoes', 1);
+while (full.meta.bag.length < 35) L.bagAdd(full, 'strawShoes', 1)  // 不是 grassShoes：该 id 不存在，见下方警示;
 full.meta.coins = 99999;
 const coinsBefore = full.meta.coins;
 const buyFull = L.buyEquipment(full, 'ironHelm');
@@ -554,7 +570,7 @@ ok(L.equipOwned(full, 'ironHelm') === null, '没付钱也没拿到装备');
 
 const wearer = L.createState(42);
 wearer.meta.equipment.head = { id: 'ironHelm', level: 1 };
-while (wearer.meta.bag.length < 35) L.bagAdd(wearer, 'grassShoes', 1);
+while (wearer.meta.bag.length < 35) L.bagAdd(wearer, 'strawShoes', 1);
 const un = L.unequipSlot(wearer, 'head');
 ok(un.ok === false, '满包时卸下被拒绝，不是谎报 success');
 ok(wearer.meta.equipment.head && wearer.meta.equipment.head.id === 'ironHelm',
@@ -597,6 +613,7 @@ ok(L.pageSlice(s, 1)[0] !== null && L.pageSlice(s, 1)[1] === null, '页 2 只有
 
 // Review Focus #2：买满 6 页后不能再有第 211 格
 const s2 = L.createState(22);
+s2.meta.coins = 100000;  // ⚠ 必须显式给钱：createState 的初始铜币实测为 0
 ok(L.buyBagPage(s2).cost === 200, '页 2 价格 200');
 ok(L.buyBagPage(s2).cost === 500, '页 3 价格 500');
 ok(L.buyBagPage(s2).cost === 1000, '页 4 价格 1000');
