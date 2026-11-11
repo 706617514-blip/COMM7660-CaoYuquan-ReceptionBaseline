@@ -472,7 +472,9 @@ git commit -m "refactor(bag): 装备函数接受可选 uid（同 id 多件时指
 
 **Files:**
 - Modify: `game/config.js`（加 `BAG`）
-- Modify: `game/logic.js`（`bagCapacity` 已存在于 Task 2；加 `buyBagPage`、`rollBagPage`）
+- Modify: `game/logic.js`（`bagCapacity` 已存在于 Task 2；加 `buyBagPage`、`rollBagPage`；
+  **另修 `buyEquipment:497` / `unequipSlot:544` 的满包静默吞件**）
+- Modify: `game/hub.js:190`（**仍读已删除的 `inventoryLevels`**，见下）
 - Test: `tests/test_bag.js`（**新建**）
 - **Modify: `.github/workflows/ci.yml`（必须加一步，否则新测试在 CI 里永远不会跑）**
 
@@ -494,7 +496,14 @@ git commit -m "refactor(bag): 装备函数接受可选 uid（同 id 多件时指
 - Produces:
   - `C.BAG = { cols: 5, rows: 7, cellsPerPage: 35, maxPages: 6, pagePrices: [0, 200, 500, 1000, 2000, 5000] }`
 
-> **本任务必须先修三个"静默吞装备"缺陷（Task 2 复审实测，我复现确认）**：
+> **本任务必须先修三个"静默吞装备"缺陷 + 一处过时读取（Task 2 复审实测，我复现确认）**：
+>
+> **先看 `game/hub.js:190`**：`const lv = (state.meta.inventoryLevels || {})[id] || 1;` 读的
+> 字段 Task 2 已删除，于是**任何背包里的装备在兵器架上都显示 Lv.1**。实测：
+> 背包里放一件 `leatherHelm` Lv.3，`H.zoneActions(s,'forgewear')` 返回
+> `equip-wear | 皮盔 | 头部 · Lv.1 · 生命上限 +12` —— 等级显示错，且**没有任何断言覆盖**。
+> 改为从 `meta.bag` 里按 id 找条目读 `level`（`bagIndexOfId` 已在 Task 2 就位）。
+
 > `bagAdd` 满包返回 `-1`，但除 `rollEquipDrop` 外**所有调用者都忽略返回值**。
 >
 > | 路径 | 实测行为 | 危害 |
