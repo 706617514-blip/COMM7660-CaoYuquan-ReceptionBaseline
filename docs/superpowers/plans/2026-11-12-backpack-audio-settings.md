@@ -96,7 +96,13 @@ dupState.meta.inventory = Object.keys(C.ALL_EQUIPMENT)
   .filter(function (i) { return C.ALL_EQUIPMENT[i].kind === 'base'; });   // 全部已拥有
 const dupProbe = L.rollEquipDrop(dupState);
 ok(dupProbe && dupProbe.duplicate === true, '全拥有时掉落判定为重复');
-ok(dupState.meta.inventory.length === 21, '重复品数量不变（不是被吞掉）');
+// 重复品"没被吞掉"的唯一含义就是库存**增长**：
+// 全 21 件已拥有 → 再掉一件 → 22。原稿写 === 21 是退款时代的残留
+// （那时重复分支不 push，所以 21 才成立），现在必然失败。
+ok(dupState.meta.inventory.length === invBefore + 1, '重复品进了库存（没被吞掉）');
+ok(dupState.meta.inventory.length === 22, '正好多一件（21 件已拥有 + 1 件重复掉落）');
+ok(dupState.meta.lastIndexOf(dupProbe.id) === dupState.meta.inventory.length - 1,
+   '新增的那一件就是刚落下的 id（不是别处凭空多出来的）');
 ok(dupState.meta.coins === 0, '重复品不再产生任何铜币');
 
 // 注：`meta.inventory` 在 Task 2 会整体迁移成 `meta.bag` 条目数组。
