@@ -170,7 +170,23 @@ git commit -m "feat(bag): 删除重复件 30% 自动退款，掉落全部进背�
 
 > **为什么要 `uid`**：同一 id 可能有两件（重复掉落）。DOM 上用「第几格」做 key 会在排序后错位，所以每件给一个稳定 `uid`（`id + '#' + 自增数`），只存在于 `bag` 条目内、不进存档的语义层。
 
-- [ ] **Step 1: 写迁移测试**
+- [ ] **Step 1: 把 Task 1 的裸 push 接成容量感知**
+
+`rollEquipDrop` 里 Task 1 留下的 `state.meta.inventory.push(id)` 必须改成落位逻辑，
+否则第 211 件要么越界要么静默消失（设计 §4.7 明确要求"不丢装备"）：
+
+```js
+const idx = bagAdd(state, id, 1);            // 容量内：正常入格
+if (idx === -1) {
+  // 全满：不丢、也不越界 —— 落进最后已解锁页的末格，由 UI 提示"背包已满"
+  const last = bagCapacity(state) - 1;
+  state.meta.bag[last] = { id: id, level: 1, uid: nextUid(state) };
+  return { id: id, duplicate: duplicate, bagFull: true };
+}
+return { id: id, duplicate: duplicate, bagFull: false };
+```
+
+- [ ] **Step 2: 写迁移测试**
 
 ```js
 // v2 老档必须一路链到 6，否则 deserialize 会硬抛
@@ -193,12 +209,12 @@ ok(lc.level === 3, '条目保留原等级');
 ok(m5.meta.bag.filter((e) => e.id === 'longCloak').length === 1, '按 id 去重，不凭空造件');
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [ ] **Step 3: 跑测试确认失败**
 
 Run: `"$N" tests/test_game_logic.js`
 Expected: FAIL —— `存档版本不匹配` 或 `meta.bagPages` 为 `undefined`。
 
-- [ ] **Step 3: 实现条目数组与迁移**
+- [ ] **Step 4: 实现条目数组与迁移**
 
 `STATE_VERSION = 6`。`createState` 里 `meta.bag = []`、`meta.bagPages = 1`，删 `inventory`/`inventoryLevels`。
 
@@ -238,12 +254,12 @@ function bagAdd(state, id, level) {
 }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [ ] **Step 5: 跑测试确认通过**
 
 Run: `"$N" tests/test_game_logic.js`
 Expected: PASS。
 
-- [ ] **Step 5: 提交**
+- [ ] **Step 6: 提交**
 
 ```bash
 git add game/logic.js tests/test_game_logic.js
@@ -264,6 +280,23 @@ git commit -m "feat(bag): 库存改为条目数组，STATE_VERSION 5->6 顺序�
   - `equipItem(state, id, uid?)` —— 有 `uid` 时穿指定的那一件
   - `upgradeEquipment(state, id, uid?)` —— 有 `uid` 时升指定的那一件
   - `equipOwned(state, id) -> 'equipped' | 'owned' | null` **签名不变**
+
+`rollEquipDrop` 里 Task 1 留下的 `state.meta.inventory.push(id)` 必须改成落位逻辑，
+否则第 211 件要么越界要么静默消失（设计 §4.7 明确要求"不丢装备"）：
+
+```js
+const idx = bagAdd(state, id, 1);            // 容量内：正常入格
+if (idx === -1) {
+  // 全满：不丢、也不越界 —— 落进最后已解锁页的末格，由 UI 提示"背包已满"
+  const last = bagCapacity(state) - 1;
+  state.meta.bag[last] = { id: id, level: 1, uid: nextUid(state) };
+  return { id: id, duplicate: duplicate, bagFull: true };
+}
+return { id: id, duplicate: duplicate, bagFull: false };
+```
+
+**并加一条断言**：连掉 `bagCapacity + 5` 次之后，
+`state.meta.bag.length <= L.bagCapacity(state)`（没越界）且每次返回都非 null（没丢）。
 
 - [ ] **Step 1: 写测试（覆盖 Review Focus #3）**
 
@@ -345,6 +378,29 @@ ok(L.bagAdd(s, 'longCloak', 1) === -1, '页 1 满时拒绝（未扩容）');
 L.buyBagPage(s);
 ok(L.bagAdd(s, 'longCloak', 1) === 35, '扩容后第 36 件落在页 2 首格');
 ok(L.pageOf(s, 35) === 1, '下标 35 属于页 2');
+
+// V24：页数与音量必须跨会话保留 —— 靠 serialize/deserialize 往返证明。
+// 原稿完全没有这条（独立核验列为覆盖缺口）：买了页、调了音量，
+// 关掉页面再回来却回到 1 页 / 默认音量，是玩家一定会遇到的丢数据 bug。
+const sRt = L.createState(23);
+L.buyBagPage(sRt);                                  // 页 2
+L.buyBagPage(sRt);                                  // 页 3
+L.bagAdd(sRt, 'longCloak', 2);
+const beforePages = sRt.meta.bagPages;
+const beforeBag = L.bagCount(sRt);
+const json = L.serialize(sRt);
+const back = L.deserialize(json);
+ok(back.meta.bagPages === beforePages, '页数跨序列化保留（买了 3 页回来还是 3 页）');
+ok(back.meta.bagPages === 3, '页数确实是 3，不是被默认值盖掉');
+ok(L.bagCount(back) === beforeBag, '背包内容跨序列化保留');
+ok(L.bagAt(back, 0).id === 'longCloak' && L.bagAt(back, 0).level === 2,
+   '连件与等级一起保留');
+
+// V5 原文：「塞 36 件，第 1 页 35、第 2 页 1」——必须真的数一遍两页各多少件，
+// 只断言下标归属是证明不了这个划分的（原稿缺这一条）。
+ok(L.pageSlice(s, 0).filter(Boolean).length === 35, '页 1 里正好 35 件');
+ok(L.pageSlice(s, 1).filter(Boolean).length === 1, '页 2 里正好 1 件');
+ok(L.pageSlice(s, 1)[0] !== null && L.pageSlice(s, 1)[1] === null, '页 2 只有首格有东西');
 
 // Review Focus #2：买满 6 页后不能再有第 211 格
 const s2 = L.createState(22);
@@ -606,11 +662,17 @@ await page.evaluate(() => window.BagHud.testSellFirst());   // 只用于测试�
 const after = await page.evaluate(() => window.__refreshHeroCalls);
 ok(after > before, '卖出后 refreshHeroEquip 被显式调用过（暂停时 update 不跑）');
 
-// V12：换装后左栏数值立即变化
+// V12：换装后左栏数值立即变化。
+// 注意不能用 >= —— 那对"数值根本没刷新""换装失败""读到同一个缓存值"全部成立。
+// V12 原文要求的是"**上升**"，所以必须用一件**已知会提高攻击力**的武器，
+// 并断言差额恰好等于该武器声明的伤害加成。
 const atkBefore = await page.evaluate(() => window.BagHud.testReadStat('attack'));
-await page.evaluate(() => window.BagHud.testEquipFirstWeapon());
+const expectGain = await page.evaluate(() =>
+  window.BagHud.testEquipStrongerWeapon());     // 返回该件声明的攻击加成
 const atkAfter = await page.evaluate(() => window.BagHud.testReadStat('attack'));
-ok(atkAfter >= atkBefore, '换装后数值面板被刷新');
+ok(atkAfter > atkBefore, '换上更强武器后攻击数值严格上升（不是没刷新）');
+ok(atkAfter - atkBefore === expectGain,
+   '上升幅度等于该武器的攻击加成（不是巧合变绿）');
 ```
 
 - [ ] **Step 2: 跑测试确认失败**
@@ -703,13 +765,65 @@ git commit -m "feat: Tab 打开背包并暂停（scene.pause 成对恢复）"
 
 - [ ] **Step 1: 改写测试**
 
-`tests/test_game_logic.js` 约 986/1006/1019-1029/1047/1122-1123/1157 行的断言全部改为新名；`tests/browser/smoke.js:534` 的 `indexOf('回春') >= 0` 改为 `indexOf('治疗') >= 0`（注释同步改）。
+`tests/test_game_logic.js` 的断言全部改为新名；`tests/browser/smoke.js:534` 的 `indexOf('回春') >= 0` 改为 `indexOf('治疗') >= 0`（注释同步改）。
+
+**完整的旧名残留清单（独立核验逐条实测，原稿严重漏列）**：
+
+| 位置 | 内容 | 处理 |
+|---|---|---|
+| `config.js:210` / `:212` | 注释「回春 = 立刻回血」「坚壁 = 8 秒减伤」 | 改成新名 |
+| `logic.js:156` | 注释「坚壁药有时管用有时不管用」 | 改成新名 |
+| `hub.js:140` | 注释「坚壁药能减伤」 | 改成新名 |
+| `app.js:907` | 注释「三瓶回春一次喝光」 | 改成新名 |
+| `test_game_logic.js:986/1001/1005/1006/1012/1023/1027/1029/1046/1047/1122/1126/1157` | 断言消息里的旧名 | 改成新名 |
+| `test_game_logic.js:1057` | `'按 3 喝坚壁药'` | **原稿漏列** |
+| `test_game_logic.js:1135/1137` | `'坚壁药后…'` / `'坚壁药把 40 点伤害减半成 20'` | **原稿漏列** |
+| `test_game_meta.js:219/220/227` | 三处含旧名 | **原稿完全漏列** |
+| `smoke.js:236/526/528/532/534` | 五处（含 `药水栏有三个槽位（回春/力量/坚壁）`） | **原稿只列了 534** |
 
 ```js
 ok(C.POTIONS.heal.name === '治疗药水', '治疗药水命名统一');
 ok(C.POTIONS.heal.short === '治疗', '短名统一');
 ok(C.POTION_ORDER.join(',') === 'heal,strength,wall', 'id 顺序不变（存档兼容）');
 ```
+
+**V14：兵器架按钮文案三段变化（原稿没有这条断言，只在 Step 3 描述了口径）**
+
+```js
+// 逻辑层先给出"这个按钮现在该写什么"，UI 只负责渲染这个字符串。
+// 这样文案变化可以在纯逻辑测试里断言，不必依赖浏览器。
+const s = L.createState(31);
+const rich = Object.assign({}, s, { meta: Object.assign({}, s.meta, { coins: 99999 }) });
+H.ensureHub(rich);
+
+const notOwned = H.zoneActions(rich, H.zoneById('forgewear'))
+  .filter(function (a) { return a.payload && a.payload.id === 'hornHelm'; })[0];
+ok(notOwned && notOwned.kind === 'equip-buy', '没买过时是"购买"');
+ok(notOwned && notOwned.label && notOwned.label !== '卸掉', '没买过时不显示"卸掉"');
+
+L.buyEquipment(rich, 'hornHelm');
+const owned = H.zoneActions(rich, H.zoneById('forgewear'))
+  .filter(function (a) { return a.payload && a.payload.id === 'hornHelm'; })[0];
+ok(owned && owned.kind === 'equip-wear', '买过未穿时是"穿戴"');
+ok(owned && owned.label === '穿戴', '按钮文案是"穿戴"（不再是"执行"）');
+
+L.equipItem(rich, 'hornHelm');
+const worn = H.zoneActions(rich, H.zoneById('forgewear'))
+  .filter(function (a) { return a.payload && a.payload.id === 'hornHelm'; })[0];
+ok(worn && worn.kind === 'equip-upgrade', '穿上后是"升级"这一档');
+ok(worn && worn.label !== '穿戴', '穿上后不再显示"穿戴"');
+
+// 卸掉：已穿戴的件必须有独立的"卸掉"入口，且穿上后按钮不再是"穿戴"
+const actions = H.zoneActions(rich, H.zoneById('forgewear'));
+const hasUnequip = actions.some(function (a) {
+  return a.kind === 'equip-unequip' || (a.label || '') === '卸掉';
+});
+ok(hasUnequip, '已穿戴的件能看出怎么卸掉（文案"卸掉"或等价动作）');
+```
+
+> 若实现把「卸掉」放在背包面板而不是兵器架，**这条断言要跟着换成那个位置**——
+> 但无论放哪，**"穿上之后存在一个可点到的卸下入口"必须有断言**，
+> 否则 V14 描述的"执行→穿戴→卸掉"三段变化没有任何测试覆盖。
 
 - [ ] **Step 2: 跑测试确认失败**
 
@@ -722,12 +836,15 @@ Expected: FAIL —— 名字仍是旧的。
 
 兵器架：加页签 `全部/未拥有/已拥有/已穿戴/特殊`，每条显示贴图；按钮 `执行` → **`穿戴`**，已穿戴时变 **`卸掉`**。
 
-> 全仓 grep 确认无旧名残留：`grep -rn '回春\|坚壁' game/ tests/` 必须**无输出**。
+> **全仓 grep 确认无旧名残留**：`grep -rn '回春\|坚壁' game/ tests/` 改完后必须**无输出**。
+>
+> 原稿把这条写成验收条件却不给完整清单，而实际残留有 **30+ 处**（见 Step 1 的表），
+> 按原稿清单改完必然 FAIL。**上表就是这条验收条件的完整依据**：表里每一处都要改掉。
 
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `"$N" tests/test_game_logic.js && "$N" tests/browser/smoke.js`
-Expected: PASS，且旧名 grep 无输出。
+Expected: PASS，且 `grep -rn '回春\|坚壁' game/ tests/` 无输出。把 grep 结果贴进 commit message 作为证据。
 
 - [ ] **Step 5: 提交**
 
@@ -743,7 +860,23 @@ git commit -m "feat: 药水统一为治疗/力量/护盾，兵器架加页签与
 **Files:**
 - Modify: `game/hub.js:32-45`（`ZONES` 加 `z`）、`game/hub.js:54-61`（`zoneAt` 改距离判定）
 - Modify: `game/app.js:1340` 一带（按 `toScreen` 画）、`game/app.js:1550` 一带（**删提示文字**）、`game/app.js:1423`（删标签）
+- **Modify: `tests/test_game_meta.js:103-127`（既有测试，必须同步改，否则本任务一定打红它）**
 - Test: `tests/test_game_logic.js`（V16）、`tests/browser/smoke.js`（V17）
+
+> **回归地雷（独立核验发现，最容易漏）**：`tests/test_game_meta.js:107-110`
+> 现在是这样写的——
+> ```js
+> H.ZONES.forEach((z) => {
+>   s.hub.x = z.x;                        // ← 只设了 x
+>   eq(H.zoneAt(s).id, z.id, `站在「${z.name}」位置判定为该区域`);
+> });
+> ```
+> 它**只设 `hub.x`，从不设 `hub.z`**，而 `hub.z` 保持默认 `HUB_D/2 ≈ 105`。
+> `zoneAt` 一旦改成二维判定，`z = 34` 的那三个点位（anvil / shop / gate）
+> 会算出 `|105 - 34| = 71` 的 z 向偏差，**永远命中不了**，这条既有测试直接变红。
+> 同一节 `:115-127` 的"空隙检测"也把点位当一维处理，同样要改。
+> Step 3 必须一并把这两处改成 `s.hub.x = z.x; s.hub.z = z.z;`，
+> 并把空隙检测的 `leftEdge/rightEdge` 明确为**只在 x 轴上算**（x 轴仍留有间隙即可）。
 
 **Interfaces:**
 - Consumes: 无
@@ -793,15 +926,25 @@ ok((H.zoneAt(s) || {}).id === 'anvil', 'z 正确时命中铁匠铺');
 
 ```js
 // V17：提示文字已删除，键帽可见。
-// 注意：不能只断言「元素不存在就通过」—— 那样元素名写错了也照样绿。
-// 先确认这个元素在改动前确实存在（git show HEAD~1 里能搜到 prompt.setText），
-// 再断言改动后它不再显示出来。
-const promptGone = await page.evaluate(() => {
-  const el = document.querySelector('#prompt');
-  return !el || el.textContent.trim() === '' ||
-    getComputedStyle(el).display === 'none';
+//
+// ⚠️ 不能查 DOM：`this.prompt` 是 **Phaser 画布内的 Text 对象**（app.js:1436 创建），
+// 不是 HTML 元素。`document.querySelector('#prompt')` 永远返回 null，
+// 写成 `!el || ...` 就是**恒真空断言** —— 正好是上面注释里点名要防的写法。
+// 必须用 Phaser 侧探针：
+const promptState = await page.evaluate(() => {
+  const hub = window.__game.scene.getScene('Hub');
+  const p = hub && hub.prompt;
+  return {
+    exists: !!p,                       // 对象本身可以留着（省得删代码），但必须不可见
+    visible: !!(p && p.visible),
+    hasText: !!(p && p.text && p.text.length > 0),
+    capVisible: !!hub.__keycapVisible, // 键帽此时应当可见
+  };
 });
-ok(promptGone, '压在点位名上的长提示文字已删除（不再显示任何文字）');
+ok(promptState.exists, '探针有效：改动前 prompt 对象确实存在（证明这条断言跑到了真东西）');
+ok(!promptState.visible, '长提示文字已不再显示');
+ok(!promptState.hasText || !promptState.visible, '不再向玩家展示「按 J · 点位名（提示）」长文案');
+ok(promptState.capVisible, '同一时刻键帽是可见的（删提示不是把提示和键帽一起删了）');
 
 // 键帽：靠近点位时必须出现，且是灰色底 + 黑色 J
 const cap = await page.evaluate(() => {
@@ -828,6 +971,8 @@ Expected: FAIL / 报 `zoneAt` 只有两个参数。
    判定写成 `Math.abs(hub.x - z.x) <= z.reachX && Math.abs(hub.z - z.z) <= z.reachZ`。
    `reachX` 沿用原 `reach` 值，`reachZ` 取约 40（够覆盖错落的 34 深度且不跨排误触）。
 3. **绘制端必须同步改**：`app.js:1340` 目前把所有点位画在同一个固定 y 上，改为逐点 `toScreen(x, z, 0)`，并按 `sc` 缩放 —— **数据改了画面没改等于没做**
+4. **既有测试同步改**（见上方"回归地雷"）：`tests/test_game_meta.js:107-110` 加 `s.hub.z = z.z;`；
+   `:115-127` 的空隙检测确认只在 x 轴取中点，不受 `z` 影响。
 4. **删掉**`app.js:1550` 一带的 `this.prompt.setText('按 J · ' + zone.name + '（' + zone.hint + '）')`
 5. 画**灰色圆角键帽 + 黑色 `J`**（约 26×26）在角色**头顶右上方**，150ms 淡入淡出
 6. 改完后**实测每个点位的 `reach`**：走到跟前能触发、隔一个人身位不误触发
@@ -879,9 +1024,20 @@ global.AudioContext = function () {           // stub
 const A = require('../game/audio.js');
 const NAMES = ['slash','hit','crit','hurt','coin','seed','dropNew','dropDup',
   'potion','skill','special','upgrade','sell','bagOpen','wave','boss','death'];
-NAMES.forEach(function (n) { ok(typeof A.play(n) === 'boolean' || true, n + ' 可播放不抛错'); });
-ok(A.context && A.context.state === 'running', '用的是自建 AudioContext');
-ok(A.context !== undefined, '没有依赖 Phaser 的 sound.context（那是 null）');
+// 注意：原稿写的是 `typeof A.play(n) === 'boolean' || true` —— `|| true` 让它恒真。
+// 改成"捕获异常"，这样任何音效内部抛错都会被抓到。
+NAMES.forEach(function (n) {
+  let threw = null;
+  try { A.play(n); } catch (e) { threw = e.message; }
+  ok(threw === null, n + ' 可播放且不抛错' + (threw ? '（抛了：' + threw + '）' : ''));
+});
+// 断言"真的建了节点"，而不是断言"函数被调用过"。stub 的 AudioContext 里
+// 记了每一次 createOscillator/createGain，数量为 0 说明 play() 是空函数。
+ok(A.context && A.context.created && A.context.created.length > 0,
+   '真的向 AudioContext 里建了音频节点（play 不是空函数）');
+ok(A.context.state === 'running', '用的是自建 AudioContext 且已 resume');
+// Phaser 的 game.sound.context 是 null（noAudio:true），
+// 所以"没依赖它"表现为"我们的 ctx 不是那个 null"——直接断言非空即可，不必再写一条。
 ```
 
 - [ ] **Step 2: 跑测试确认失败**
@@ -969,7 +1125,21 @@ git commit -m "feat: ESC 菜单（战斗中两行）、音量滑块、退出战�
 
 **Interfaces:**
 - Consumes: 无
-- Produces: `COMBO.steps` 三段 `range` 由 `58/62/74` → **`61/65/78`**（均 ≥ ×1.05）；`ATTACK_RANGE` 62 → **65**；`ATTACK_DEPTH` 52 → **55**；`ATTACK_BACK` 14 → **15**
+- Produces: `COMBO.steps` 三段 `range` 由 `58/62/74` → **`61/66/78`**；`ATTACK_RANGE` 62 → **66**；`ATTACK_DEPTH` 52 → **55**；`ATTACK_BACK` 14 → **15**
+
+> **数值必须先算一遍（原稿写错，会直接卡死 Step 4）**：
+> `62 × 1.05 = 65.10`，所以第二段取 **65 不满足严格大于**，`测试` 永远绿不了。
+> 正确的下界是「严格大于 ×1.05」：
+>
+> | 原值 | ×1.05 | 取整下界（严格大） | 本计划采用 |
+> |---|---|---|---|
+> | 58 | 60.90 | 61 | **61** ✓ |
+> | 62 | 65.10 | **66** | **66** ✓ |
+> | 74 | 77.70 | 78 | **78** ✓ |
+>
+> `ATTACK_RANGE` 与第二段同步取 **66**（它俩本是同一量纲的基准）。
+> 若坚持用 65，就必须把断言从 `>` 降为 `>=` 并注明"取整后允许相等"——
+> **本计划选择改数值、保留严格断言**，因为"每段都要比之前远"是需求原话。
 
 - [ ] **Step 1: 写测试（V18，含 Review Focus 之外的自检）**
 
@@ -978,8 +1148,14 @@ const base = [58, 62, 74];
 C.COMBO.steps.forEach(function (st, i) {
   ok(st.range > base[i] * 1.05, '第 ' + (i + 1) + ' 段 range 比原值大 5% 以上');
 });
-ok(C.ATTACK_DEPTH > 52, '纵深判定也放大（否则侧面打不到）');
-ok(C.ATTACK_BACK > 14, '身后判定也放大');
+// 三段必须**单调递增**，否则"每段都更远"只是平均数上的假象。
+for (let i = 1; i < C.COMBO.steps.length; i++) {
+  ok(C.COMBO.steps[i].range > C.COMBO.steps[i - 1].range,
+     '第 ' + (i + 1) + ' 段比第 ' + i + ' 段更远');
+}
+ok(C.ATTACK_RANGE > 62, '普攻基准射程也放大');
+ok(C.ATTACK_DEPTH > 52 * 1.05, '纵深判定同比放大（否则侧面打不到）');
+ok(C.ATTACK_BACK > 14 * 1.05, '身后判定同比放大');
 ```
 
 - [ ] **Step 2: 跑测试确认失败**
