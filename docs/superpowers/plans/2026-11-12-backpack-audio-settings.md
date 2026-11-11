@@ -944,16 +944,22 @@ git commit -m "feat(bag): 整理排序与分类页签过滤"
 
 ```js
   // ---- 背包面板（V2 / V4）----
+  // ⚠️ 必须用守卫：实现之前 `window.BagHud` 是 undefined，裸调会抛异常，
+  //    驱动把它当成 {error} 直接中止整个脚本 —— 45 条既有断言全部消失，
+  //    看起来像"游戏全线崩了"，实际只是新功能还没写。
   const bagEl = () => document.getElementById('bag');
   out.bagExists = !!bagEl();
+  out.bagApiExists = !!(window.BagHud && typeof window.BagHud.open === 'function');
   const stBag = window.EmberfieldApp.__state;
-  window.BagHud.open(stBag);
-  await wait(300);
-  out.bagOpen = window.BagHud.isOpen();
-  out.bagDisplayed = !!(bagEl() && getComputedStyle(bagEl()).display !== 'none');
+  if (out.bagApiExists) {
+    window.BagHud.open(stBag);
+    await wait(300);
+    out.bagOpen = window.BagHud.isOpen();
+    out.bagDisplayed = !!(bagEl() && getComputedStyle(bagEl()).display !== 'none');
+  }
 
   // V2：推到屏幕外，clamp() 之后必须回到可见范围
-  if (bagEl()) {
+  if (out.bagApiExists && bagEl()) {
     bagEl().style.left = '-9999px';
     bagEl().style.top = '-9999px';
     window.BagHud.clamp();
@@ -977,6 +983,7 @@ git commit -m "feat(bag): 整理排序与分类页签过滤"
 ```js
 console.log('\n--- 背包面板（V2 / V4）---');
 ok(r.bagExists === true, '#bag 容器存在');
+ok(r.bagApiExists === true, 'window.BagHud.open 是可调用函数（API 已接上）');
 ok(r.bagOpen === true, 'BagHud.open() 后面板处于打开态');
 ok(r.bagDisplayed === true, '面板真的显示出来了（不是只有 className）');
 ok(typeof r.bagLeft === 'number' && r.bagLeft >= 0 && r.bagLeft <= r.viewW - 40,
@@ -998,7 +1005,9 @@ Expected: FAIL —— `#bag` 不存在。
 
 `index.html` 加 `#bag` 容器（标题栏 + 左右两栏），尺寸 **620×540**（960×600 的 ~40%），左栏 40% 宽、内部上 70% / 下 30%。`baghud.js` 负责：
 
-- 网格：`cols = 5`、`rows = 7`，每格 **56×64**
+- 网格：`cols = 5`、`rows = 7`，每格 **56×64**。
+  **空槽位也要渲染**（始终 35 个 `.cell`，空格画成暗色凹槽）——
+  否则 `#bag .cell` 的数量会随背包内容变化，测试与玩家都无法判断"还剩几格"。
 - 贴图：从 Phaser 纹理取 `game.textures.get('eq-<slot>-<id>').source[0].image` → `toDataURL('image/png')`，**缓存进模块级 Map**，每件只转一次
 - 拖动：`pointerdown/move/up` + `Math.max/Math.min` 夹边
 - 页签 7 个，**只点击切换**（数字键被药水占用）
