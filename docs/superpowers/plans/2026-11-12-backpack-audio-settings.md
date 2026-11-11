@@ -369,6 +369,20 @@ git commit -m "refactor(bag): 装备读写改按条目（支持同 id 多件）"
 - Modify: `game/config.js`（加 `BAG`）
 - Modify: `game/logic.js`（`bagCapacity` 已存在于 Task 2；加 `buyBagPage`、`rollBagPage`）
 - Test: `tests/test_bag.js`（**新建**）
+- **Modify: `.github/workflows/ci.yml`（必须加一步，否则新测试在 CI 里永远不会跑）**
+
+> **CI 集成缺口（预检发现）**：`.github/workflows/ci.yml:165/169/174` 是**逐个点名**
+> 调用测试文件的（`node tests/test_game_logic.js` 等），没有"扫描 tests/ 目录"的聚合 runner，
+> 也**没有 `package.json` 的 test script**。所以新建的 `tests/test_bag.js`
+> 在本地能跑、**在 CI 里永远不会被执行** —— 而分支保护要求 5 个 check 通过，
+> 一个从不运行的测试会让"绿"变成假象。
+> 因此本任务必须同时改 workflow，加：
+> ```yaml
+>       - name: Backpack capacity, paging and selling rules
+>         # 35 格分页、6 页上限、卖价公式、批量保留一件
+>         run: node tests/test_bag.js
+> ```
+> **Task 7/8 若再新建 `tests/test_bag_ui.js` 之类，同样要加。**
 
 **Interfaces:**
 - Consumes: Task 2 的 `bagAdd`/`bagCapacity`
