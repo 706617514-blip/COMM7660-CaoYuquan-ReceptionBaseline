@@ -1466,9 +1466,10 @@ git commit -m "feat: 药水统一为治疗/力量/护盾，兵器架加页签与
 ```js
 // V16：错落后每个点位都还能走到并触发。
 // 注意命名空间：zoneAt 属于 GameHub，不属于 GameLogic。
-const H = require('../game/hub.js');
+// （`test_game_meta.js` 顶部已经 `const H = require('../game/hub.js')`，
+//   **不要再写一遍** —— 同作用域重复 const 是 SyntaxError，整个文件一条都不跑。）
 const s = L.createState(51);
-const h = H.ensureHub(s);
+const h = H.ensureHub(s);   // createState 不带 hub，必须先 ensureHub 才有 s.hub
 [['field',100,0],['anvil',265,34],['forgewear',415,0],
  ['shop',565,34],['altar',720,0],['gate',880,17]].forEach(function (t) {
   h.x = t[1]; h.z = t[2];
@@ -1485,6 +1486,11 @@ ok((H.zoneAt(s) || {}).id !== 'anvil', 'z 不对时不该命中上排点位');
 h.x = 265; h.z = 34;                   // 正确 z
 ok((H.zoneAt(s) || {}).id === 'anvil', 'z 正确时命中铁匠铺');
 ```
+
+> **`state.hub` 是懒创建的**：`H.ensureHub(state)`（`hub.js:47-51`）才会写出
+> `state.hub = { x: 285, z: HUB_D / 2, facing: 1 }`。`L.createState()` 之后直接读
+> `s.hub.x` 会 `TypeError: Cannot read properties of undefined`。
+> 浏览器里踩不到（`app.js:2283` 建场景时已调过），**只有 Node 侧测试会踩**。
 
 ```js
 // V17：提示文字已删除，键帽可见。
@@ -1510,13 +1516,13 @@ ok((H.zoneAt(s) || {}).id === 'anvil', 'z 正确时命中铁匠铺');
   stZ.hub.x = 500; stZ.hub.z = 105;
   await wait(500);
   out.farPrompt = promptOf();
-  out.farCap = !!hubZ.__keycapVisible;
+  out.farCap = !!(hubZ.keycap && hubZ.keycap.visible);
 
   // 铁匠铺（x=265, z=34）
   stZ.hub.x = 265; stZ.hub.z = 34;
   await wait(600);
   out.nearPrompt = promptOf();
-  out.nearCap = !!hubZ.__keycapVisible;
+  out.nearCap = !!(hubZ.keycap && hubZ.keycap.visible);
   out.nearZoneId = (window.GameHub.zoneAt(stZ) || {}).id;
 
   // 每个点位都走一遍：靠近各命中、且不是别人
@@ -1547,8 +1553,12 @@ ok((r.zoneHits || []).every((h) => h.got === h.want),
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `"$N" tests/test_game_logic.js`
-Expected: FAIL / 报 `zoneAt` 只有两个参数。
+Run: `"$N" tests/test_game_logic.js && "$N" tests/browser/smoke.js`
+Expected: FAIL。**注意红在哪一条**：V16 的六条「站在自己点位上命中自己」在改动前
+**本来就会通过**（一维判定同样命中），真正打红的只有
+`z 不对时不该命中上排点位`（`hub.x = 265, hub.z = 0` 时旧实现返回 anvil）——
+它才是这条需求的关键判据。浏览器侧「远离点位时没有键帽」/「靠近点位时出现键帽」
+一开始就 FAIL（`hubZ.keycap` 还不存在）。
 
 - [ ] **Step 3: 实现**
 
@@ -1562,11 +1572,14 @@ Expected: FAIL / 报 `zoneAt` 只有两个参数。
    判定写成 `Math.abs(hub.x - z.x) <= z.reachX && Math.abs(hub.z - z.z) <= z.reachZ`。
    `reachX` 沿用原 `reach` 值，`reachZ` 取约 40（够覆盖错落的 34 深度且不跨排误触）。
 3. **绘制端必须同步改**：`app.js:1340` 目前把所有点位画在同一个固定 y 上，改为逐点 `toScreen(x, z, 0)`，并按 `sc` 缩放 —— **数据改了画面没改等于没做**
-4. **既有测试同步改**（见上方"回归地雷"）：`tests/test_game_meta.js:107-110` 加 `s.hub.z = z.z;`；
+4. **既有测试同步改**（见上方「回归地雷」）：`tests/test_game_meta.js:107-110` 加 `s.hub.z = z.z;`；
    `:115-127` 的空隙检测确认只在 x 轴取中点，不受 `z` 影响。
-4. **删掉**`app.js:1550` 一带的 `this.prompt.setText('按 J · ' + zone.name + '（' + zone.hint + '）')`
-5. 画**灰色圆角键帽 + 黑色 `J`**（约 26×26）在角色**头顶右上方**，150ms 淡入淡出
-6. 改完后**实测每个点位的 `reach`**：走到跟前能触发、隔一个人身位不误触发
+5. **删掉** `app.js:1550` 一带的 `this.prompt.setText('按 J · ' + zone.name + '（' + zone.hint + '）')`
+6. 画**灰色圆角键帽 + 黑色 `J`**（约 26×26）在角色**头顶右上方**，150ms 淡入淡出。
+   **必须挂在 `this.keycap`**（Container 或 Graphics，带 `.visible`）上，逐帧按
+   `zoneAt(state)` 有无结果切 `visible` —— 测试直接断言 `hubZ.keycap.visible`，
+   **不要自创 `__keycapVisible` 之类的旁路标志**（那正是「测试专用出口」）。
+7. 改完后**实测每个点位的 `reach`**：走到跟前能触发、隔一个人身位不误触发
 
 - [ ] **Step 4: 跑测试确认通过**
 
