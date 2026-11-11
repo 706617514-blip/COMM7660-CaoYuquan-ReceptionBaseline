@@ -538,7 +538,7 @@ Task 2 删除，于是**任何背包里的装备在兵器架上都显示 Lv.1**�
   `run.equipDrops` 里带上 `overwrote` 字段，让 UI 能提示"覆盖了哪一件"，
   并加断言证明被覆盖的那件确实是从"最后一格"里选出来的（不是随机删一件）。
 
-> **⚠ Task 4 复审实测：`overwrote` 是死代码（未修，留给本任务一并处理）**
+> **⚠ Task 4 复审实测：`overwrote` 曾是死代码（已派追加修复，见 progress ledger）**
 > `rollEquipDrop` 的返回值确实带上了 `overwrote`（实测满包返回
 > `{"id":"broadSword","duplicate":false,"bagFull":true,"overwrote":{"id":"strawShoes","uid":"u35","level":1}}`，
 > 且末格 uid 由 `u35` 变 `u36`，指向正确），**但传送通道没改**：
