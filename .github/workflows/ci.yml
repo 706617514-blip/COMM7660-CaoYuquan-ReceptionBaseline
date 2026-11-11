@@ -271,9 +271,12 @@ jobs:
         # 新断言不误报正确代码。三步任一不符即失败。
         run: python analysis/demo_failed_test.py
 
-      - name: Balance ladder is monotone
+      - name: Balance numbers reproduce from repo scripts
         # 平衡数字必须由仓库内脚本复现（tests/balance_report.js），
         # 不允许存在"报告里写了、仓库里算不出"的胜率。
+        # 注意本步骤只**打印**表格、不断言单调性：n=20 单步长时密林会随机给出
+        # 0%~80%，在这里断言会让 CI 随机变红。阶梯单调性由 test_game_logic.js
+        # 的终局护栏与难度假说断言负责（那里用 n=200×4，颗粒度 0.125pp）。
         run: node tests/balance_report.js 20 1
 
   compliance:
