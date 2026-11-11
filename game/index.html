@@ -484,6 +484,7 @@
       game = null;
     }
     game = window.EmberfieldApp.boot(state, 'game');
+    globalThis.__game = game;   // 供探针/测试使用
   }
 
   $('btnCreate').addEventListener('click', function () {

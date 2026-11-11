@@ -1114,6 +1114,10 @@
       paintBackdrop(this, isBossRun ? (themeMap[tier] || 'run') : 'run');
 
       this.effectGfx = this.add.graphics().setDepth(1050);
+      // 蓄力光点单独一层：它必须盖在 Boss 上面，否则 Boss 身体一挡就看不见。
+      // Boss 的 depth 是 1000 - z，z 在 0..210 之间，所以 1000 - z 在 790..1000。
+      // 1400 高于所有 Boss 可能的深度，保证光点永远在最上层。
+      this.bossGfx = this.add.graphics().setDepth(1400);
 
       this.shadow = this.add.image(0, 0, 'shadow').setDepth(1).setScale(0.8);
       this.hero = this.add.image(0, 0, 'hero').setDepth(100);
@@ -1162,6 +1166,7 @@
       // 不清的话前一帧的血条、特效、范围圈会全部叠加残留，
       // 屏幕上会出现莫名其妙的色块和长条（真实踩过这个坑）。
       this.effectGfx.clear();
+      this.bossGfx.clear();
 
       // 相机轻微跟随，让走位有纵深
       this.cameras.main.scrollX = (run.player.x - W / 2) * 0.04;
@@ -1316,30 +1321,76 @@
           rot = -0.045 * charge * (e.facing >= 0 ? 1 : -1);
           tint = charge > 0.6 ? 0xffd0c0 : 0xffffff;
 
-          // 粒子光芒汇聚：从四周向 Boss 核心收拢的光点
-          // 这是"蓄力"最直观的视觉语言 —— 光在往它身上聚
-          const g2 = this.effectGfx;
-          const csx = bs.sx, csy = gy - 92 * scale;
-          for (let k = 0; k < 16; k++) {
-            const a = (k / 16) * Math.PI * 2 + t * 1.5;
-            const dist = 170 * (1 - charge * 0.86);     // 越蓄越近
-            const px = csx + Math.cos(a) * dist;
-            const py = csy + Math.sin(a) * dist * 0.7;
-            // 越靠近核心光点越小越亮 —— 收拢感来自"缩小"，不是"移动"
-            const r = (1.2 + (1 - charge) * 2.6);
-            g2.fillStyle(0xffd08a, 0.30 + charge * 0.65);
-            g2.fillCircle(px, py, r);
-            // 拖尾：光点的来路上留一道淡痕，强化"被吸过来"
-            g2.fillStyle(0xffa060, 0.16 + charge * 0.22);
-            g2.fillCircle(csx + Math.cos(a) * (dist + 26), csy + Math.sin(a) * (dist + 26) * 0.7, r * 0.7);
+          // 粒子光芒汇聚（第二版）。
+          //
+          // 第一版有 20 个点，分布在 230px 半径上 —— 密度太低，看起来永远是
+          // "十几个散点"，读不出流动。第二版的三个改动：
+          //   1. 点数提到 36，并按 3 条螺旋臂分布（不是均匀圆环）
+          //   2. 每条臂上的点错开进度，形成连续的"流"而不是"一圈点"
+          //   3. 核心从实心球改成多层柔光晕，避免像"贴了个球"
+          const g2 = this.bossGfx;
+          // 汇聚中心：Boss 的**视觉中心**。
+          // 之前用 92*scale，但 scale 只有 0.41 时只上移 38px，
+          // 而 Boss 视觉高 76px —— 中心落在了胸口上方，且半径 230 会铺到画布外。
+          // 现在按实际视觉高度的一半来定中心，并把半径收进画布。
+          const visualH = 185 * scale;
+          const csx = bs.sx;
+          const csy = gy - visualH * 0.52;
+          // 半径自适应：不能超过到画布边缘的距离，否则光点跑到画面外
+          const roomL = csx, roomR = W - csx, roomT = csy, roomB = HGT - csy;
+          const room = Math.min(roomL, roomR, roomT, roomB);
+          const maxDist = Math.max(90, Math.min(230, room * 0.95));
+          const ARMS = 3, PER_ARM = 12;
+          for (let arm = 0; arm < ARMS; arm++) {
+            for (let k = 0; k < PER_ARM; k++) {
+              // 进度：每条臂上的点依次错开，形成螺旋
+              const seq = (k / PER_ARM) + arm / ARMS;
+              const mp = ((t * 1.35 + seq) % 1);          // 0 远 → 1 抵达
+              // 螺旋角：随进度旋转，越靠近核心转得越快
+              const ang = seq * Math.PI * 2 + mp * 2.6 + t * 0.5;
+              // 起始距离必须**大于 Boss 身体半径**（约 100px），否则光点一出现
+              // 就在身体内部、被 Boss 挡住，看起来像"没有光点"。
+              // 230 起、收拢到 105，保证整段行程都在身体之外。
+              const baseDist = maxDist - charge * maxDist * 0.54;
+              // 非线性收缩：远处快、近处慢，像被吸住
+              const dist = baseDist * Math.pow(1 - mp, 1.9) + 8;
+              const px = csx + Math.cos(ang) * dist;
+              const py = csy + Math.sin(ang) * dist * 0.58;
+
+              const alpha = (0.35 + mp * 0.65) * (0.55 + charge * 0.45);
+              const r = 4.2 * (1 - mp * 0.45);
+
+              // 指向中心的拖尾**线条**。
+              // 关键领悟：静态截图里，一堆圆点读不出"被吸走"——因为没有方向。
+              // 而一条从光点指向核心的短线，即使静止不动也明确表达了方向。
+              // 线的长度随进度缩短（越近核心，剩下的路程越短）。
+              const tailLen = Math.min(dist * 0.55, 46) * (0.4 + mp * 0.6);
+              if (tailLen > 2) {
+                const tx = csx + Math.cos(ang) * (dist + tailLen);
+                const ty = csy + Math.sin(ang) * (dist + tailLen) * 0.58;
+                g2.lineStyle(Math.max(1.2, r * 0.75), 0xffb070, alpha * 0.55);
+                g2.beginPath();
+                g2.moveTo(tx, ty);
+                g2.lineTo(px, py);
+                g2.strokePath();
+              }
+
+              g2.fillStyle(0xffe4b0, alpha);
+              g2.fillCircle(px, py, r);
+            }
           }
-          // 核心：蓄到 70% 后开始出现亮点，越蓄越亮
-          if (charge > 0.55) {
-            const coreA = (charge - 0.55) / 0.45;
-            g2.fillStyle(0xffe0a0, 0.5 + coreA * 0.5);
-            g2.fillCircle(csx, csy, 4 + coreA * 12);
-            g2.fillStyle(0xff8a3c, 0.3 + coreA * 0.4);
-            g2.fillCircle(csx, csy, 10 + coreA * 26);
+          // 核心：多层柔光晕（不是实心球）。
+          // 实心球看起来像"身上贴了个橙球"，柔光晕才像"能量在聚集"。
+          if (charge > 0.30) {
+            const coreA = (charge - 0.30) / 0.70;
+            for (let layer = 3; layer >= 1; layer--) {
+              const rr = (14 + coreA * 40) * layer * 0.62;
+              g2.fillStyle(0xffb060, (0.055 + coreA * 0.07) * (4 - layer));
+              g2.fillCircle(csx, csy, rr);
+            }
+            // 中心一个很小的亮核
+            g2.fillStyle(0xfff0cc, 0.5 + coreA * 0.5);
+            g2.fillCircle(csx, csy, 2 + coreA * 6);
           }
         } else if (e.attackCd > (C.BOSS.attackCooldown / (C.BOSS.tiers[tier].speedMul || 1)) - 0.28) {
           // ---- 近身出手：前倾横扫（用 attackCd 刚被重置的窗口判断"刚出手"）----
