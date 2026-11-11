@@ -1633,20 +1633,136 @@ git commit -m "feat(audio): 自建 AudioContext 合成 17 个音效 + 音量控�
   - `exitRun(state) -> { ok, coins, hpRatio }` —— 按血量折扣结算
   - 菜单：战斗中两行 `设置` / `退出战斗`；基地只有 `设置`
 
-- [ ] **Step 1: 写测试（V22）**
+- [ ] **Step 1: 写测试（V22 逻辑侧 + V20/V21/V23 浏览器侧）**
+
+结算公式（设计文档 §3.4，**已批准，不要自行改**）：
+`保留率 = 0.5 × (0.5 + 0.5 × 血量比)`，即满血 50%、空血 25%。取整用 `Math.round`。
+
+**（A）逻辑侧** —— 追加到 `tests/test_bag.js`（或 `tests/test_game_logic.js` 末尾，二选一，两处都用已有的 `ok`/`eq` 助手）：
 
 ```js
-const full = L.createState(61);
-// 满血退出：保留 50%
-const half = L.createState(62);
-// 残血退出：保留 25%
-ok(fullResult.coins > halfResult.coins, '满血退出拿到的铜币多于残血退出');
+// V22：退出战斗按血量结算
+function runWithCoins(seed, coins, hpRatio) {
+  const st = L.createState(seed);
+  L.startRun(st, 'grass');
+  st.run.loot.coins = coins;
+  st.run.player.hp = Math.max(1, Math.round(st.run.player.maxHp * hpRatio));
+  return st;
+}
+const sFull = runWithCoins(61, 1000, 1.0);
+const rFull = L.exitRun(sFull);
+ok(rFull.ok === true, '满血可以退出战斗');
+ok(rFull.coins === 500, '满血退出保留 50%（1000 -> 500）', rFull.coins);
+ok(sFull.meta.coins === 500, '结算真的进了存档铜币', sFull.meta.coins);
+
+const sLow = runWithCoins(62, 1000, 0.0);
+sLow.run.player.hp = 1;                     // 接近空血（活着退出，hp=0 应算死亡不结算）
+const rLow = L.exitRun(sLow);
+// 期望值按 maxHp=70、hp=1 实算：0.5×(0.5+0.5×1/70)=0.25357 → 254
+// 不写死常数：只要落在 25% 附近且严格小于满血即可
+ok(rLow.coins >= 245 && rLow.coins <= 260,
+   '残血退出保留约 25%（1000 -> 约 254）', rLow.coins);
+ok(rLow.coins < rFull.coins, '早退拿到的铜币一定少于满血退出', rLow.coins + ' < ' + rFull.coins);
+
+// 已结束的对局不能再结算一次（防止刷币）
+const again = L.exitRun(sFull);
+ok(again.ok === false, '对局已结束，重复退出被拒绝', JSON.stringify(again));
+ok(sFull.meta.coins === 500, '重复退出没有再发一次铜币', sFull.meta.coins);
 ```
+
+> 这条刻意**不用等号**：`maxHp` 会随装备变化（这里是空装备的 70），
+> 写死 254 会在以后平衡性调整时莫名其妙变红。断言的是「接近 25%、且严格低于满血退出」。
+
+**（B）页面内** —— 追加到 `SCRIPT` 的 IIFE 里、`return out;` 之前：
+
+```js
+  // ---- ESC 菜单 / 设置滑块 / 退出战斗（V20 / V21 / V23）----
+  const stE = window.EmberfieldApp.__state;
+  const hubE = window.__game.scene.getScene('Hub');
+  const escEl = () => document.getElementById('esc');
+
+  // 基地里按 ESC：只有一行「设置」
+  window.BagHud.close();
+  stE.phase = 'hub';
+  key('keydown', 'Escape', 27); await wait(80); key('keyup', 'Escape', 27);
+  await wait(350);
+  out.escOpenInHub = !!(escEl() && getComputedStyle(escEl()).display !== 'none');
+  out.hubRows = escEl() ? [...escEl().querySelectorAll('.esc-row')].map((r) => r.textContent.trim()) : [];
+  out.hubPaused = hubE.scene.isPaused();
+  // 关掉
+  key('keydown', 'Escape', 27); await wait(80); key('keyup', 'Escape', 27);
+  await wait(300);
+  out.escClosed = !(escEl() && getComputedStyle(escEl()).display !== 'none');
+  out.hubResumed = !hubE.scene.isPaused();
+
+  // 滑块：拖动后音量真的变了，且已扫过区域是绿色填充
+  if (escEl()) {
+    key('keydown', 'Escape', 27); await wait(80); key('keyup', 'Escape', 27);
+    await wait(300);
+    const vol = document.getElementById('vol-master');
+    out.volExists = !!vol;
+    if (vol) {
+      out.volType = vol.type;
+      out.volMin = vol.min; out.volMax = vol.max;
+      vol.value = '40';
+      vol.dispatchEvent(new Event('input', { bubbles: true }));
+      await wait(150);
+      out.volStored = stE.meta.settings && stE.meta.settings.volume;
+      out.volBg = getComputedStyle(vol).backgroundImage || '';
+    }
+    const mus = document.getElementById('vol-music');
+    const note = document.getElementById('vol-music-note');
+    out.musicExists = !!mus;
+    out.musicNote = note ? note.textContent.trim() : '';
+    key('keydown', 'Escape', 27); await wait(80); key('keyup', 'Escape', 27);
+    await wait(250);
+  }
+```
+
+**（C）Node 侧**：
+
+```js
+console.log('\n--- ESC 菜单 / 滑杆（V20 / V21 / V23）---');
+ok(r.escOpenInHub === true, '基地按 ESC 打开设置');
+ok(Array.isArray(r.hubRows) && r.hubRows.length === 1, '基地里菜单只有一行', JSON.stringify(r.hubRows));
+ok((r.hubRows || []).some((t) => t.indexOf('设置') >= 0), '那一行是「设置」', JSON.stringify(r.hubRows));
+ok((r.hubRows || []).every((t) => t.indexOf('退出战斗') < 0), '基地里没有「退出战斗」');
+ok(r.hubPaused === true, '菜单打开时场景暂停');
+ok(r.escClosed === true, '再按 ESC 关闭菜单');
+ok(r.hubResumed === true, '关闭后恢复运行（pause/resume 成对）');
+ok(r.volExists === true, '有主音量滑杆');
+ok(r.volType === 'range', '是 range 控件（能被拖动）', r.volType);
+ok(String(r.volMin) === '0' && String(r.volMax) === '100', '范围 0–100', r.volMin + '-' + r.volMax);
+ok(Math.abs(r.volStored - 0.4) < 1e-6, '滑动后音量存进 meta.settings', r.volStored);
+ok(typeof r.volBg === 'string' && r.volBg.indexOf('gradient') >= 0,
+   '已扫过区域用渐变填充（绿色那一侧）', r.volBg);
+ok(r.musicExists === true, '有音乐滑杆');
+ok(typeof r.musicNote === 'string' && r.musicNote.length > 0,
+   '音乐滑杆旁写明「暂无 BGM / 未接入」，否则玩家以为坏了', r.musicNote);
+```
+
+> 「战斗中两行」这一条用**逻辑侧**断言（渲染路径太多，浏览器里切战斗再开菜单容易受刷怪干扰）：
+> 在 `tests/test_game_logic.js` 里断言 `L.escMenuRows(state)`（Task 13 新增的纯函数）
+> 在 `phase === 'run'` 时返回 `['设置','退出战斗']`、`phase === 'hub'` 时返回 `['设置']`。
+> 这样浏览器侧只验「渲染出来的行数与文案跟纯函数一致」即可。
+
+**DOM 契约（实现必须照此命名）**：
+
+| 选择器 | 含义 |
+|---|---|
+| `#esc` | 菜单容器，`display:none` 表示未打开 |
+| `#esc .esc-row` | 每一行按钮 |
+| `#esc [data-act="quit"]` | 「退出战斗」行（基地里不渲染） |
+| `#vol-master` | 主音量滑杆（`input type=range`，`min=0 max=100`） |
+| `#vol-music` | 音乐滑杆（同上） |
+| `#vol-music-note` | 音乐滑杆旁的说明文字（必须写明暂无 BGM） |
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `"$N" tests/test_game_logic.js`
-Expected: FAIL —— `L.exitRun` 不存在。
+Run: `"$N" tests/test_game_logic.js && "$N" tests/browser/smoke.js`
+Expected: FAIL —— `L.exitRun is not a function`、`L.escMenuRows is not a function`；
+浏览器侧 `#esc 打开设置` 等新断言 FAIL，但**既有 45 条仍 PASS**（页面脚本要加
+`if (window.EmberfieldUI && document.getElementById('esc'))` 之类的守卫，避免抛异常中止整个脚本）。
 
 - [ ] **Step 3: 实现**
 
