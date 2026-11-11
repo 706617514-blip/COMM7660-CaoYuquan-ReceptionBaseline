@@ -1078,7 +1078,16 @@ Task 9 加上 `scene.pause()` 后是同一个毛病的第二种触发方式，�
   out.dmgAfter = Lg.playerStats(stI).damage;
 
   // V3：悬停显示信息
-  const cell0 = document.querySelector('#bag .cell');
+  // ⚠️ 不能盲取「第一个 .cell」：空格也要渲染（Task 7 的契约），
+  //    而刚把 twinBlades 穿上之后背包可能正好空了 —— 悬停空格什么都不会弹，
+  //    断言会以「tooltip 没出现」的形式失败，看不出真实原因。
+  //    先补一件确定留在背包里的，再从「有 img 的格子」里取。
+  if (Lg.equipOwned(stI, 'ironHelm') === null) Lg.buyEquipment(stI, 'ironHelm');
+  window.BagHud.refresh();
+  await wait(250);
+  const filled = document.querySelector('#bag .cell img');
+  out.cellWithItemFound = !!filled;
+  const cell0 = filled ? filled.closest('.cell') : null;
   if (cell0) {
     cell0.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }));
     await wait(150);
@@ -1104,6 +1113,7 @@ Task 9 加上 `scene.pause()` 后是同一个毛病的第二种触发方式，�
 
 ```js
 console.log('\n--- 背包交互（V3 / V12 / V13 / V26–V29）---');
+ok(r.cellWithItemFound === true, '背包里有带贴图的格子（否则悬停测试测的是空格）');
 ok(r.equipResult && r.equipResult.ok === true, '穿戴成功', JSON.stringify(r.equipResult));
 ok(typeof r.heroWeaponBefore === 'string', '能读到英雄的武器图层（探针有效）');
 ok(r.heroWeaponAfter === 'eq-weapon-twinBlades',
@@ -1116,6 +1126,8 @@ ok(r.dmgAfter - r.dmgBefore === r.dmgGainDeclared,
    '伤害上升幅度恰好等于武器加成（不是巧合变绿）',
    r.dmgBefore + ' + ' + r.dmgGainDeclared + ' vs ' + r.dmgAfter);
 ok(r.tipVisible === true, '悬停出现物品信息', r.tipText);
+ok(typeof r.tipText === 'string' && r.tipText.indexOf('铁盔') >= 0,
+   'tooltip 显示的确实是悬停那一件的名字（铁盔）', r.tipText);
 ok(r.tipText && r.tipText.length > 0, '提示里有文字（不是空框）', r.tipText);
 ok(r.sortBtn === true, '有「整理」按钮');
 ok(r.batchBtn === true, '有「批量出售」按钮');
