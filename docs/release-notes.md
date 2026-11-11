@@ -24,6 +24,7 @@ repository, not a description of intent.
 | Phase 2, release 1 | `v0.2-mvp` | 2026-11-10 | `55e0447` | Playable core loop: run → loot → farm → upgrade | https://706617514-blip.github.io/COMM7660-CaoYuquan-ReceptionBaseline/ | [run 42746488696](https://github.com/706617514-blip/COMM7660-CaoYuquan-ReceptionBaseline/actions/runs/42746488696) |
 | Phase 2, release 2 | `v0.2-equipment` | 2026-11-11 | `4f6e916` | Equipment system (35 items, 5 slots), the farm freeze fix, plus earlier untagged work now included | https://706617514-blip.github.io/COMM7660-CaoYuquan-ReceptionBaseline/ | [run 43045532080](https://github.com/706617514-blip/COMM7660-CaoYuquan-ReceptionBaseline/actions/runs/43045532080) |
 | Phase 2, release 2 (earlier tag, now out of date) | `v0.2-submission` | 2026-11-10 | `727e39b` | Revision driven by evidence collected after release 1. **Does not include the equipment system** — see the note under Release 2 | _same URL_ | [run 42792958880](https://github.com/706617514-blip/COMM7660-CaoYuquan-ReceptionBaseline/actions/runs/42792958880) |
+| Phase 2, current batch (unreleased) | _(no tag)_ | 2026-11-12 | `8c63b84` | Backpack panel (35 cells per page, six pages, paid expansion), batch sell, runtime-generated audio with a volume/music settings page, ESC menu, attack reach +5% | _(未部署 — 仅本地分支 `feat/backpack-audio-settings`)_ | _(未运行 — 分支未 push，Actions 里没有对应运行)_ |
 
 > The Phase 1 tag is **immutable**. Do not retag it, amend its commits, or move it to a later
 > commit. Phase 2 work happens in commits after it.
@@ -31,6 +32,12 @@ repository, not a description of intent.
 > The cells above were filled in from the repository and the Actions log rather than from
 > memory. A tag, a CI run and a deployment URL are execution facts; each one was read back
 > from the system that produced it before being written down here.
+>
+> The last row is the working branch at the time of writing, not a release. It has no tag, it
+> was never pushed, so it has no CI run and no deployment URL — the two cells say so rather
+> than carrying a plausible-looking number. Its local evidence (seven suites, 1,348
+> assertions, six screenshots, one old-save import) is recorded in
+> `docs/browser-test-evidence.md`.
 
 ---
 
