@@ -249,7 +249,8 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
     bodyW: 240, bodyH: 220,  // 美术简报里的原生尺寸
     // 移动很慢：小怪是 92~126，Boss 只有 26
     speed: 26,
-    attackCooldown: 2.4,     // 贴身普攻间隔
+    attackCooldown: 3.1,     // 贴身普攻间隔。2.4 时出手过密，玩家读不到节奏；
+                             // 调到 3.1 让每一次出手之间有可预判的空隙。
     meleeRange: 96,          // 贴身普攻距离
     tiers: {
       normal: { hp: 1400, damage: 18, speedMul: 1.00, cdMul: 1.00,
@@ -262,21 +263,21 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
     skills: [
       // ---- 2 个近身技能（贴身）----
       { id: 'slam',    name: '碾压',   range: 'melee', radius: 120, damage: 26,
-        windup: 0.55, cd: 5.0,  knockback: 380,
+        windup: 0.55, cd: 5.8,  knockback: 380,
         desc: '抬起身体砸向近处，命中范围略大于体型' },
       { id: 'grab',    name: '缠绕',   range: 'melee', radius: 140, damage: 22,
-        windup: 0.40, cd: 7.0,  stunTime: 0.8, pull: 90,
+        windup: 0.40, cd: 8.1,  stunTime: 0.8, pull: 90,
         desc: '藤蔓缠住近处目标，把玩家拉向自己' },
       // ---- 2 个范围技能（直径不超过半屏 480px）----
       { id: 'sweep',   name: '横扫',   range: 'area', radius: 210, damage: 24,
-        windup: 0.70, cd: 8.0,  knockback: 300,
+        windup: 0.70, cd: 9.2,  knockback: 300,
         desc: '横扫半个场地，直径 420px' },
       { id: 'seeds',   name: '种子爆散', range: 'area', radius: 180, damage: 18,
-        windup: 0.85, cd: 10.0, projectiles: 8, projSpeed: 220,
+        windup: 0.85, cd: 11.5, projectiles: 8, projSpeed: 220,
         desc: '向四周爆散种子，直径 360px，需靠走位穿过间隙' },
       // ---- 1 个全屏技能（有前摇，可闪现躲）----
       { id: 'wither',  name: '枯萎领域', range: 'full', radius: 2000, damage: 42,
-        windup: 1.40, cd: 20.0,
+        windup: 1.40, cd: 23.0,
         desc: '全屏枯萎，1.4 秒前摇后爆发；前摇期间闪现离开原地可躲开' },
     ],
   };

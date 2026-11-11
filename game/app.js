@@ -1282,6 +1282,106 @@
           .setSize(150 * scale, 34 * scale)
           .setDepth(1000 - e.z - 1);
 
+        // ================= Boss 动作动画 =================
+        // 按 game-feel 技能的做法：**tween + squash & stretch**，而不是逐帧图。
+        //
+        // 为什么不用逐帧：一张立绘做 8 帧动画需要 8 张图，而 Boss 只有一张。
+        // 形变驱动的好处是**随状态实时变化** —— 蓄力时抖动、受击时后仰、
+        // 出手时前倾，这些都能从战斗状态直接算出来，不需要额外的美术。
+        //
+        // 每个动作遵循同一套规则：
+        //   瞬间形变（快）→ 缓动回正（慢），且都带一点过冲。
+        //   这就是 game-feel 里说的"juice is transient, not a new resting state"。
+
+        // 用 time 驱动的正弦做"呼吸"，让静止时也不是死的
+        const breathe = Math.sin(time / 620) * 0.014;
+        let sx = 1 + breathe, sy = 1 - breathe;      // 体积守恒：一轴胀一轴缩
+        let rot = 0;                                  // 倾斜（弧度）
+        let dyOff = 0;                                // 垂直偏移
+        let dxOff = 0;
+        let tint = 0xffffff;
+
+        if (e.casting) {
+          // ---- 蓄力：粒子光芒汇聚 + 身体后仰抖动 ----
+          const t = time / 1000;
+          const charge = 1 - (e.casting.timer / e.casting.windup);   // 0 → 1
+          // 蓄力越深，抖动越快越明显
+          const shakeAmp = 1.5 + charge * 4.5;
+          dxOff = Math.sin(t * (18 + charge * 26)) * shakeAmp;
+          dyOff = Math.cos(t * (23 + charge * 30)) * shakeAmp * 0.5;
+          // 身体被"压缩蓄势"：越接近释放越扁
+          sy = 1 - charge * 0.10;
+          sx = 1 + charge * 0.08;
+          // 微微后仰
+          rot = -0.045 * charge * (e.facing >= 0 ? 1 : -1);
+          tint = charge > 0.6 ? 0xffd0c0 : 0xffffff;
+
+          // 粒子光芒汇聚：从四周向 Boss 核心收拢的光点
+          // 这是"蓄力"最直观的视觉语言 —— 光在往它身上聚
+          const g2 = this.effectGfx;
+          const csx = bs.sx, csy = gy - 92 * scale;
+          for (let k = 0; k < 16; k++) {
+            const a = (k / 16) * Math.PI * 2 + t * 1.5;
+            const dist = 170 * (1 - charge * 0.86);     // 越蓄越近
+            const px = csx + Math.cos(a) * dist;
+            const py = csy + Math.sin(a) * dist * 0.7;
+            // 越靠近核心光点越小越亮 —— 收拢感来自"缩小"，不是"移动"
+            const r = (1.2 + (1 - charge) * 2.6);
+            g2.fillStyle(0xffd08a, 0.30 + charge * 0.65);
+            g2.fillCircle(px, py, r);
+            // 拖尾：光点的来路上留一道淡痕，强化"被吸过来"
+            g2.fillStyle(0xffa060, 0.16 + charge * 0.22);
+            g2.fillCircle(csx + Math.cos(a) * (dist + 26), csy + Math.sin(a) * (dist + 26) * 0.7, r * 0.7);
+          }
+          // 核心：蓄到 70% 后开始出现亮点，越蓄越亮
+          if (charge > 0.55) {
+            const coreA = (charge - 0.55) / 0.45;
+            g2.fillStyle(0xffe0a0, 0.5 + coreA * 0.5);
+            g2.fillCircle(csx, csy, 4 + coreA * 12);
+            g2.fillStyle(0xff8a3c, 0.3 + coreA * 0.4);
+            g2.fillCircle(csx, csy, 10 + coreA * 26);
+          }
+        } else if (e.attackCd > (C.BOSS.attackCooldown / (C.BOSS.tiers[tier].speedMul || 1)) - 0.28) {
+          // ---- 近身出手：前倾横扫（用 attackCd 刚被重置的窗口判断"刚出手"）----
+          const t = time / 1000;
+          const k = 1 - ((C.BOSS.attackCooldown / (C.BOSS.tiers[tier].speedMul || 1)) - (C.BOSS.attackCooldown / (C.BOSS.tiers[tier].speedMul || 1)) + (e.attackCd - ((C.BOSS.attackCooldown / (C.BOSS.tiers[tier].speedMul || 1)) - 0.28))) / 0.28;
+          dxOff = e.facing * 16 * (1 - k);
+          rot = e.facing * 0.10 * (1 - k);
+          sx = 1 + 0.06 * (1 - k);
+        }
+
+        if (e.hitFlash > 0) {
+          // ---- 受击僵直：向后弹一下并压扁 ----
+          // 用 hitFlash（0.12s）作为窗口，短暂但明确
+          const k = e.hitFlash / 0.12;
+          dxOff -= e.facing * 10 * k;                // 被击退的方向
+          sy = 1 - 0.06 * k;
+          sx = 1 + 0.05 * k;
+          rot = -e.facing * 0.05 * k;
+          tint = 0xffc0b0;
+        }
+
+        if (e.stun > 0) {
+          // ---- 僵直：低头、压扁、不动 ----
+          sy *= 0.94;
+          sx *= 1.04;
+          rot += 0.06 * (e.facing >= 0 ? 1 : -1);
+          tint = 0xd8d8d8;
+        }
+
+        // 走路：缓慢的上下起伏 + 轻微左右摇摆。
+        // Boss 移速只有 26，所以摆动要慢而重，像庞然大物在挪动。
+        if (!e.casting && e.stun <= 0 && e.hitFlash <= 0) {
+          const walk = Math.sin(time / 480);
+          dyOff += Math.abs(walk) * 3 * scale;
+          rot += walk * 0.022 * (e.facing >= 0 ? 1 : -1);
+        }
+
+        this.bossSprite.setScale(scale * sx, scale * sy);
+        this.bossSprite.setRotation(rot);
+        this.bossSprite.setPosition(bs.sx + dxOff, gy + dyOff);
+        this.bossSprite.setTint(tint);
+
         // ---- 光环与技能特效 ----
         // 作用有二：盖住抠图残留的灰边；强化"异界入侵"的压迫感。
         // 颜色按难度区分，与 Boss 主色呼应。
@@ -1323,11 +1423,31 @@
             const prog = 1 - (e.casting.timer / e.casting.windup);   // 0 → 1
             const warn = 0.45 + 0.55 * Math.sin(t * 18);              // 急促闪烁
             if (def.range === 'full') {
-              // 全屏：整片场地的预警，越接近爆发越亮
-              g.fillStyle(0xff5a3c, 0.10 + prog * 0.22);
-              g.fillRect(0, 0, W, HGT);
-              g.lineStyle(6, 0xff7a3c, 0.5 + warn * 0.5);
-              g.strokeRect(3, 3, W - 6, HGT - 6);
+              // 全屏技能预警：**从 Boss 向外扩散的淡红圈**，扩散到画面边缘时释放。
+              // 这是 PM 指定的降难度措施 —— 玩家看到圈在扩散就知道还有多久，
+              // 比"整屏闪烁"更容易判断剩余时间。
+              const t0 = toScreen(e.castOriginX !== undefined ? e.castOriginX : e.x,
+                                  e.castOriginZ !== undefined ? e.castOriginZ : e.z, 0);
+              // 从 Boss 脚下扩到能覆盖整屏：对角线约 1100
+              const maxR = 1180;
+              const ringR = maxR * prog;
+              g.fillStyle(0xc8322a, 0.055 + prog * 0.05);
+              g.fillCircle(t0.sx, t0.sy, ringR);
+              // 边缘：两道同心圈，一实一虚，制造"正在推进"的感觉
+              g.lineStyle(7, 0xff4a3c, 0.34 + prog * 0.42);
+              g.strokeCircle(t0.sx, t0.sy, ringR);
+              g.lineStyle(2.5, 0xffb0a0, 0.5 + warn * 0.4);
+              g.strokeCircle(t0.sx, t0.sy, Math.max(0, ringR - 22));
+              // 爆发瞬间：整屏闪一下，确认"到达边缘"
+              if (prog > 0.94) {
+                g.fillStyle(0xff4a3c, 0.20 * ((prog - 0.94) / 0.06));
+                g.fillRect(0, 0, W, HGT);
+              }
+              // Boss 处于无敌帧时的提示（PM 选定的躲避方式是卡无敌帧）
+              if (p.invuln > 0) {
+                g.lineStyle(3, 0xc9a6ff, 0.9);
+                g.strokeCircle(ps.sx, ps.sy - 26 * ps.sc, 26 * ps.sc);
+              }
             } else {
               // 范围技能：地面圆环 + 内圈填充，半径随进度收缩（提示"快来了"）
               // 半径按游戏单位换算到屏幕，不再乘 1.9（那会让 210 的半径看起来像 400）

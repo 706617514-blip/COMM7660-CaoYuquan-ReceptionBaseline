@@ -94,6 +94,10 @@
   .buy:disabled{border-color:#2b3644;background:#1a222c;color:#5f7183;cursor:not-allowed}
   .buy.ult{border-color:#8a5a2a;background:linear-gradient(180deg,#8a4b22,#6b3517)}
   .buy.free{border-color:#3a5f7a;background:linear-gradient(180deg,#2b5470,#1f3f57)}
+  /* Boss 挑战按钮：黄底红字。用色相和明度双重区分，不只靠一种变化 */
+  .buy.danger{border-color:#b8901f;background:linear-gradient(180deg,#e8c14b,#c99a2a);
+    color:#8a1a10;font-weight:700;letter-spacing:.5px}
+  .buy.danger:hover:not(:disabled){filter:brightness(1.12)}
 
   #profile{position:absolute;inset:0;display:flex;align-items:center;
     justify-content:center;padding:20px;
@@ -334,9 +338,14 @@
       txt.innerHTML = html;
 
       const btn = document.createElement('button');
-      btn.className = 'buy' + (a.ultimate ? ' ult' : '') + (a.kind === 'run' ? ' free' : '');
-      btn.textContent = a.kind === 'run' ? '出发'
-        : ((a.cost === null || a.cost === undefined || a.cost === 0) ? '执行' : a.cost);
+      // Boss 挑战用独立的"危险"样式：黄底红字，和普通入口明显区分。
+      // 玩家应当一眼看出这不是又一次普通远征。
+      const isBoss = a.kind === 'boss';
+      btn.className = 'buy' + (a.ultimate ? ' ult' : '')
+        + (a.kind === 'run' ? ' free' : '') + (isBoss ? ' danger' : '');
+      btn.textContent = isBoss ? '挑战'
+        : (a.kind === 'run' ? '出发'
+        : ((a.cost === null || a.cost === undefined || a.cost === 0) ? '执行' : a.cost));
       btn.disabled = !a.enabled;
       btn.addEventListener('click', function () { panelCallback.onAction(a); });
 
