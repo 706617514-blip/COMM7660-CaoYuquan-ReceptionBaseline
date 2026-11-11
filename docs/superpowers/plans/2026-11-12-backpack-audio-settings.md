@@ -538,6 +538,27 @@ Task 2 删除，于是**任何背包里的装备在兵器架上都显示 Lv.1**�
   `run.equipDrops` 里带上 `overwrote` 字段，让 UI 能提示"覆盖了哪一件"，
   并加断言证明被覆盖的那件确实是从"最后一格"里选出来的（不是随机删一件）。
 
+> **⚠ Task 4 复审实测：`overwrote` 是死代码（未修，留给本任务一并处理）**
+> `rollEquipDrop` 的返回值确实带上了 `overwrote`（实测满包返回
+> `{"id":"broadSword","duplicate":false,"bagFull":true,"overwrote":{"id":"strawShoes","uid":"u35","level":1}}`，
+> 且末格 uid 由 `u35` 变 `u36`，指向正确），**但传送通道没改**：
+> `game/logic.js:1417` 仍然只推 `run.equipDrops.push({ id: drop.id, duplicate: drop.duplicate })`，
+> 于是 `'overwrote' in run.equipDrops[0] === false`，UI（`game/app.js:1665-1669`）
+> 只会印「已进背包」。玩家的一件装备被覆盖掉了，却没有任何提示能说出被覆盖的是哪一件 ——
+> 正是本段要消除的那种"静默丢件"。
+> **两处都要改**：`logic.js:1417` 的 push 形状带上 `overwrote: drop.overwrote || null`，
+> 且必须有一条断言覆盖**通道**（不能只断言 `rollEquipDrop` 的返回值 ——
+> 那样接线缺陷完全隐形，Task 4 就是这么漏过去的）。
+
+> **⚠ 另一处（复审发现，同一类问题）：`bagPages` 无校验，会让 `coins` 变 `NaN`**
+> `game/logic.js:415-416` 只把 `cellsPerPage` 单点化，`maxPages`(:473) 与
+> `pagePrices[bagPages]`(:475) 都不设防。实测 `bagPages = 1.5` → 容量 52.5、
+> `buyBagPage` 返回 `{ok:true, pages:2.5}` 且 **`coins` 变 `NaN`**，序列化往返后仍是 2.5。
+> **这比"需手改存档"更严重：存档码是玩家可达的注入入口。** 实测字符串
+> `"bagPages":"abc"` 能原样往返（`deserialize` 不校验），随后 `pagePrices['abc']` → `undefined`。
+> 修法：在 `buyBagPage` 与 `deserialize` 两处把 `bagPages` 规整为
+> `Math.min(Math.max(1, Math.floor(Number(v) || 1)), C.BAG.maxPages)`，并加断言。
+
 - [ ] **Step 1: 写测试（覆盖 Review Focus #1、#2）**
 
 > **两条实测警示（Task 4 实施者测量、我复现确认）**
