@@ -14,7 +14,7 @@
     ? require('./config.js')
     : global.GameConfig;
 
-  const STATE_VERSION = 4;
+  const STATE_VERSION = 5;
 
   // ---------------------------------------------------------------- 随机数
   // 用可序列化的 mulberry32：种子存在 state 里，
@@ -47,6 +47,13 @@
         runsWon: 0,
         bestWave: 0,
         potions: { heal: 0, strength: 0, wall: 0 },
+        // 五个装备位（设计文档 §4.8）。空位是 null，不是 undefined ——
+        // 后者在 JSON 往返后会消失，导致"装备了但读不到"。
+        equipment: { head: null, torso: null, back: null, weapon: null, feet: null },
+        inventory: [],                   // 已拥有但未装备的装备 id 列表
+        // 背包里装备的等级。装备位上的等级直接挂在装备位上，
+        // 背包里的没有位置可挂，只能单独存一张表。
+        inventoryLevels: {},
       },
       farm: {
         plots: new Array(C.FARM.cols * C.FARM.rows).fill(null).map(function () {
@@ -59,12 +66,83 @@
     return s;
   }
 
+  /**
+   * 把五件已装备物品的加成汇总成一个加数/乘数包。
+   *
+   * 汇总集中在这里，而不是散落在 playerStats 里逐件查 ——
+   * 特效装备（护盾、反弹、专属技能）也需要"我现在穿了什么"这个视图，
+   * 让它们各自重算一遍必然会出现两处口径不一致。
+   *
+   * 等级只缩放**强度参数**（equipEffectMul）。扣血类乘数是"越小越强"，
+   * 倍率作用方向相反，所以用 1-(1-v)*mul 缩放缺口，
+   * 否则升级后减伤反而变成放大伤害（0.94 → 0.94×1.08 = 1.015）。
+   */
+  function equipBonus(state) {
+    const out = {
+      maxHp: 0, damage: 0, speedMul: 1, hurtMul: 1,
+      fx: [],                       // 生效中的特效列表（含等级倍率）
+      ids: {},                      // slot -> id，便于特效查询
+    };
+    const eq = (state.meta && state.meta.equipment) || null;
+    if (!eq) return out;
+
+    C.EQUIP_SLOTS.forEach(function (slot) {
+      const item = eq[slot];
+      if (!item || !item.id) return;
+      const def = C.equipDef(item.id);
+      if (!def) return;
+      const lv = Math.max(1, item.level || 1);
+      const mul = C.equipEffectMul(lv);
+      out.ids[slot] = item.id;
+
+      const m = def.mods;
+      if (m) {
+        if (m.maxHp) out.maxHp += Math.round(m.maxHp * mul);
+        if (m.damage) out.damage += Math.round(m.damage * mul);
+        if (m.speedMul) out.speedMul *= 1 + (m.speedMul - 1) * mul;
+        if (m.hurtMul) out.hurtMul *= 1 - (1 - m.hurtMul) * mul;
+      }
+      if (def.fx) out.fx.push(Object.assign({ level: lv, mul: mul }, def.fx));
+    });
+    return out;
+  }
+
+  /** 某个特效是否生效（按机制 id 查）。特效装备的机制判断都走这里。 */
+  function hasFx(state, fxId) {
+    const eq = (state.meta && state.meta.equipment) || null;
+    if (!eq) return null;
+    let found = null;
+    C.EQUIP_SLOTS.forEach(function (slot) {
+      const item = eq[slot];
+      if (!item || !item.id) return;
+      const def = C.equipDef(item.id);
+      if (def && def.fx && def.fx.id === fxId) {
+        const lv = Math.max(1, item.level || 1);
+        const mul = C.equipEffectMul(lv);
+        const fx = def.fx;
+        // 强度参数必须**已经乘好等级倍率**，不能只把 mul 挂上去让调用点自己乘。
+        // 之前 thorns 读 th3.reflect 拿到的是 1 级原始值（0.30 → 0.30），
+        // 而 equipBonus 走的是另一条路已经乘过 —— 两处口径不一致，
+        // 结果是"升级荆棘甲完全不加强"这种静默失效。
+        found = Object.assign({ level: lv, mul: mul }, fx);
+        Object.keys(fx).forEach(function (k) {
+          if (typeof fx[k] === 'number' && k !== 'level') {
+            found[k] = fx[k] * mul;
+          }
+        });
+      }
+    });
+    return found;
+  }
+
   function playerStats(state) {
     const up = state.meta.upgrades;
+    const eb = equipBonus(state);
     return {
-      maxHp: C.BASE_HP + up.maxHp * C.UPGRADES.maxHp.perLevel,
-      damage: C.BASE_DAMAGE + up.damage * C.UPGRADES.damage.perLevel,
-      speed: C.PLAYER_SPEED * (1 + up.speed * C.UPGRADES.speed.perLevel),
+      maxHp: C.BASE_HP + up.maxHp * C.UPGRADES.maxHp.perLevel + eb.maxHp,
+      damage: C.BASE_DAMAGE + up.damage * C.UPGRADES.damage.perLevel + eb.damage,
+      speed: C.PLAYER_SPEED * (1 + up.speed * C.UPGRADES.speed.perLevel) * eb.speedMul,
+      hurtMul: eb.hurtMul,
     };
   }
 
@@ -77,11 +155,85 @@
    * 之前六处伤害各自写 `p.hp -= x`，加"减伤"就必须改六遍，
    * 漏一处就会出现"坚壁药有时管用有时不管用"这种极难复现的 bug。
    * 集中到一个函数后，减伤只在这里生效一次。
+   *
+   * 需要 state 是因为装备减伤、低血护盾、相位战靴都写在 meta 里；
+   * 只传 p 的话这些机制只能各调用点自己实现，等于又退回六处各写一遍。
    */
-  function hurtPlayer(p, amount) {
-    const mul = (p.potionBuff && p.potionBuff.hurtMul) || 1;
+  function hurtPlayer(state, run, p, amount) {
+    // 荆棘甲：近身受击时反弹一部分伤害给攻击者。
+    // 攻击者从"贴身的敌人"里现找，而不是让每个调用点自己传 ——
+    // 六处调用点各传一遍 attacker 必然会漏，而漏掉的表现是
+    // "荆棘甲有时不反伤"，玩家只会以为是随机数。
+    const thorns = hasFx(state, 'thorns');
+    if (thorns && run && Array.isArray(run.enemies)) {
+      const reflect = thorns.reflect * thorns.mul;
+      const src = run.enemies.filter(function (e) {
+        return e.state !== 'dead' && !e.isBoss
+          && Math.abs(e.x - p.x) < e.radius + C.PLAYER_W / 2 + 12
+          && Math.abs(e.z - p.z) < C.ATTACK_DEPTH + 12;
+      })[0];
+      if (src) {
+        src.hp -= Math.max(1, Math.round(amount * reflect));
+        src.hitFlash = 0.12;
+        if (src.hp <= 0) killEnemy(state, run, src);
+      }
+    }
+
+    let mul = (p.potionBuff && p.potionBuff.hurtMul) || 1;
+    mul *= playerStats(state).hurtMul;
+
+    // 格挡（守誓者专属技能）：期间大幅减伤
+    if (p.blockTimer > 0) {
+      const blk = C.SPECIAL_SKILLS.block;
+      mul *= blk.hurtMul;
+    }
+
+    // 庇护胸铠：血量低于阈值时额外减伤，且只在阈值下生效
+    const shield = hasFx(state, 'lowHpShield');
+    if (shield && p.hp / p.maxHp < shield.threshold) {
+      const fxMul = 1 - (1 - shield.hurtMul) * shield.mul;
+      mul *= fxMul;
+    }
+
     // 向上取整，避免 0.5 倍后出现小数血量（血条会显示成 12.5）
-    p.hp -= Math.ceil(amount * mul);
+    const dealt = Math.max(1, Math.ceil(amount * mul));
+
+    // 烬灰斗篷：受击时向周身炸出一圈火，逼退贴身的小怪。
+    // 结算放在扣血**之后**并加冷却，否则被围殴时每帧触发一次，
+    // 等于给了一件"越被打越强"的无限 AOE。
+    const ash = hasFx(state, 'ashBurst');
+    if (ash && (p.ashCd || 0) <= 0) {
+      p.ashCd = 0.6;
+      const ashDmg = Math.max(1, Math.round(ash.damage * ash.mul));
+      run.enemies.forEach(function (o) {
+        if (o.state === 'dead' || o.isBoss) return;
+        if (Math.hypot(o.x - p.x, o.z - p.z) > ash.radius) return;
+        o.hp -= ashDmg;
+        o.hitFlash = 0.12;
+        const dx = o.x - p.x, dz = o.z - p.z;
+        const d = Math.hypot(dx, dz) || 1;
+        o.vx = (dx / d) * 260;
+        o.vz = (dz / d) * 260;
+        if (o.hp <= 0) killEnemy(state, run, o);
+      });
+      pushEffect(run, 'ring', p.x, p.z, ash.radius, 0.35, 0xff9a6c);
+    }
+
+    // 相位战靴：致命伤免疫一次并回血，每局只有一次。
+    // 必须在扣血**之前**判断，否则玩家会先死再被"救回来"，
+    // 血条闪一下归零，看起来像 bug。
+    if (p.hp - dealt <= 0) {
+      const ward = hasFx(state, 'deathWard');
+      if (ward && !p.deathWardUsed) {
+        p.deathWardUsed = true;
+        p.hp = Math.min(p.maxHp, Math.max(1, Math.round(ward.heal * ward.mul)));
+        p.invuln = C.INVULN_AFTER_HIT * 2;
+        if (run) pushEffect(run, 'ring', p.x, p.z, 130, 0.6, 0xc9a6ff);
+        return p.hp;
+      }
+    }
+
+    p.hp -= dealt;
     p.invuln = C.INVULN_AFTER_HIT;
     return p.hp;
   }
@@ -110,17 +262,50 @@
     return { ok: true };
   }
 
-  function skillStats(skillKey, level) {
+  /**
+   * 技能在给定等级下的数值。
+   *
+   * 加 state 参数是为了让**装备改造**能接进来（§4.6）。改造必须作用在这里，
+   * 而不是各技能分支里各写一遍 —— 6 件改造散在 5 个分支中，
+   * 漏一处就是"买了装备没变化"，而单元测试不会发现。
+   */
+  function skillStats(skillKey, level, state) {
     const def = C.SKILLS[skillKey];
     const lv = Math.max(1, level || 1) - 1;
-    return {
+    const out = {
       // 战吼没有伤害字段，用 0 兜底，否则会算出 NaN 并污染下游计算
       damage: (def.damage || 0) + (def.damagePerLevel || 0) * lv,
       cooldown: Math.max(1.2, def.cooldown - (def.cdPerLevel || 0) * lv),
       radius: (def.radius || def.forwardRange || 0) + (def.radiusPerLevel || 0) * lv,
       heal: (def.heal || 0) + (def.healPerLevel || 0) * lv,
     };
+    if (!state) return out;
+
+    // 战斧：震地范围 +50%、冷却 +15%
+    if (skillKey === 'slam') {
+      const wide = hasFx(state, 'slamWide');
+      if (wide) {
+        out.radius *= 1 + (wide.areaMul - 1) * wide.mul;
+        out.cooldown *= 1 + (wide.cdMul - 1) * wide.mul;
+      }
+      // 熔火战靴的灼烧半径也跟着震地范围走
+      const burn = hasFx(state, 'slamBurn');
+      if (burn) out.burn = { dps: burn.dps * burn.mul, duration: burn.duration,
+                             radius: burn.radius * burn.mul };
+    }
+    // 三叉圣杖：大招范围 +20%
+    if (skillKey === 'nova') {
+      const ult = hasFx(state, 'ultWide');
+      if (ult) out.radius *= 1 + (ult.areaMul - 1) * ult.mul;
+    }
+    // 虚空之刃：裂风斩吸血
+    if (skillKey === 'whirl') {
+      const ls = hasFx(state, 'waveLifesteal');
+      if (ls) out.lifesteal = ls.lifesteal * ls.mul;
+    }
+    return out;
   }
+
 
   // ================================================================ 药水
 
@@ -215,6 +400,179 @@
     return { ok: true };
   }
 
+  // ---------------------------------------------------------------- 装备
+  /**
+   * 某件装备当前的持有状态。
+   * 返回 'equipped' / 'owned' / null，供商店和面板决定显示"装备/换装/购买"。
+   */
+  function equipOwned(state, id) {
+    const eq = state.meta.equipment;
+    for (let i = 0; i < C.EQUIP_SLOTS.length; i++) {
+      const it = eq[C.EQUIP_SLOTS[i]];
+      if (it && it.id === id) return 'equipped';
+    }
+    if (state.meta.inventory.indexOf(id) >= 0) return 'owned';
+    return null;
+  }
+
+  /**
+   * 购买装备。
+   *
+   * 买过的不再重复卖（返回"已拥有"），因为重复品只会在掉落路径出现 ——
+   * 商店里允许重复购买等于让玩家白白花两次钱，那不是"选择"，那是陷阱。
+   */
+  function buyEquipment(state, id) {
+    const def = C.equipDef(id);
+    if (!def) return { ok: false, reason: '没有这件装备' };
+    if (equipOwned(state, id)) return { ok: false, reason: '已拥有' };
+    if (state.meta.coins < def.price) return { ok: false, reason: '铜币不够' };
+    state.meta.coins -= def.price;
+    state.meta.inventory.push(id);
+    // 新买的按 1 级记账。不记的话 equipItem 读 inventoryLevels 会拿到
+    // undefined，升级过的背包件换出去再换回来就会悄悄掉级。
+    state.meta.inventoryLevels[id] = 1;
+    return { ok: true, id: id };
+  }
+
+  /**
+   * 穿上一件装备。会自动把该位原有的装备放回背包 ——
+   * 否则换装会凭空销毁装备，玩家会开始害怕换装，选择就死了。
+   */
+  function equipItem(state, id) {
+    const def = C.equipDef(id);
+    if (!def) return { ok: false, reason: '没有这件装备' };
+    if (equipOwned(state, id) === 'equipped') return { ok: false, reason: '已经装备着' };
+
+    const idx = state.meta.inventory.indexOf(id);
+    if (idx < 0) return { ok: false, reason: '背包里没有' };
+    state.meta.inventory.splice(idx, 1);
+
+    const prev = state.meta.equipment[def.slot];
+    if (prev) {
+      state.meta.inventory.push(prev.id);
+      // 换下来的装备要连同它的等级一起收回背包，否则升级成果会丢。
+      // 玩家花了铜币升到 3 级、只是换把武器试一下，回来变成 1 级，
+      // 这种惩罚会让"换装"这个核心乐趣直接废掉。
+      state.meta.inventoryLevels[prev.id] = prev.level;
+    }
+
+    // 等级从背包记账里取，失败才退回 1。
+    const level = state.meta.inventoryLevels[id] || 1;
+    delete state.meta.inventoryLevels[id];
+    state.meta.equipment[def.slot] = { id: id, level: level };
+
+    // 换装可能改变生命上限。不能让当前血量超过新上限（血条会画到框外），
+    // 但也不能白送血 —— 所以只做截断，不做补满。
+    if (state.run && state.run.player) {
+      const st = playerStats(state);
+      state.run.player.maxHp = st.maxHp;
+      if (state.run.player.hp > st.maxHp) state.run.player.hp = st.maxHp;
+    }
+    return { ok: true, id: id, slot: def.slot };
+  }
+
+  /** 卸下某个部位，放回背包。 */
+  function unequipSlot(state, slot) {
+    if (C.EQUIP_SLOTS.indexOf(slot) < 0) return { ok: false, reason: '没有这个部位' };
+    const it = state.meta.equipment[slot];
+    if (!it) return { ok: false, reason: '这个部位是空的' };
+    state.meta.equipment[slot] = null;
+    state.meta.inventory.push(it.id);
+    state.meta.inventoryLevels[it.id] = it.level;
+
+    if (state.run && state.run.player) {
+      const st = playerStats(state);
+      state.run.player.maxHp = st.maxHp;
+      if (state.run.player.hp > st.maxHp) state.run.player.hp = st.maxHp;
+    }
+    return { ok: true, id: it.id };
+  }
+
+  /** 升级价格：下一级的价格。满级返回 null。 */
+  function equipUpgradeCost(state, id) {
+    const def = C.equipDef(id);
+    if (!def) return null;
+    const max = C.equipMaxLevel(id);
+    const held = equipOwned(state, id);
+    if (!held) return null;                      // 没拥有就不能升级
+    let level = 1;
+    if (held === 'equipped') {
+      C.EQUIP_SLOTS.forEach(function (s) {
+        const it = state.meta.equipment[s];
+        if (it && it.id === id) level = it.level || 1;
+      });
+    } else {
+      const lv = state.meta.inventoryLevels && state.meta.inventoryLevels[id];
+      level = lv || 1;
+    }
+    if (level >= max) return null;
+    return C.equipPrice(id, level + 1);
+  }
+
+  /**
+   * 升级装备。**只提升强度参数，不改变机制**（§4.4）。
+   *
+   * 背包里的装备与身上的装备都要能升级，所以等级存在两处：
+   * 装备位上直接带 level，背包里用 inventoryLevels 映射。
+   */
+  function upgradeEquipment(state, id) {
+    const cost = equipUpgradeCost(state, id);
+    if (cost === null) {
+      const def = C.equipDef(id);
+      if (!def) return { ok: false, reason: '没有这件装备' };
+      if (!equipOwned(state, id)) return { ok: false, reason: '还没拥有' };
+      return { ok: false, reason: '已满级' };
+    }
+    if (state.meta.coins < cost) return { ok: false, reason: '铜币不够' };
+    state.meta.coins -= cost;
+
+    const held = equipOwned(state, id);
+    if (held === 'equipped') {
+      C.EQUIP_SLOTS.forEach(function (s) {
+        const it = state.meta.equipment[s];
+        if (it && it.id === id) it.level = (it.level || 1) + 1;
+      });
+    } else {
+      if (!state.meta.inventoryLevels) state.meta.inventoryLevels = {};
+      state.meta.inventoryLevels[id] = (state.meta.inventoryLevels[id] || 1) + 1;
+    }
+
+    if (state.run && state.run.player) {
+      const st = playerStats(state);
+      state.run.player.maxHp = st.maxHp;
+      if (state.run.player.hp > st.maxHp) state.run.player.hp = st.maxHp;
+    }
+    return { ok: true, id: id, cost: cost };
+  }
+
+  /**
+   * 掉落判定（§4.3）。只掉基础装备，5% 概率。
+   *
+   * 重复品折算 30% 原价 —— 这是经济闭环的关键：
+   * 否则玩家掉满 21 件后掉落完全没价值，金币出口又断掉。
+   */
+  function rollEquipDrop(state) {
+    const pool = Object.keys(C.ALL_EQUIPMENT).filter(function (id) {
+      return C.ALL_EQUIPMENT[id].kind === 'base';
+    });
+    if (pool.length === 0) return null;
+    const id = pool[Math.floor(nextRandom(state) * pool.length)];
+
+    if (equipOwned(state, id)) {
+      const refund = Math.round(C.equipDef(id).price * C.EQUIP_DROP.refundRatio);
+      state.meta.coins += refund;
+      return { id: id, duplicate: true, refund: refund };
+    }
+    state.meta.inventory.push(id);
+    return { id: id, duplicate: false, refund: 0 };
+  }
+
+  /** 敌人死亡时调用：按概率决定是否掉装备。返回掉落结果或 null。 */
+  function tryEquipDrop(state) {
+    if (nextRandom(state) >= C.EQUIP_DROP.chance) return null;
+    return rollEquipDrop(state);
+  }
+
   // ---------------------------------------------------------------- 开局
   function startRun(state, difficultyId) {
     const diff = C.difficultyById(difficultyId);
@@ -233,6 +591,12 @@
       effects: [],
       projectiles: [],
       pickups: [],
+      // 装备制造的地面区域（熔火战靴的灼烧、霜缚护甲的冰霜）。
+      // 与 effects 分开：effects 是纯视觉、几帧就消失，
+      // 区域要参与逐帧伤害/减速结算，生命周期也长得多。
+      burnZones: [],
+      frostZones: [],
+      equipDrops: [],
       elapsed: 0,
       player: {
         x: C.FIELD_W / 2,
@@ -248,10 +612,14 @@
         swingId: 0,
         hitIds: [],
         comboStep: 0,
+        blockTimer: 0,          // 格挡（守誓者）剩余时间
+        deathWardUsed: false,   // 相位战靴本局是否已用掉
         comboTimer: 0,
         cooldowns: { whirl: 0, blink: 0, slam: 0, cry: 0, nova: 0 },
         buffTimer: 0,
         potionBuff: null,
+        specialCd: 0,          // 专属技能冷却剩余
+        ashCd: 0,               // 烬灰斗篷的反伤爆发冷却
         casting: null,
       },
       // 本局携带的药水：从 meta 快照一份。
@@ -333,6 +701,7 @@
     }
 
     stepPlayer(state, run, input, dt);
+    stepZones(state, run, dt);
     stepSpawning(state, run, dt);
     stepEnemies(state, run, dt);
     stepProjectiles(state, run, dt);
@@ -350,6 +719,9 @@
     p.attackTimer = Math.max(0, p.attackTimer - dt);
     p.attackCd = Math.max(0, p.attackCd - dt);
     p.invuln = Math.max(0, p.invuln - dt);
+    p.specialCd = Math.max(0, p.specialCd - dt);
+    p.blockTimer = Math.max(0, p.blockTimer - dt);
+    p.ashCd = Math.max(0, (p.ashCd || 0) - dt);
 
     // 冲刺：按住 Shift 加速。松开立刻恢复步行（不做惯性，操作要"跟手"）。
     p.sprinting = !!input.sprint;
@@ -456,7 +828,7 @@
     if (!def) return false;
     if (p.cooldowns[key] > 0) return false;
     const level = state.meta.skills[key] || 1;
-    const st = skillStats(key, level);
+    const st = skillStats(key, level, state);
     // 直接乘增益倍率。原写法 (1 + current/base - 1) 代数上等价，
     // 但 BASE_DAMAGE 若变成 0 会除出 NaN。
     const dmg = st.damage * (p.buffTimer > 0 ? C.SKILLS.cry.buffMult : 1) * potionDamageMul(p);
@@ -487,17 +859,26 @@
       // 朝前长条：只命中面朝方向、且在深度容差内的目标
       const range = def.forwardRange;
       const depth = def.forwardDepth;
+      // 虚空之刃的吸血按**实际命中**结算，不是按施放次数 ——
+      // 空放也能回血的话，最优解会变成原地刷技能。
+      let dealtTotal = 0;
       run.enemies.forEach(function (e) {
         if (e.state === 'dead') return;
         const dx = (e.x - p.x) * p.facing;
         if (dx < -C.ATTACK_BACK || dx > range) return;
         if (Math.abs(e.z - p.z) > depth) return;
-        e.hp -= Math.round(dmg);
+        const dealt = Math.round(dmg);
+        e.hp -= dealt;
+        dealtTotal += dealt;
         e.hitFlash = 0.12;
         e.vx = p.facing * (def.knockback || 0);
         if (def.stunTime) e.stun = Math.max(e.stun || 0, def.stunTime);
         if (e.hp <= 0) killEnemy(state, run, e);
       });
+      if (st.lifesteal && dealtTotal > 0) {
+        const heal = Math.max(1, Math.round(dealtTotal * st.lifesteal));
+        p.hp = Math.min(p.maxHp, p.hp + heal);
+      }
       pushEffect(run, 'wave', p.x, p.z, range, def.fxTime, def.fxColor, p.facing, depth);
     } else if (key === 'blink') {
       const fromX = p.x;
@@ -516,18 +897,110 @@
       });
       pushEffect(run, 'trail', fromX, p.z, def.radius, def.fxTime, def.fxColor);
       pushEffect(run, 'ring', p.x, p.z, def.radius, def.fxTime, def.fxColor);
+      // 霜缚护甲：落点留下冰霜，减速范围内的敌人
+      const frost = hasFx(state, 'blinkFrost');
+      if (frost) {
+        run.frostZones.push({
+          x: p.x, z: p.z, radius: frost.radius * frost.mul,
+          slowMul: 1 - (1 - frost.slowMul) * frost.mul,
+          timer: frost.duration, maxTimer: frost.duration,
+        });
+      }
     } else if (key === 'slam') {
       hitRadius(st.radius, true, def.knockback);
       pushEffect(run, 'burst', p.x, p.z, st.radius, def.fxTime, def.fxColor);
+      // 熔火战靴：在落点留下灼烧地面
+      if (st.burn) {
+        run.burnZones.push({
+          x: p.x, z: p.z, radius: st.burn.radius,
+          dps: st.burn.dps, timer: st.burn.duration, maxTimer: st.burn.duration,
+        });
+      }
     } else if (key === 'cry') {
       p.hp = Math.min(p.maxHp, p.hp + st.heal);
       p.buffTimer = def.buffTime;
       pushEffect(run, 'aura', p.x, p.z, 90, def.fxTime, def.fxColor);
     } else if (key === 'nova') {
-      hitRadius(def.radius, true, 260);
+      hitRadius(st.radius, true, 260);
       pushEffect(run, 'nova', C.FIELD_W / 2, C.FIELD_D / 2, C.FIELD_W, def.fxTime, def.fxColor);
     }
     return true;
+  }
+
+  // ---------------------------------------------------------------- 专属技能
+
+  /**
+   * 当前装备授予的专属技能 id（没有则 null）。
+   *
+   * 专属技能**只在装备时存在**，所以技能栏必须动态显示 ——
+   * 固定显示会让玩家以为卸下装备后还能用；而如果卸下后仍然可用，
+   * 那"装备占武器位"这个代价就是假的，等于白送手段（§4.7）。
+   */
+  function specialSkillOf(state) {
+    const eq = (state.meta && state.meta.equipment) || null;
+    if (!eq || !eq.weapon || !eq.weapon.id) return null;
+    const def = C.equipDef(eq.weapon.id);
+    if (!def || !def.fx || def.fx.id !== 'grantSkill') return null;
+    return def.fx.skill || null;
+  }
+
+  /** 释放专属技能。没有装备对应武器时直接返回 false。 */
+  function castSpecial(state, run, p) {
+    const id = specialSkillOf(state);
+    if (!id) return false;
+    const def = C.SPECIAL_SKILLS[id];
+    if (!def) return false;
+    if (p.specialCd > 0) return false;
+
+    p.specialCd = def.cooldown;
+    if (id === 'block') {
+      p.blockTimer = def.duration;
+      pushEffect(run, 'ring', p.x, p.z, 90, 0.4, def.color);
+    } else if (id === 'blink2') {
+      p.x = clamp(p.x + p.facing * def.distance,
+                  C.PLAYER_W / 2, C.FIELD_W - C.PLAYER_W / 2);
+      p.invuln = Math.max(p.invuln, def.invuln);
+      pushEffect(run, 'trail', p.x - p.facing * def.distance, p.z, 40, 0.3, def.color);
+      pushEffect(run, 'ring', p.x, p.z, 90, 0.4, def.color);
+    }
+    return true;
+  }
+
+  /** 地面区域逐帧结算：灼烧（伤害）与冰霜（减速）。 */
+  function stepZones(state, run, dt) {
+    // 灼烧：每秒 dps 点伤害，按帧分摊。
+    // 用 accumulated 而不是每帧取整 —— 否则 dps 9 在 60fps 下
+    // 每帧 0.15 点会被 Math.round 抹成 0，灼烧等于不存在。
+    for (let i = run.burnZones.length - 1; i >= 0; i--) {
+      const zn = run.burnZones[i];
+      zn.timer -= dt;
+      zn.acc = (zn.acc || 0) + zn.dps * dt;
+      const tick = Math.floor(zn.acc);
+      if (tick > 0) {
+        zn.acc -= tick;
+        run.enemies.forEach(function (e) {
+          if (e.state === 'dead') return;
+          if (Math.hypot(e.x - zn.x, e.z - zn.z) > zn.radius) return;
+          e.hp -= tick;
+          e.hitFlash = 0.1;
+          if (e.hp <= 0) killEnemy(state, run, e);
+        });
+      }
+      if (zn.timer <= 0) run.burnZones.splice(i, 1);
+    }
+
+    // 冰霜：减速区域内的敌人
+    for (let j = run.frostZones.length - 1; j >= 0; j--) {
+      const fz = run.frostZones[j];
+      fz.timer -= dt;
+      run.enemies.forEach(function (e) {
+        if (e.state === 'dead') return;
+        if (Math.hypot(e.x - fz.x, e.z - fz.z) > fz.radius) return;
+        e.slowTimer = Math.max(e.slowTimer || 0, 0.2);
+        e.slowMul = fz.slowMul;
+      });
+      if (fz.timer <= 0) run.frostZones.splice(j, 1);
+    }
   }
 
   /**
@@ -549,11 +1022,48 @@
       if (inFront && sameDepth) {
         // 取整：三段伤害应当是 12 / 14 / 22 这样的整数，
         // 浮点数会让伤害数字显示成 13.799999999999997
-        e.hp -= Math.round(currentDamage(state, p) * (p.comboDamageMul || 1));
+        const dealt = Math.round(currentDamage(state, p) * (p.comboDamageMul || 1));
+        e.hp -= dealt;
         e.hitFlash = 0.12;
         p.hitIds.push(e.id);
         e.vx = p.facing * (p.comboKnockback || 420);
         if (p.comboStun) e.stun = Math.max(e.stun || 0, p.comboStun);
+
+        // 雷冠：第三段命中时炸出电光，对周围敌人附带伤害。
+        // 绑在**第三段**而不是每一段，是为了让它真正奖励"打完连段"：
+        // 每段都触发的话，它就退化成一次无条件 AOE，连段节奏就没意义了。
+        const shock = hasFx(state, 'comboShock');
+        if (shock && p.comboSwingStep === C.COMBO.steps.length) {
+          const shockDmg = Math.max(1, Math.round(dealt * shock.damageMul));
+          run.enemies.forEach(function (o) {
+            if (o.state === 'dead' || o === e) return;
+            if (Math.hypot(o.x - e.x, o.z - e.z) > shock.radius) return;
+            o.hp -= shockDmg;
+            o.hitFlash = 0.12;
+            if (o.hp <= 0) killEnemy(state, run, o);
+          });
+          pushEffect(run, 'ring', e.x, e.z, shock.radius, 0.28, 0xffe066);
+        }
+
+        // 暴风指环：命中时按概率引连锁闪电劈向最近的另一个敌人。
+        // 概率走 state 的确定性随机源，不能用 Math.random ——
+        // 用了的话同一存档种子重放会得到不同结果，平衡报告就不可复现了。
+        const chain = hasFx(state, 'chainLightning');
+        if (chain && nextRandom(state) < chain.chance) {
+          let best = null, bestD = Infinity;
+          run.enemies.forEach(function (o) {
+            if (o.state === 'dead' || o === e) return;
+            const d = Math.hypot(o.x - e.x, o.z - e.z);
+            if (d < bestD && d <= chain.radius) { bestD = d; best = o; }
+          });
+          if (best) {
+            best.hp -= Math.max(1, Math.round(dealt * chain.damageMul));
+            best.hitFlash = 0.12;
+            pushEffect(run, 'ring', best.x, best.z, 60, 0.25, 0x9ad7ff);
+            if (best.hp <= 0) killEnemy(state, run, best);
+          }
+        }
+
         if (e.hp <= 0) killEnemy(state, run, e);
       }
     }
@@ -634,14 +1144,14 @@
         pushEffect(run, 'ring', p.x, p.z, 90, 0.4, 0xc9a6ff);
         return;
       }
-      hurtPlayer(p, base);
+      hurtPlayer(state, run, p, base);
       pushEffect(run, 'nova', boss.x, boss.z, C.FIELD_W, 0.6, 0xff7a3c);
       return;
     }
 
     if (dist > def.radius) return;                  // 不在范围内
     if (p.invuln > 0) return;
-    hurtPlayer(p, def.damage);
+    hurtPlayer(state, run, p, def.damage);
     if (def.knockback) {
       const dx = p.x - boss.x, dz = p.z - boss.z;
       const d = Math.hypot(dx, dz) || 1;
@@ -696,7 +1206,7 @@
     if (dist <= C.BOSS.meleeRange && boss.attackCd <= 0) {
       boss.attackCd = C.BOSS.attackCooldown / tier.speedMul;
       if (p.invuln === 0) {
-        hurtPlayer(p, boss.damage);
+        hurtPlayer(state, run, p, boss.damage);
         const dx = p.x - boss.x, dz = p.z - boss.z;
         const d = Math.hypot(dx, dz) || 1;
         p.x = clamp(p.x + (dx / d) * 30, C.PLAYER_W / 2, C.FIELD_W - C.PLAYER_W / 2);
@@ -720,8 +1230,9 @@
     if (dist > C.BOSS.meleeRange * 0.7) {
       const dx = p.x - boss.x, dz = p.z - boss.z;
       const d = Math.hypot(dx, dz) || 1;
-      boss.x += (dx / d) * boss.speed * dt;
-      boss.z += (dz / d) * boss.speed * 0.7 * dt;
+      const bsp = boss.speed * (boss.slowMul || 1);
+      boss.x += (dx / d) * bsp * dt;
+      boss.z += (dz / d) * bsp * 0.7 * dt;
       boss.x = clamp(boss.x, 60, C.FIELD_W - 60);
       boss.z = clamp(boss.z, 20, C.FIELD_D - 20);
     }
@@ -745,6 +1256,29 @@
     };
     spawn('coin', Math.round(C.LOOT.coinsPerKill * run.diff.lootMul), 90, 55);
     if (nextRandom(state) < C.LOOT.seedChance) spawn('seed', 1, 110, 70);
+
+    // 血滴护符：击杀回血
+    const kh = hasFx(state, 'killHeal');
+    if (kh) {
+      const p = run.player;
+      p.hp = Math.min(p.maxHp, p.hp + Math.max(1, Math.round(kh.heal * kh.mul)));
+    }
+
+    // 装备掉落（5%，只掉基础装备）。
+    // Boss 不参与：Boss 的价值在通关本身，掉装备会让"重复刷 Boss"变成最优解。
+    if (!e.isBoss) {
+      const drop = tryEquipDrop(state);
+      if (drop) {
+        run.equipDrops = run.equipDrops || [];
+        run.equipDrops.push({ id: drop.id, duplicate: drop.duplicate, refund: drop.refund });
+        if (drop.duplicate) {
+          // 重复品当场折算成铜币，直接进本局战利品
+          run.loot.coins += drop.refund;
+        } else {
+          state.meta.inventory.push(drop.id);
+        }
+      }
+    }
   }
 
   /** 拾取物：玩家靠近即收，超时消失。 */
@@ -825,6 +1359,12 @@
       }
       e.hitFlash = Math.max(0, e.hitFlash - dt);
       e.attackCd = Math.max(0, e.attackCd - dt);
+      // 冰霜减速计时。放在 def 之前，且对 boss 同样生效 ——
+      // 霜缚护甲的定位就是"给 boss 争取输出窗口"，对 boss 无效等于废掉。
+      if (e.slowTimer > 0) {
+        e.slowTimer = Math.max(0, e.slowTimer - dt);
+        if (e.slowTimer === 0) e.slowMul = 1;
+      }
 
       const def = C.ENEMIES[e.kind];
       // 僵直：被击退期间不走位。
@@ -859,7 +1399,7 @@
       const dz = Math.abs(e.z - p.z);
       if (dx < (e.radius + C.PLAYER_W / 2) && dz < C.ATTACK_DEPTH) {
         if (e.attackCd === 0 && p.invuln === 0) {
-          hurtPlayer(p, e.damage);
+          hurtPlayer(state, run, p, e.damage);
           e.attackCd = 0.9;
           // 把玩家往反方向推开一点，避免黏住
           const dir = p.x >= e.x ? 1 : -1;
@@ -875,9 +1415,10 @@
     const dz = p.z - e.z;
     const dist = Math.hypot(dx, dz) || 1;
     e.facing = dx >= 0 ? 1 : -1;
+    const sp = e.speed * (e.slowMul || 1);
     if (dist > 18) {
-      e.x += (dx / dist) * e.speed * dt;
-      e.z += (dz / dist) * e.speed * dt;
+      e.x += (dx / dist) * sp * dt;
+      e.z += (dz / dist) * sp * dt;
     }
   }
 
@@ -891,8 +1432,9 @@
       const dist = Math.hypot(dx, dz) || 1;
       e.facing = dx >= 0 ? 1 : -1;
       if (dist > 140) {
-        e.x += (dx / dist) * e.speed * 0.6 * dt;
-        e.z += (dz / dist) * e.speed * 0.6 * dt;
+        const sp = e.speed * (e.slowMul || 1);
+        e.x += (dx / dist) * sp * 0.6 * dt;
+        e.z += (dz / dist) * sp * 0.6 * dt;
       } else {
         e.state = 'windup';
         e.timer = def.lungeWindup;
@@ -928,12 +1470,13 @@
     }
 
     // 太近后退、太远靠近，尽量停在 keepDistance 附近
+    const sp = e.speed * (e.slowMul || 1);
     if (dist < def.keepDistance * 0.72) {
-      e.x -= (dx / dist) * e.speed * dt;
-      e.z -= (dz / dist) * e.speed * 0.75 * dt;
+      e.x -= (dx / dist) * sp * dt;
+      e.z -= (dz / dist) * sp * 0.75 * dt;
     } else if (dist > def.keepDistance * 1.2) {
-      e.x += (dx / dist) * e.speed * dt;
-      e.z += (dz / dist) * e.speed * 0.75 * dt;
+      e.x += (dx / dist) * sp * dt;
+      e.z += (dz / dist) * sp * 0.75 * dt;
     }
 
     e.fireCd -= dt;
@@ -975,7 +1518,7 @@
       if (!gone && p.invuln === 0
           && Math.abs(pr.x - p.x) < pr.radius
           && Math.abs(pr.z - p.z) < pr.depth) {
-        hurtPlayer(p, pr.damage);
+        hurtPlayer(state, run, p, pr.damage);
         gone = true;
       }
       if (gone) run.projectiles.splice(i, 1);
@@ -1081,6 +1624,17 @@
       if (!s.meta.potions) s.meta.potions = { heal: 0, strength: 0, wall: 0 };
       s.version = 4;
     }
+    // v4 → v5：新增装备（五个空位 + 空背包）。老档不白送装备 ——
+    // 白送会凭空改变难度曲线，而老玩家的进度是按"没有装备"平衡出来的。
+    if (s.version === 4) {
+      if (!s.meta) s.meta = {};
+      if (!s.meta.equipment) {
+        s.meta.equipment = { head: null, torso: null, back: null, weapon: null, feet: null };
+      }
+      if (!s.meta.inventory) s.meta.inventory = [];
+      if (!s.meta.inventoryLevels) s.meta.inventoryLevels = {};
+      s.version = 5;
+    }
     return s;
   }
 
@@ -1093,6 +1647,11 @@
     if (!s.meta.skills) s.meta.skills = { whirl: 1, blink: 1, slam: 1, cry: 1, nova: 1 };
     if (!s.meta.upgrades) s.meta.upgrades = { damage: 0, maxHp: 0, speed: 0 };
     if (!s.meta.potions) s.meta.potions = { heal: 0, strength: 0, wall: 0 };
+    if (!s.meta.equipment) {
+      s.meta.equipment = { head: null, torso: null, back: null, weapon: null, feet: null };
+    }
+    if (!s.meta.inventory) s.meta.inventory = [];
+    if (!s.meta.inventoryLevels) s.meta.inventoryLevels = {};
     if (!s.farm || !s.farm.plots) {
       s.farm = { plots: new Array(C.FARM.cols * C.FARM.rows).fill(null)
         .map(function () { return { state: 'empty', growth: 0 }; }) };
@@ -1117,9 +1676,12 @@
     createState, startRun, step, endRun, returnToFarm,
     plant, buyUpgrade, upgradeCost,
     buySkill, skillCost, skillStats, tryCastSkill, currentDamage,
-    stepProjectiles, stepRanged, spawnProjectile, stepPickups, collectAll,
+    stepProjectiles, stepRanged, spawnProjectile, stepPickups, collectAll, killEnemy,
+    specialSkillOf, castSpecial, stepZones,
     spawnBoss, bossCast, stepBoss, bossResolve,
     buyPotion, usePotion, hurtPlayer, potionDamageMul,
+    equipBonus, hasFx, equipOwned, buyEquipment, equipItem, unequipSlot,
+    equipUpgradeCost, upgradeEquipment, rollEquipDrop, tryEquipDrop,
     playerStats, maturePlots, passiveIncome,
     serialize, deserialize,
     nextRandom, buildWave, makeEnemy,

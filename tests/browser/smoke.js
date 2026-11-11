@@ -266,6 +266,101 @@ const SCRIPT = `
     }
   }
 
+  // ---- 3d. 装备：穿上后主角真的多了一层贴图 ----
+  // 单测能验数据层，但"穿上装备后画面有没有变"只能在这里验：
+  // refreshHeroEquip 拼错 key 的话 Phaser 不报错，只是那一层不显示。
+  {
+    const hubScene = globalThis.__game
+      ? globalThis.__game.scene.getScene('Hub') : null;
+    const st = window.EmberfieldApp.__state;
+    if (hubScene && st) {
+      st.meta.coins = 5000;
+      const def = window.EmberfieldApp.__state;
+      // 直接走 logic 层买下并穿上，然后回到 Hub 让渲染刷新
+      const L = window.GameLogic;
+      L.buyEquipment(st, 'fullPlate');
+      L.equipItem(st, 'fullPlate');
+      L.buyEquipment(st, 'crystalStaff');
+      L.equipItem(st, 'crystalStaff');
+
+      globalThis.__game.scene.getScene('Run').scene.start('Hub');
+      await wait(500);
+
+      const hub = globalThis.__game.scene.getScene('Hub');
+      const hero = hub ? hub.hero : null;
+      out.heroIsContainer = !!hero && Array.isArray(hero.list);
+      out.heroChildCount = hero && hero.list ? hero.list.length : 0;
+      // 躯干与武器两层必须是可见的、且贴图 key 指到对应装备
+      const torso = hero && hero.layers_ ? hero.layers_.torso : null;
+      const weapon = hero && hero.layers_ ? hero.layers_.weapon : null;
+      out.torsoVisible = !!(torso && torso.visible);
+      out.torsoTexture = torso && torso.texture ? torso.texture.key : null;
+      out.weaponVisible = !!(weapon && weapon.visible);
+      out.weaponTexture = weapon && weapon.texture ? weapon.texture.key : null;
+
+      // 左右镜像：Container 没有原生 setFlipX，走的是逐层镜像的 shim。
+      // 这里验证"人朝左时每一层都翻了"，否则会出现人朝左、剑朝右的穿帮。
+      if (hero && typeof hero.setFlipX === 'function') {
+        hero.setFlipX(true);
+        const allFlipped = hero.list.every(function (c) {
+          return c.flipX === true || typeof c.setFlipX !== 'function';
+        });
+        out.allLayersFlipped = allFlipped;
+        hero.setFlipX(false);
+      }
+
+      // 没穿的部位必须隐藏（否则会显示上一局的残留装备）
+      const head = hero && hero.layers_ ? hero.layers_.head : null;
+      out.headHiddenWhenEmpty = !!(head && !head.visible);
+
+      /*
+       * 换装的即时反馈：面板开着时也要立刻换贴图。
+       *
+       * 上面那一段其实验不出这个 —— 它 scene.start('Hub') 之后等了 500ms，
+       * 一定会跑到一个 update 帧，于是"只在 update 里刷新"这个实现也能过。
+       * 但真实的换装发生在**面板打开期间**，而 Hub.update 第一行是
+       * 'if (this.panelOpen) return;'，refreshHeroEquip 根本走不到：
+       * 玩家在兵器架买下并穿上，人不会变；要等关掉面板才看到变化。
+       * 这一条就是钉住"换完当场变"。
+       */
+      // 走真实路径：开兵器架面板 → 点按钮买 → 点按钮穿。
+      // 直接调 L.buyEquipment 是测不到这条的 —— 面板的早期 return
+      // 只在 "面板开着 + 由面板触发动作" 时才生效。
+      hub.state.hub.x = 415; hub.state.hub.z = 105;   // 站到兵器架
+      await wait(300);
+      hub.showPanel({ id: 'forgewear' });
+      await wait(120);
+      const rows = Array.prototype.slice.call(
+        document.querySelectorAll('#panelBody .act'));
+      const rowFor = function (label) {
+        return rows.filter(function (r) {
+          const t = r.querySelector('.t');
+          return t && t.textContent.trim() === label;
+        })[0];
+      };
+      const helmRow = rowFor('角盔');
+      out.panelFoundHelmRow = !!helmRow;
+      if (helmRow) {
+        helmRow.querySelector('button').click();     // 买下（变背包中）
+        await wait(80);
+        const rows2 = Array.prototype.slice.call(
+          document.querySelectorAll('#panelBody .act'));
+        const helmRow2 = rows2.filter(function (r) {
+          const t = r.querySelector('.t');
+          return t && t.textContent.trim() === '角盔';
+        })[0];
+        if (helmRow2) helmRow2.querySelector('button').click();   // 穿上
+      }
+      // 只在同一 tick 内取样，不 await —— 任何 await 都会放过一个 update 帧
+      const headLayer = hub.hero && hub.hero.layers_ ? hub.hero.layers_.head : null;
+      out.headTextureWhilePanelOpen = headLayer && headLayer.texture ? headLayer.texture.key : null;
+      out.headVisibleWhilePanelOpen = !!(headLayer && headLayer.visible);
+      hub.panelOpen = false;
+      window.EmberfieldUI.closePanel();
+      await wait(80);
+    }
+  }
+
   // ---- 4. 重开（restart）按钮存在 ----
   out.hasAgainButton = !!document.getElementById('btn-again') ||
                        document.body.innerHTML.indexOf('再来一局') >= 0;
@@ -369,6 +464,26 @@ const SCRIPT = `
   ok(r.potionBarHasActive === true, 'buff 生效时对应槽位有 active 标记');
   ok(typeof r.potionBarText === 'string' && r.potionBarText.indexOf('回春') >= 0,
      '药水栏写出了药水名', r.potionBarText);
+
+  console.log('\n--- 3d. 装备：穿上后主角分层渲染 ---');
+  ok(r.heroIsContainer === true, '主角是 Container（装备分层的前提）',
+     String(r.heroIsContainer));
+  ok(r.heroChildCount >= 6, '主角容器含身体 + 五个装备层',
+     String(r.heroChildCount));
+  eq(r.torsoTexture, 'eq-torso-fullPlate', '躯干层换成了全身板甲的贴图');
+  ok(r.torsoVisible === true, '躯干层可见（穿上就该显示）');
+  eq(r.weaponTexture, 'eq-weapon-crystalStaff', '武器层换成了棱晶杖的贴图');
+  ok(r.weaponVisible === true, '武器层可见');
+  ok(r.allLayersFlipped === true, '左右镜像时每一层都跟着翻（不会人朝左剑朝右）',
+     String(r.allLayersFlipped));
+  ok(r.headHiddenWhenEmpty === true, '没穿的部位保持隐藏（不会残留上一件）',
+     String(r.headHiddenWhenEmpty));
+  ok(r.panelFoundHelmRow === true, '面板里找到了角盔那一行（不然上面的断言是空跑）',
+     String(r.panelFoundHelmRow));
+  eq(r.headTextureWhilePanelOpen, 'eq-head-hornHelm',
+     '面板开着换装也当场换贴图（不能等关面板才变）');
+  ok(r.headVisibleWhilePanelOpen === true, '面板开着换上的头盔当场可见',
+     String(r.headVisibleWhilePanelOpen));
 
   console.log('\n--- 4. 重开（restart）---');
   ok(r.hasAgainButton === true, '存在「再来一局」（restart）入口');

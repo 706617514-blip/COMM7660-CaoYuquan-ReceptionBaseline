@@ -31,15 +31,17 @@
    */
   const ZONES = [
     { id: 'field', name: '田地', hint: '播种 · 成熟后自动产出',
-      x: 120, reach: 85, art: 'field' },
+      x: 100, reach: 66, art: 'field' },
     { id: 'anvil', name: '铁匠铺', hint: '强化攻击、生命、移速',
-      x: 330, reach: 70, art: 'anvil' },
+      x: 265, reach: 58, art: 'anvil' },
+    { id: 'forgewear', name: '兵器架', hint: '购买 · 装备 · 升级装备',
+      x: 415, reach: 58, art: 'rack' },
     { id: 'shop', name: '药水铺', hint: '补给消耗品 · 每局都要重新买',
-      x: 510, reach: 68, art: 'shop' },
+      x: 565, reach: 58, art: 'shop' },
     { id: 'altar', name: '技能祭坛', hint: '提升技能等级',
-      x: 680, reach: 70, art: 'altar' },
+      x: 720, reach: 58, art: 'altar' },
     { id: 'gate', name: '远征之门', hint: '选择难度并出发',
-      x: 870, reach: 78, art: 'gate' },
+      x: 880, reach: 60, art: 'gate' },
   ];
 
   function ensureHub(state) {
@@ -150,6 +152,54 @@
           payload: { id: id },
         });
       });
+    } else if (zoneId === 'forgewear') {
+      // 兵器架：列出**全部 35 件**，包括买不起的和已拥有的。
+      // 全列出来是有意的 —— 这里是玩家唯一能看到"还有什么装备、
+      // 特效是什么"的地方，只列可买的会让构筑无从规划。
+      // 排序：先按部位（头/身/背/武器/脚），再按档位/价格。
+      C.EQUIP_SLOTS.forEach(function (slot) {
+        const ids = Object.keys(C.ALL_EQUIPMENT).filter(function (id) {
+          return C.equipDef(id).slot === slot;
+        }).sort(function (a, b) {
+          return C.equipDef(a).price - C.equipDef(b).price;
+        });
+        ids.forEach(function (id) {
+          const def = C.equipDef(id);
+          const owned = L.equipOwned(state, id);
+          const poor = state.meta.coins < def.price;
+          const slotName = C.EQUIP_SLOT_NAMES[slot] || slot;
+          let label = def.name;
+          let kind = 'equip-buy';
+          let cost = def.price;
+          let enabled = !owned && !poor;
+          let reason = owned === 'equipped' ? '已装备'
+                     : (owned === 'owned' ? '背包中' : (poor ? '铜币不够' : ''));
+          let sub = slotName + ' · ' + def.desc;
+          // 已有的话直接给"装备/升级"两个后续动作，而不是让玩家
+          // 买完还得去别处找 —— 商店与背包含在同一个面板里。
+          if (owned === 'equipped') {
+            const up = L.equipUpgradeCost(state, id);
+            const lv = (state.meta.equipment[slot] || {}).level || 1;
+            kind = up === null ? 'equip-owned' : 'equip-upgrade';
+            cost = up;
+            enabled = up !== null && state.meta.coins >= up;
+            reason = up === null ? '已满级 Lv.' + lv : (state.meta.coins < up ? '铜币不够' : '');
+            sub = slotName + ' · Lv.' + lv + '/' + C.equipMaxLevel(id) + ' · ' + def.desc;
+          } else if (owned === 'owned') {
+            kind = 'equip-wear';
+            const lv = (state.meta.inventoryLevels || {})[id] || 1;
+            cost = 0;
+            enabled = true;
+            sub = slotName + ' · Lv.' + lv + ' · ' + def.desc;
+          }
+          out.push({
+            kind: kind, id: 'eq-' + id, label: label, sub: sub,
+            cost: cost, enabled: enabled, disabledReason: reason,
+            ultimate: def.kind === 'special',
+            payload: { id: id, slot: slot },
+          });
+        });
+      });
     } else if (zoneId === 'gate') {
       C.DIFFICULTIES.forEach((d) => {
         out.push({
@@ -193,6 +243,10 @@
       return { ok: n > 0, reason: n ? '' : '种子不够', planted: n };
     }
     if (action.kind === 'potion') return L.buyPotion(state, action.payload.id, 1);
+    if (action.kind === 'equip-buy') return L.buyEquipment(state, action.payload.id);
+    if (action.kind === 'equip-wear') return L.equipItem(state, action.payload.id);
+    if (action.kind === 'equip-upgrade') return L.upgradeEquipment(state, action.payload.id);
+    if (action.kind === 'equip-owned') return L.equipItem(state, action.payload.id);
     if (action.kind === 'upgrade') return L.buyUpgrade(state, action.payload.key);
     if (action.kind === 'skill') return L.buySkill(state, action.payload.key);
     return { ok: false, reason: '未知动作' };

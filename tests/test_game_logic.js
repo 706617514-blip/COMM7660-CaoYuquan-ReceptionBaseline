@@ -72,6 +72,19 @@ function armedRunWithPotions(potions, diffId) {
   return { s, run };
 }
 
+// 技能范围/冷却的对外读数。测试要断言的是"装备改造真的改变了范围/冷却"，
+// 而不是断言 skillStats 的内部字段名，所以走一层薄封装。
+function skillRadiusFor(s, key) {
+  const st = L.skillStats(key, s.meta.skills[key] || 1, s);
+  if (st.radius !== undefined) return st.radius;
+  return C.SKILLS[key].radius || 0;
+}
+function skillCooldownFor(s, key) {
+  const st = L.skillStats(key, s.meta.skills[key] || 1, s);
+  if (st.cooldown !== undefined) return st.cooldown;
+  return C.SKILLS[key].cooldown;
+}
+
 function addEnemy(s, run, x, z, kind) {
   const e = L.makeEnemy(s, kind || 'crawler', run.diff);
   e.x = x; e.z = z; e.vx = 0; e.vz = 0;
@@ -532,11 +545,19 @@ section('15. 难度梯度（测量全部四个档位，并断言阶梯单调）'
 
   // 经营层必须真的改变结果：全强化下最高难度应当能稳过
   const forgeZero = rates.forge;
-  const forgeFull = B.winRate('forge', B.FULL_UP, N).rate;
-  ok(forgeFull > forgeZero + 0.4,
+  const forgeUp = B.winRate('forge', B.FULL_UP, N).rate;
+  ok(forgeUp > forgeZero + 0.4,
      '强化显著提升最高难度胜率（经营层对战斗有影响）',
-     `${(forgeZero * 100).toFixed(0)}% -> ${(forgeFull * 100).toFixed(0)}%`);
-  ok(forgeFull >= 0.75, '全强化后最高难度可以稳定通关（游戏有"打通"状态）', forgeFull);
+     `${(forgeZero * 100).toFixed(0)}% -> ${(forgeUp * 100).toFixed(0)}%`);
+  // 终局状态 = 强化满 **且** 穿齐一套基础装备。只量强化会把终局强度
+  // 低估一大截（实测 70% vs 92%），于是"游戏能不能打通"这个问题
+  // 被一个玩家永远不会处于的状态回答。
+  const forgeEndgame = B.winRate('forge', B.FULL_UP, N, 137, B.FULL_SET).rate;
+  ok(forgeEndgame >= 0.75,
+     '强化满 + 穿齐基础套装后可以稳定通关（游戏有"打通"状态）',
+     `强化 ${(forgeUp * 100).toFixed(0)}% -> 强化+装备 ${(forgeEndgame * 100).toFixed(0)}%`);
+  // 有上限：终局也不能变成必胜，最高难度要一直是赌局
+  ok(forgeEndgame <= 0.98, '终局也不是必胜（最高难度仍有风险）', forgeEndgame);
 }
 
 // ---------------------------------------------------------------- 16. 远程敌人与弹道
@@ -1055,13 +1076,36 @@ section('22. 药水（消耗品）');
   let migrated = null, loadErr = null;
   try { migrated = L.deserialize(oldJson); } catch (err) { loadErr = err.message; }
   ok(!loadErr, 'v3 旧档能读出（不抛错误）', loadErr || '');
-  ok(migrated && migrated.version === 4, 'v3 旧档读取后升到 v4',
+  ok(migrated && migrated.version === 5, 'v3 旧档读取后升到 v5（跨两级迁移）',
     migrated ? String(migrated.version) : 'null');
   ok(migrated && migrated.meta.potions && migrated.meta.potions.heal === 0,
     '旧档补齐 potions 且默认是 0（不白送）',
     JSON.stringify(migrated && migrated.meta.potions));
+  ok(migrated && migrated.meta.equipment && migrated.meta.equipment.weapon === null,
+    '旧档补齐五个空装备位（不白送装备）',
+    JSON.stringify(migrated && migrated.meta.equipment));
+  ok(migrated && Array.isArray(migrated.meta.inventory)
+     && migrated.meta.inventory.length === 0, '旧档补齐空背包');
   ok(migrated && migrated.meta.coins === 10 && migrated.meta.bestWave === 2,
     '迁移不丢原有数据');
+
+  // ---- v4 旧档（有药水、没装备）单独走一遍，确认不会跨级跳坏 ----
+  const v4Json = JSON.stringify({
+    version: 4, seed: 11, rngState: 11, phase: 'farm',
+    meta: { coins: 55, seeds: 1, upgrades: { damage: 1, maxHp: 0, speed: 0 },
+      skills: { whirl: 2, blink: 1, slam: 1, cry: 1, nova: 1 },
+      potions: { heal: 2, strength: 1, wall: 0 },
+      runsCompleted: 3, runsWon: 1, bestWave: 4 },
+    farm: { plots: [] },
+  });
+  let m4 = null, e4 = null;
+  try { m4 = L.deserialize(v4Json); } catch (err) { e4 = err.message; }
+  ok(!e4, 'v4 旧档能读出', e4 || '');
+  ok(m4 && m4.version === 5, 'v4 → v5', m4 ? String(m4.version) : 'null');
+  ok(m4 && m4.meta.potions.heal === 2, 'v4 迁移保留已有药水（不清零）',
+    JSON.stringify(m4 && m4.meta.potions));
+  ok(m4 && m4.meta.upgrades.damage === 1 && m4.meta.skills.whirl === 2,
+    'v4 迁移保留强化与技能等级');
 
   // ---- 新局开始：本轮携带的药水从 meta 快照，不直接吃 meta ----
   const j = L.createState(999);
@@ -1081,12 +1125,12 @@ section('22. 药水（消耗品）');
 
   // ---- 坚壁药真的减半伤害 ----
   const plain = armedRunWithPotions({});
-  L.hurtPlayer(plain.run.player, 40);
+  L.hurtPlayer(plain.s, plain.s.run, plain.run.player, 40);
   const plainHp = plain.run.player.hp;
 
   const tank = armedRunWithPotions({ wall: 1 });
   L.usePotion(tank.s, 'wall');
-  L.hurtPlayer(tank.run.player, 40);
+  L.hurtPlayer(tank.s, tank.s.run, tank.run.player, 40);
   const tankHp = tank.run.player.hp;
   ok(tankHp > plainHp, '坚壁药后同样伤害掉血更少', `无药 ${plainHp} vs 有药 ${tankHp}`);
   ok(plain.run.player.maxHp - tankHp === 20,
@@ -1120,6 +1164,480 @@ section('22. 药水（消耗品）');
   poor.meta.coins = 10;
   const buy4 = L.buyPotion(poor, 'wall', 1);
   ok(buy4.ok === false && poor.meta.coins === 10, '铜币不够买不了且不扣钱');
+}
+
+
+function armedRunWithEquip(equip, opts) {
+  const o = opts || {};
+  const s = L.createState(24680);
+  s.meta.upgrades = { damage: 0, maxHp: 0, speed: 0 };
+  C.EQUIP_SLOTS.forEach(function (slot) { s.meta.equipment[slot] = null; });
+  Object.keys(equip || {}).forEach(function (id) {
+    const def = C.equipDef(id);
+    if (!def) throw new Error('unknown equip ' + id);
+    const lv = (equip[id] && equip[id].level) || 1;
+    s.meta.equipment[def.slot] = { id: id, level: lv };
+  });
+  if (o.coins !== undefined) s.meta.coins = o.coins;
+  if (o.potions) s.meta.potions = Object.assign({ heal: 0, strength: 0, wall: 0 }, o.potions);
+  L.startRun(s, o.diff || 'wood');
+  const run = s.run;
+  run.enemies = [];
+  run.spawnQueue = [];
+  run.waveState = 'break';
+  run.breakTimer = 9999;
+  return { s, run, p: run.player };
+}
+
+
+// ---------------------------------------------------------------- 23. 装备：数据层
+section('23. 装备（数据层）');
+{
+  const ids = Object.keys(C.ALL_EQUIPMENT);
+  ok(ids.length === 35, '共 35 件装备（21 基础 + 14 特效）', String(ids.length));
+
+  const base = ids.filter(i => C.ALL_EQUIPMENT[i].kind === 'base');
+  const spec = ids.filter(i => C.ALL_EQUIPMENT[i].kind === 'special');
+  ok(base.length === 21, '基础装备 21 件', String(base.length));
+  ok(spec.length === 14, '特效装备 14 件', String(spec.length));
+
+  // 每个部位都要有基础装备，否则 5% 掉落在某部位会永远掉不出来
+  const slotsWithBase = {};
+  base.forEach(i => { slotsWithBase[C.ALL_EQUIPMENT[i].slot] = true; });
+  ok(C.EQUIP_SLOTS.every(s => slotsWithBase[s]),
+    '每个部位都有基础装备（掉落不会漏部位）', JSON.stringify(C.EQUIP_SLOTS.filter(s => !slotsWithBase[s])));
+
+  // 特效装备价格必须挤在同一区间，否则选择会退化成"买最贵的"
+  const spPrices = spec.map(i => C.ALL_EQUIPMENT[i].price);
+  ok(Math.min(...spPrices) >= 680 && Math.max(...spPrices) <= 900,
+    '特效装备价格全部落在 680–900',
+    `${Math.min(...spPrices)}–${Math.max(...spPrices)}`);
+
+  // 特效装备必须有 fx（否则只是换了名字的数值装备）
+  spec.forEach(i => {
+    ok(!!C.ALL_EQUIPMENT[i].fx, `特效装备 ${C.ALL_EQUIPMENT[i].name} 声明了 fx 机制`);
+  });
+
+  // 基础 3 级、特效 5 级
+  ok(C.equipMaxLevel('rustySword') === 3, '基础装备 3 级');
+  ok(C.equipMaxLevel('thornMail') === 5, '特效装备 5 级');
+
+  // 价格随等级递增
+  ok(C.equipPrice('thornMail', 2) > C.equipPrice('thornMail', 1), '升级价格递增');
+  ok(C.equipPrice('thornMail', 1) === C.EQUIP_FX.thornMail.price, '1 级价格等于标价');
+
+  // 效果倍率只放大强度
+  ok(Math.abs(C.equipEffectMul(1) - 1.0) < 1e-9, '1 级效果倍率 = 1.0');
+  ok(C.equipEffectMul(5) > C.equipEffectMul(1), '等级越高效果倍率越大');
+}
+
+// ---------------------------------------------------------------- 24. 装备：加成生效
+section('24. 装备（加成生效）');
+{
+  // 空装备 = 基线
+  const bare = armedRunWithEquip({});
+  const bareSt = L.playerStats(bare.s);
+  ok(bareSt.maxHp === C.BASE_HP, '没装备时生命上限就是基础值', String(bareSt.maxHp));
+  ok(bareSt.hurtMul === 1, '没装备时受伤倍率是 1');
+
+  // 单件属性装备
+  const helm = armedRunWithEquip({ hornHelm: { level: 1 } });
+  const helmSt = L.playerStats(helm.s);
+  ok(helmSt.maxHp === C.BASE_HP + 44, '角盔加 44 生命上限', String(helmSt.maxHp));
+
+  // 多件叠加：属性是加算
+  const two = armedRunWithEquip({ hornHelm: { level: 1 }, greaves: { level: 1 } });
+  const twoSt = L.playerStats(two.s);
+  ok(twoSt.maxHp === C.BASE_HP + 44 + 14, '两个部位的生命上限加算',
+    String(twoSt.maxHp));
+
+  // 减伤是乘算，且升级方向正确（越高减越多）
+  const plate = armedRunWithEquip({ chestPlate: { level: 1 } });
+  ok(L.playerStats(plate.s).hurtMul < 1, '胸甲降低受伤倍率');
+  const plateUp = armedRunWithEquip({ chestPlate: { level: 3 } });
+  ok(L.playerStats(plateUp.s).hurtMul < L.playerStats(plate.s).hurtMul,
+    '升级后减伤更多（不是反过来）',
+    `${L.playerStats(plate.s).hurtMul.toFixed(4)} -> ${L.playerStats(plateUp.s).hurtMul.toFixed(4)}`);
+
+  // 移速
+  const boots = armedRunWithEquip({ windBoots: { level: 1 } });
+  ok(L.playerStats(boots.s).speed > C.PLAYER_SPEED, '疾风靴提高移速',
+    `${C.PLAYER_SPEED} -> ${L.playerStats(boots.s).speed.toFixed(1)}`);
+
+  // 装备真的影响开局玩家的 maxHp
+  ok(helm.run.player.maxHp === C.BASE_HP + 44, '开局玩家的 maxHp 吃到了装备加成',
+    String(helm.run.player.maxHp));
+
+  // 装备 + 强化要能叠加（两条线独立）
+  const both = armedRunWithEquip({ hornHelm: { level: 1 } });
+  both.s.meta.upgrades.maxHp = 2;
+  ok(L.playerStats(both.s).maxHp === C.BASE_HP + 44 + 2 * C.UPGRADES.maxHp.perLevel,
+    '装备与强化叠加，不是二选一', String(L.playerStats(both.s).maxHp));
+}
+
+// ---------------------------------------------------------------- 25. 装备：买卖与背包
+section('25. 装备（买卖 / 背包 / 卸下）');
+{
+  const s = L.createState(31337);
+  s.meta.coins = 10000;
+
+  const b1 = L.buyEquipment(s, 'ironHelm');
+  ok(b1.ok, '能买到装备');
+  ok(s.meta.coins === 10000 - C.EQUIPMENT.ironHelm.price, '买装备扣钱',
+    String(s.meta.coins));
+  ok(s.meta.inventory.indexOf('ironHelm') >= 0, '买到的装备进背包');
+
+  const b2 = L.buyEquipment(s, 'ironHelm');
+  ok(b2.ok === false, '已拥有的装备不能重复买', JSON.stringify(b2));
+
+  // 穿上
+  const e1 = L.equipItem(s, 'ironHelm');
+  ok(e1.ok, '能穿上装备');
+  ok(s.meta.equipment.head && s.meta.equipment.head.id === 'ironHelm', '装备位记录正确');
+  ok(s.meta.inventory.indexOf('ironHelm') < 0, '穿上后从背包移除');
+
+  // 同部位换装：旧装备回背包，不消失
+  L.buyEquipment(s, 'leatherHelm');
+  const e2 = L.equipItem(s, 'leatherHelm');
+  ok(e2.ok, '能换装');
+  ok(s.meta.equipment.head.id === 'leatherHelm', '新装备穿上');
+  ok(s.meta.inventory.indexOf('ironHelm') >= 0, '被换下的装备回到背包（不凭空消失）');
+
+  // 卸下
+  const u1 = L.unequipSlot(s, 'head');
+  ok(u1.ok, '能卸下装备');
+  ok(s.meta.equipment.head === null, '卸下后该部位为空');
+  ok(s.meta.inventory.indexOf('leatherHelm') >= 0, '卸下的装备回背包');
+
+  // 卸下后加成消失
+  const st = L.playerStats(s);
+  ok(st.maxHp === C.BASE_HP, '全部卸下后回到基础值', String(st.maxHp));
+
+  // 背包里的装备也能升级
+  const invId = s.meta.inventory[0];
+  s.meta.coins = 10000;
+  const cost = L.equipUpgradeCost(s, invId);
+  ok(cost !== null, '背包里的装备可以升级（有价格）', String(cost));
+  const up = L.upgradeEquipment(s, invId);
+  ok(up.ok, '升级成功');
+  ok((s.meta.inventoryLevels[invId] || 1) === 2, '背包装备等级 +1',
+    String(s.meta.inventoryLevels[invId]));
+
+  // 没拥有的不能升级
+  const nope = L.upgradeEquipment(s, 'trident');
+  ok(nope.ok === false, '没拥有的装备不能升级', JSON.stringify(nope));
+
+  // 铜币不够
+  const poor = L.createState(4242);
+  poor.meta.coins = 5;
+  ok(L.buyEquipment(poor, 'hornHelm').ok === false, '铜币不够买不了装备');
+}
+
+// ---------------------------------------------------------------- 26. 装备：掉落与折算
+section('26. 装备（掉落 5% / 重复折算 30%）');
+{
+  // 掉落率：用确定性 RNG 跑大样本。
+  // 断言区间而不是精确值 —— 抽样本身有方差，卡死 5.00% 会让测试变成
+  // "随机数实现的快照"，改一下 RNG 就红，那不是在测掉落率。
+  const s = L.createState(777);
+  s.meta.equipment = { head: null, torso: null, back: null, weapon: null, feet: null };
+  s.meta.inventory = [];
+  let drops = 0, tries = 4000;
+  for (let i = 0; i < tries; i++) if (L.tryEquipDrop(s)) drops++;
+  const rate = drops / tries;
+  ok(rate > 0.035 && rate < 0.065, '掉落率在 5% 附近（3.5%–6.5%）',
+    (rate * 100).toFixed(2) + '%');
+
+  // 只掉基础装备
+  const s2 = L.createState(888);
+  let allBase = true, seen = 0;
+  for (let i = 0; i < 2000; i++) {
+    const d = L.tryEquipDrop(s2);
+    if (d) { seen++; if (C.equipDef(d.id).kind !== 'base') allBase = false; }
+  }
+  ok(allBase, '掉落只出基础装备（特效装备只能买）', String(seen));
+
+  // 重复品折算 30%
+  const s3 = L.createState(999);
+  s3.meta.equipment = { head: null, torso: null, back: null, weapon: null, feet: null };
+  s3.meta.inventory = ['ironHelm'];          // 已拥有
+  s3.meta.coins = 0;
+  const dup = L.rollEquipDrop(s3);
+  // 强制掉到已拥有的那件：直接调折算路径更容易断言
+  const dup2 = (function () {
+    let out = null;
+    const probe = L.createState(1001);
+    probe.meta.equipment = { head: null, torso: null, back: null, weapon: null, feet: null };
+    probe.meta.inventory = Object.keys(C.ALL_EQUIPMENT).filter(i => C.ALL_EQUIPMENT[i].kind === 'base');
+    probe.meta.coins = 0;
+    out = L.rollEquipDrop(probe);
+    return { out: out, coins: probe.meta.coins, inv: probe.meta.inventory.length };
+  })();
+  ok(dup2.out && dup2.out.duplicate === true, '已拥有的装备会判定为重复',
+    JSON.stringify(dup2.out));
+  ok(dup2.coins === Math.round(C.equipDef(dup2.out.id).price * 0.30),
+    '重复品折算 30% 原价', `${dup2.coins} vs ${Math.round(C.equipDef(dup2.out.id).price * 0.30)}`);
+  ok(dup2.inv === 21, '重复品不会进背包（不会撑爆背包）', String(dup2.inv));
+
+  // 折算比例来自配置，不是写死的魔法数
+  ok(C.EQUIP_DROP.refundRatio === 0.30, '折算比例在配置里，值 0.30');
+  ok(C.EQUIP_DROP.chance === 0.05, '掉落率在配置里，值 0.05');
+}
+
+// ---------------------------------------------------------------- 27. 装备：效果机制真的触发
+section('27. 装备（特效机制）');
+{
+  // 荆棘甲：受击反弹伤害给敌人
+  const th = armedRunWithEquip({ thornMail: { level: 1 } });
+  const foe = addEnemy(th.s, th.run, th.p.x + 30, th.p.z);
+  const foeHp0 = foe.hp;
+  L.hurtPlayer(th.s, th.run, th.p, 20);
+  ok(foe.hp < foeHp0, '荆棘甲：贴身受击后攻击者掉血',
+    `${foeHp0} -> ${foe.hp}`);
+
+  // 没有荆棘甲时不反弹
+  const noTh = armedRunWithEquip({});
+  const foe2 = addEnemy(noTh.s, noTh.run, noTh.p.x + 30, noTh.p.z);
+  const foe2Hp0 = foe2.hp;
+  L.hurtPlayer(noTh.s, noTh.run, noTh.p, 20);
+  ok(foe2.hp === foe2Hp0, '没穿荆棘甲就不反弹', String(foe2.hp));
+
+  // 血滴护符：击杀回血
+  const bc = armedRunWithEquip({ bloodCharm: { level: 1 } });
+  bc.p.hp = 40;
+  const weak = addEnemy(bc.s, bc.run, bc.p.x + 20, bc.p.z);
+  weak.hp = 1;
+  L.killEnemy(bc.s, bc.run, weak);
+  ok(bc.p.hp > 40, '血滴护符：击杀敌人回血', `40 -> ${bc.p.hp}`);
+
+  // 相位战靴：致命伤免疫一次
+  const pb = armedRunWithEquip({ phaseBoots: { level: 1 } });
+  pb.p.hp = 10;
+  L.hurtPlayer(pb.s, pb.run, pb.p, 999);
+  ok(pb.p.hp > 0, '相位战靴：致命伤被免疫（没有死）', String(pb.p.hp));
+  const hpAfterWard = pb.p.hp;
+  pb.p.invuln = 0;                            // 清掉无敌帧，否则第二次不会生效
+  L.hurtPlayer(pb.s, pb.run, pb.p, 999);
+  ok(pb.p.hp < hpAfterWard, '相位战靴每局只免疫一次', `${hpAfterWard} -> ${pb.p.hp}`);
+
+  // 庇护胸铠：低血才减伤
+  const ap = armedRunWithEquip({ aegisPlate: { level: 1 } });
+  ap.p.hp = ap.p.maxHp;                       // 满血
+  L.hurtPlayer(ap.s, ap.run, ap.p, 20);
+  const hiLoss = ap.p.maxHp - ap.p.hp;
+  const ap2 = armedRunWithEquip({ aegisPlate: { level: 1 } });
+  ap2.p.hp = Math.floor(ap2.p.maxHp * 0.2);   // 低血
+  const before2 = ap2.p.hp;
+  L.hurtPlayer(ap2.s, ap2.run, ap2.p, 20);
+  const loLoss = before2 - ap2.p.hp;
+  ok(loLoss < hiLoss, '庇护胸铠：低血时同样伤害掉血更少',
+    `满血掉 ${hiLoss} vs 低血掉 ${loLoss}`);
+
+  // 雷冠：第三段命中炸电光，第二段不触发
+  // 同伴必须放在**普攻够不到、但电光半径够得到**的位置，
+  // 否则测到的是"一次普攻打中两个贴在一起的敌人"，跟雷冠无关。
+  const shockR = C.EQUIP_FX.thunderHelm.fx.radius;
+  const meleeR = C.COMBO.steps[0].range;
+  ok(shockR > meleeR, '雷冠电光半径大于普攻距离（否则等于没有额外效果）',
+    `普攻 ${meleeR} -> 电光 ${shockR}`);
+
+  const tk = armedRunWithEquip({ thunderHelm: { level: 1 } });
+  const t1 = addEnemy(tk.s, tk.run, tk.p.x + 30, tk.p.z);
+  const t2 = addEnemy(tk.s, tk.run, tk.p.x + (meleeR + shockR) / 2, tk.p.z);
+  t1.hp = 9999; t2.hp = 9999;
+  tk.p.attackTimer = C.ATTACK_DURATION;
+  tk.p.comboStep = 0;
+  L.step(tk.s, { attack: true, left: false, right: false, up: false,
+                 down: false, jump: false, sprint: false }, 1 / 60);
+  ok(t1.hp < 9999, '雷冠：第一段正常命中主目标', `9999 -> ${t1.hp}`);
+  ok(t2.hp === 9999, '雷冠：第一段不触发爆电（不退化成人人有的 AOE）',
+    `同伴血量 ${t2.hp}（普攻距离 ${meleeR}，电光半径 ${shockR}）`);
+
+  // 正面验证：推到第三段时，够不到的同伴必须被电光打到。
+  // 只测"不触发"等于没测 —— 把 comboShock 整段删掉上面的断言照样绿。
+  const tk3 = armedRunWithEquip({ thunderHelm: { level: 1 } });
+  const m1 = addEnemy(tk3.s, tk3.run, tk3.p.x + 30, tk3.p.z);
+  const m2 = addEnemy(tk3.s, tk3.run, tk3.p.x + (meleeR + shockR) / 2, tk3.p.z);
+  m1.hp = 9999; m2.hp = 9999;
+  tk3.p.attackTimer = C.ATTACK_DURATION;
+  tk3.p.comboStep = C.COMBO.steps.length - 1;   // 直接落到第三段
+  L.step(tk3.s, { attack: true, left: false, right: false, up: false,
+                  down: false, jump: false, sprint: false }, 1 / 60);
+  ok(tk3.p.comboSwingStep === C.COMBO.steps.length, '第三段确实是连段最后一段',
+    String(tk3.p.comboSwingStep));
+  ok(m2.hp < 9999, '雷冠：第三段命中后电光波及够不到的同伴',
+    `9999 -> ${m2.hp}`);
+
+  // 暴风指环 / 烬灰斗篷：机制存在性（概率与触发条件已由配置断言）
+  const sr = L.hasFx((function () {
+    const x = L.createState(6); x.meta.equipment.back = { id: 'stormRing', level: 1 }; return x;
+  })(), 'chainLightning');
+  ok(sr && sr.chance > 0, '暴风指环：连锁闪电有触发概率', String(sr && sr.chance));
+  const cc = L.hasFx((function () {
+    const x = L.createState(7); x.meta.equipment.back = { id: 'cinderCloak', level: 1 }; return x;
+  })(), 'ashBurst');
+  ok(cc && cc.damage > 0 && cc.radius > 0, '烬灰斗篷：受击爆发有伤害与半径',
+    `${cc && cc.damage} / ${cc && cc.radius}`);
+
+  // 灼烧区域真的会持续掉血
+  const eb = armedRunWithEquip({ emberBoots: { level: 1 } });
+  const burnFoe = addEnemy(eb.s, eb.run, eb.p.x + 20, eb.p.z);
+  burnFoe.hp = 9999;
+  eb.run.burnZones.push({ x: eb.p.x, z: eb.p.z, radius: 100, dps: 30,
+                          timer: 1.0, maxTimer: 1.0, acc: 0 });
+  L.stepZones(eb.s, eb.run, 1 / 60);
+  L.stepZones(eb.s, eb.run, 1 / 60);
+  ok(burnFoe.hp < 9999, '熔火战靴：灼烧区域逐帧扣血', `9999 -> ${burnFoe.hp}`);
+
+  // 冰霜区域真的减速
+  const fr = armedRunWithEquip({ frostArmor: { level: 1 } });
+  const slowFoe = addEnemy(fr.s, fr.run, fr.p.x + 20, fr.p.z);
+  fr.run.frostZones.push({ x: fr.p.x, z: fr.p.z, radius: 100,
+                           slowMul: 0.55, timer: 1.0, maxTimer: 1.0 });
+  L.stepZones(fr.s, fr.run, 1 / 60);
+  ok(slowFoe.slowMul === 0.55 && slowFoe.slowTimer > 0,
+    '霜缚护甲：冰霜区域确实减速敌人',
+    `${slowFoe.slowMul} / ${Number(slowFoe.slowTimer).toFixed(3)}`);
+
+  // 减速对 boss 同样生效（否则这件装备对 boss 战毫无价值）
+  const frB = armedRunWithEquip({ frostArmor: { level: 1 } });
+  L.spawnBoss(frB.s, frB.run, 'normal');
+  const boss = frB.run.enemies.filter(e => e.isBoss)[0];
+  frB.run.frostZones.push({ x: boss.x, z: boss.z, radius: 200,
+                            slowMul: 0.55, timer: 1.0, maxTimer: 1.0 });
+  L.stepZones(frB.s, frB.run, 1 / 60);
+  ok(boss.slowMul === 0.55, '冰霜对 boss 同样生效（不是对小怪专用）',
+    String(boss.slowMul));
+
+  // 特效装备升级只加强度，不改机制 id
+  const th3 = L.hasFx((function () {
+    const x = L.createState(5);
+    x.meta.equipment.torso = { id: 'thornMail', level: 3 };
+    return x;
+  })(), 'thorns');
+  ok(th3 && th3.id === 'thorns', '升级后机制 id 不变（还是反伤）', th3 && th3.id);
+  ok(th3.reflect > C.EQUIP_FX.thornMail.fx.reflect, '升级后强度参数变大',
+    `${C.EQUIP_FX.thornMail.fx.reflect} -> ${th3.reflect}`);
+}
+
+// ---------------------------------------------------------------- 28. 装备：技能改造
+section('28. 装备（技能改造）');
+{
+  // 战斧：震地范围 +50%
+  const plain = armedRunWithEquip({});
+  const axe = armedRunWithEquip({ battleAxe: { level: 1 } });
+  const plainSlam = C.SKILLS.slam.radius;
+  const axeSlam = skillRadiusFor(axe.s, 'slam');
+  ok(axeSlam > plainSlam, '战斧：震地范围变大',
+    `${plainSlam} -> ${axeSlam}`);
+  ok(Math.abs(axeSlam - plainSlam * 1.5) < 0.01, '战斧：范围正好 +50%',
+    String(axeSlam));
+  // 代价：冷却变长（有代价的装备才是选择）
+  ok(skillCooldownFor(axe.s, 'slam') > skillCooldownFor(plain.s, 'slam'),
+    '战斧：冷却变长（有代价）',
+    `${skillCooldownFor(plain.s, 'slam')} -> ${skillCooldownFor(axe.s, 'slam')}`);
+
+  // 虚空之刃：裂风斩吸血
+  const vb = armedRunWithEquip({ voidBlade: { level: 1 } });
+  vb.p.hp = 30;
+  const victim = addEnemy(vb.s, vb.run, vb.p.x + 60, vb.p.z);
+  victim.hp = 200;
+  L.tryCastSkill(vb.s, vb.run, vb.p, 'whirl');
+  for (let i = 0; i < 30; i++) L.step(vb.s, { left: false, right: false, up: false, down: false }, 1 / 60);
+  ok(vb.p.hp > 30, '虚空之刃：裂风斩命中后回血', `30 -> ${vb.p.hp}`);
+
+  // 三叉圣杖：大招范围 +20%
+  const tr = armedRunWithEquip({ trident: { level: 1 } });
+  ok(Math.abs(skillRadiusFor(tr.s, 'nova') - C.SKILLS.nova.radius * 1.2) < 0.01,
+    '三叉圣杖：大招范围 +20%',
+    `${C.SKILLS.nova.radius} -> ${skillRadiusFor(tr.s, 'nova')}`);
+
+  // 没装备时技能保持原样
+  ok(skillRadiusFor(plain.s, 'slam') === plainSlam, '没装备战斧时震地范围不变');
+  ok(skillCooldownFor(plain.s, 'slam') === C.SKILLS.slam.cooldown,
+    '没装备时冷却不变');
+}
+
+// ---------------------------------------------------------------- 29. 装备：专属技能
+section('29. 装备（专属技能与动态技能栏）');
+{
+  const plain = armedRunWithEquip({});
+  ok(L.specialSkillOf(plain.s) === null, '没装备专属武器时没有专属技能');
+
+  const oath = armedRunWithEquip({ oathkeeper: { level: 1 } });
+  ok(L.specialSkillOf(oath.s) === 'block', '守誓者授予「格挡」',
+    String(L.specialSkillOf(oath.s)));
+
+  const tome = armedRunWithEquip({ arcaneTome: { level: 1 } });
+  ok(L.specialSkillOf(tome.s) === 'blink2', '秘法之书授予「短距传送」');
+
+  // 换掉武器后技能消失
+  L.unequipSlot(oath.s, 'weapon');
+  ok(L.specialSkillOf(oath.s) === null, '卸下守誓者后「格挡」消失');
+
+  // 格挡真的减伤
+  const blk = armedRunWithEquip({ oathkeeper: { level: 1 } });
+  blk.p.hp = blk.p.maxHp;
+  L.castSpecial(blk.s, blk.run, blk.p);
+  ok(blk.p.blockTimer > 0, '格挡生效期间有计时器', String(blk.p.blockTimer));
+  L.hurtPlayer(blk.s, blk.run, blk.p, 40);
+  const blockedLoss = blk.p.maxHp - blk.p.hp;
+
+  const noBlk = armedRunWithEquip({});
+  noBlk.p.hp = noBlk.p.maxHp;
+  L.hurtPlayer(noBlk.s, noBlk.run, noBlk.p, 40);
+  const normalLoss = noBlk.p.maxHp - noBlk.p.hp;
+  ok(blockedLoss < normalLoss, '格挡真的减伤了',
+    `格挡掉 ${blockedLoss} vs 不格挡掉 ${normalLoss}`);
+
+  // 专有武器占武器位，不能同时拿两把。
+  // 注意用新开的局：上面的 oath 已经被 unequipSlot 清空了武器位。
+  const swap = armedRunWithEquip({ oathkeeper: { level: 1 } }, { coins: 5000 });
+  ok(swap.s.meta.equipment.weapon.id === 'oathkeeper', '专属武器占武器位');
+  // 必须断言 buy 成功。之前这里没给铜币（初始 0），买入静默失败，
+  // 后面的 equipItem 又只返回 {ok:false}，于是错误被推到"武器位没换人"
+  // 这条完全不相关的断言上，排查方向被带偏。
+  const bought = L.buyEquipment(swap.s, 'crystalStaff');
+  ok(bought.ok, '买下第二把武器', JSON.stringify(bought));
+  const swapped = L.equipItem(swap.s, 'crystalStaff');
+  ok(swapped.ok, '换上第二把武器', JSON.stringify(swapped));
+  ok(swap.s.meta.equipment.weapon.id === 'crystalStaff',
+    '换上棱晶杖后武器位换人', String(swap.s.meta.equipment.weapon.id));
+  ok(L.specialSkillOf(swap.s) === null,
+    '换上棱晶杖后专属技能消失（是替换不是白送）');
+}
+
+// ---------------------------------------------------------------- 30. 装备：不破坏既有平衡
+section('30. 装备（不破坏既有平衡）');
+{
+  // 全套基础装备（1 级）不能让零强化直接通关最高难度 ——
+  // 装备是"倾向"，不该替代难度选择。
+  const full = armedRunWithEquip({
+    hornHelm: { level: 1 }, fullPlate: { level: 1 }, wingCape: { level: 1 },
+    twinBlades: { level: 1 }, stoneBoots: { level: 1 },
+  });
+  const st = L.playerStats(full.s);
+  // 伤害不超过基础的 2 倍（强化满级才是 2 倍）
+  ok(st.damage < C.BASE_DAMAGE * 2.0, '全套基础装备的伤害低于基础值的 2 倍',
+    `${C.BASE_DAMAGE} -> ${st.damage}`);
+  // 减伤不能到免疫
+  ok(st.hurtMul > 0.5, '全套装备的减伤不会超过一半（不会变成无敌）',
+    st.hurtMul.toFixed(3));
+  // 生命上限不超过基础 2.5 倍
+  ok(st.maxHp < C.BASE_HP * 2.5, '全套装备的生命上限低于基础值的 2.5 倍',
+    `${C.BASE_HP} -> ${st.maxHp}`);
+
+  // 每件装备都有名字与描述（商店要显示，缺了就是空白格子）
+  Object.keys(C.ALL_EQUIPMENT).forEach(function (id) {
+    const d = C.ALL_EQUIPMENT[id];
+    ok(!!d.name && !!d.desc, `装备 ${id} 有名字与描述`);
+  });
+
+  // 装备位必须都能装（id 的 slot 与配置一致）
+  Object.keys(C.ALL_EQUIPMENT).forEach(function (id) {
+    const d = C.ALL_EQUIPMENT[id];
+    ok(C.EQUIP_SLOTS.indexOf(d.slot) >= 0, `装备 ${id} 的部位合法`);
+  });
 }
 
 // ---------------------------------------------------------------- 汇总

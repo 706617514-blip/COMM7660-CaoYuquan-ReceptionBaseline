@@ -79,9 +79,20 @@ function decide(state) {
 }
 
 /** 跑完一整局，返回终局 state。 */
-function play(seed, difficultyId, upgrades) {
+function play(seed, difficultyId, upgrades, equipment) {
   const s = L.createState(seed);
   if (upgrades) s.meta.upgrades = Object.assign({}, upgrades);
+  // 装备要能在测量里出现，否则"经营层能否打通最高难度"这个问题
+  // 只量到了强化，而玩家实际下场时身上是**带着一套装备**的 ——
+  // 漏掉装备会把终局强度低估一大截。
+  if (equipment) {
+    C.EQUIP_SLOTS.forEach(function (slot) { s.meta.equipment[slot] = null; });
+    Object.keys(equipment).forEach(function (id) {
+      const def = C.equipDef(id);
+      if (!def) throw new Error('unknown equip ' + id);
+      s.meta.equipment[def.slot] = { id: id, level: (equipment[id] && equipment[id].level) || 1 };
+    });
+  }
   L.startRun(s, difficultyId);
   let t = 0;
   while (s.phase === 'run' && t < 300) {
@@ -92,13 +103,13 @@ function play(seed, difficultyId, upgrades) {
 }
 
 /** 某个难度在若干种子上的胜率。 */
-function winRate(difficultyId, upgrades, n, stride) {
+function winRate(difficultyId, upgrades, n, stride, equipment) {
   const step = stride || 137;
   let wins = 0;
   let secs = 0;
   const results = [];
   for (let k = 1; k <= n; k++) {
-    const s = play(k * step, difficultyId, upgrades);
+    const s = play(k * step, difficultyId, upgrades, equipment);
     const won = !!(s.lastResult && s.lastResult.won);
     if (won) wins++;
     const sec = s.lastResult ? s.lastResult.elapsed : 0;
@@ -118,4 +129,14 @@ const FULL_UP = Object.freeze({
 });
 const HALF_UP = Object.freeze({ damage: 3, maxHp: 3, speed: 2 });
 
-module.exports = { DT, ZERO, decide, play, winRate, ZERO_UP, HALF_UP, FULL_UP };
+/**
+ * 满级的基础套装（每档最贵的一件）。终局测量用，代表
+ * "强化满 + 装备齐"的真实下场状态。特效件不算在内 ——
+ * 特效是构筑选择，不是人人都有，混进来会把这个下限代理抬高。
+ */
+const FULL_SET = Object.freeze({
+  hornHelm: 1, fullPlate: 1, wingCape: 1, twinBlades: 1, stoneBoots: 1,
+});
+
+module.exports = { DT, ZERO, decide, play, winRate,
+                   ZERO_UP, HALF_UP, FULL_UP, FULL_SET };

@@ -302,6 +302,80 @@ section('8. 技能升级到满级后关闭');
   eq(nova.disabledReason, '已满级', '禁用原因写明已满级');
 }
 
+// ---------------------------------------------------------------- 兵器架（装备商店）
+section('兵器架：买 → 穿 → 升级 → 换装');
+{
+  const s = L.createState(4321);
+  H.ensureHub(s);
+  s.meta.coins = 5000;
+
+  // 面板必须列全 35 件：这是玩家唯一能看到"还有什么装备、特效是什么"的地方
+  const all = H.zoneActions(s, 'forgewear');
+  eq(all.length, Object.keys(C.ALL_EQUIPMENT).length, '兵器架列出全部装备');
+  const everySlot = C.EQUIP_SLOTS.every(function (slot) {
+    return all.some(function (a) { return a.payload.slot === slot; });
+  });
+  ok(everySlot, '五个部位在兵器架里都有条目');
+
+  const find = function (kind, id) {
+    return H.zoneActions(s, 'forgewear')
+      .find(function (a) { return a.kind === kind && a.payload.id === id; });
+  };
+
+  eq(H.perform(s, find('equip-buy', 'leatherHelm')).ok, true, '买下皮盔');
+  eq(s.meta.coins, 5000 - C.equipDef('leatherHelm').price, '铜币按价格扣除');
+  eq(L.equipOwned(s, 'leatherHelm'), 'owned', '买完进背包');
+
+  eq(H.perform(s, find('equip-wear', 'leatherHelm')).ok, true, '从背包穿上皮盔');
+  eq(s.meta.equipment.head.id, 'leatherHelm', '皮盔进了头部槽');
+  eq(L.equipOwned(s, 'leatherHelm'), 'equipped', '装备状态跟着变');
+
+  // 同一件不能再买
+  const again = H.zoneActions(s, 'forgewear')
+    .find(function (a) { return a.payload.id === 'leatherHelm' && a.kind === 'equip-buy'; });
+  ok(!again, '已拥有的装备不再出现"购买"动作');
+
+  const up = find('equip-upgrade', 'leatherHelm');
+  ok(up && up.cost > 0, '已装备的装备出现升级动作', up && String(up.cost));
+  eq(H.perform(s, up).ok, true, '升级成功');
+  eq(s.meta.equipment.head.level, 2, '等级 +1');
+
+  // 升到 2 级后再换掉再换回来，等级必须还在
+  H.perform(s, find('equip-upgrade', 'leatherHelm'));
+  eq(s.meta.equipment.head.level, 3, '升到 3 级');
+  H.perform(s, find('equip-buy', 'ironHelm'));
+  H.perform(s, find('equip-wear', 'ironHelm'));
+  eq(s.meta.equipment.head.id, 'ironHelm', '换上了铁盔');
+  eq(s.meta.inventory.indexOf('leatherHelm') >= 0, true, '换下来的皮盔回到背包');
+  eq(s.meta.inventoryLevels.leatherHelm, 3, '换下来时等级记在背包里');
+  L.equipItem(s, 'leatherHelm');
+  eq(s.meta.equipment.head.level, 3, '换回来等级没有丢（升级成果不会被换装罚掉）');
+
+  // 铜币不够时禁用并写明原因
+  const poor = L.createState(4322);
+  H.ensureHub(poor);
+  poor.meta.coins = 0;
+  const blocked = H.zoneActions(poor, 'forgewear')
+    .find(function (a) { return a.payload.id === 'crystalStaff'; });
+  ok(!blocked.enabled, '买不起时禁用');
+  eq(blocked.disabledReason, '铜币不够', '禁用原因写明铜币不够');
+  eq(H.perform(poor, blocked).ok, false, '禁用动作执行会失败');
+
+  // 满级后升级动作消失（不是留一个按不动的按钮）
+  const maxed = L.createState(4323);
+  H.ensureHub(maxed);
+  maxed.meta.coins = 999999;
+  L.buyEquipment(maxed, 'strawShoes');
+  L.equipItem(maxed, 'strawShoes');
+  const maxLv = C.equipMaxLevel('strawShoes');
+  for (let i = 1; i < maxLv; i++) L.upgradeEquipment(maxed, 'strawShoes');
+  eq(maxed.meta.equipment.feet.level, maxLv, '基础装备升到满级 ' + maxLv);
+  const maxedActions = H.zoneActions(maxed, 'forgewear')
+    .filter(function (a) { return a.payload.id === 'strawShoes'; });
+  eq(maxedActions.length, 1, '满级后只剩一个条目（没有可点的升级）');
+  eq(maxedActions[0].kind, 'equip-owned', '满级条目的种类是"已拥有"');
+}
+
 // ---------------------------------------------------------------- 汇总
 console.log('\n' + '='.repeat(56));
 if (fail === 0) {

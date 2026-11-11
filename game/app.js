@@ -45,6 +45,83 @@
     sc: 1 - (z / C.FIELD_D) * Z_SCALE,
   });
 
+  // ================================================================ 主角装备分层
+  /**
+   * 主角渲染成一个 Container：底层是身体贴图，上面叠五层装备。
+   *
+   * 每一层都是**预烘好的静态贴图**，换装时只改 texture key，不重画。
+   * 这样 Container 自带的 setAlpha（无敌帧闪烁）、setFlipX（左右镜像，
+   * 用户明确要求主角也要有左右视图）、setScale（景深）都会自动作用到
+   * 所有层上，不必每层各设一遍 —— 这正是用 Container 而不是每帧
+   * Graphics.clear() 重画的原因。
+   *
+   * 层序（从下到上）：背部披风 → 躯干 → 脚 → 头 → 武器。
+   * 身体贴图本身在 container 里位于所有层之下。
+   */
+  const EQUIP_LAYER_ORDER = ['back', 'torso', 'feet', 'head', 'weapon'];
+
+  function makeHero(scene, depth) {
+    const c = scene.add.container(0, 0);
+    c.body_ = scene.add.image(0, 0, 'hero').setOrigin(0.5, 1);
+    c.add(c.body_);
+    c.layers_ = {};
+    EQUIP_LAYER_ORDER.forEach((slot) => {
+      const img = scene.add.image(0, 0, 'hero').setOrigin(0.5, 1).setVisible(false);
+      c.layers_[slot] = img;
+      c.add(img);
+    });
+
+    /*
+     * Container **没有** setFlipX —— 那是 Image/Sprite 的方法。
+     * 场景里仍在调 this.hero.setFlipX(...)，直接换成 container 会抛
+     * "setFlipX is not a function"，整个 update 中断（表现为页面白屏、
+     * 十几个看起来毫不相关的断言同时变红，正是这次踩到的形态）。
+     *
+     * 这里补一个同名方法：逐个子对象镜像。左右视图就是靠它实现的，
+     * 所以每一层都必须跟着翻，不能只翻身体 —— 只翻身体会出现
+     * "人朝左、剑还朝右"的穿帮。
+     */
+    c.flipped_ = false;
+    c.setFlipX = function (flip) {
+      const f = !!flip;
+      if (c.flipped_ === f) return c;
+      c.flipped_ = f;
+      c.each(function (child) {
+        if (child && typeof child.setFlipX === 'function') child.setFlipX(f);
+      });
+      return c;
+    };
+    return c.setDepth(depth);
+  }
+
+  /**
+   * 按当前 meta.equipment 刷新五层贴图。
+   * 幂等：key 没变就不动贴图引用，换装时才真正切一次。
+   */
+  function refreshHeroEquip(hero, state) {
+    if (!hero || !hero.layers_ || !state || !state.meta) return;
+    const eq = state.meta.equipment || {};
+    EQUIP_LAYER_ORDER.forEach((slot) => {
+      const img = hero.layers_[slot];
+      if (!img) return;
+      const it = eq[slot];
+      const key = it && it.id ? 'eq-' + slot + '-' + it.id : null;
+      if (!key) {
+        if (img.visible) img.setVisible(false);
+        img.__key = null;
+        return;
+      }
+      if (img.__key === key) return;
+      img.setTexture(key).setVisible(true);
+      // 新换上的层要立刻继承当前朝向。不设的话，在朝左时换装，
+      // 新显示的那一层会是未镜像的右视图（"人朝左、装备朝右"）。
+      if (hero.flipped_ !== undefined && typeof img.setFlipX === 'function') {
+        img.setFlipX(hero.flipped_);
+      }
+      img.__key = key;
+    });
+  }
+
   // ================================================================ 纹理
   function buildTextures(scene) {
     const g = scene.add.graphics();
@@ -108,6 +185,209 @@
     g.fillStyle(0x2b2016, 1); g.fillRect(28, 40, 8, 4.5);       // 护手
     g.fillStyle(0x6b5138, 1); g.fillRect(30.5, 43, 3, 7);       // 剑柄
     g.generateTexture('hero', 40, 60);
+
+    /*
+     * ---- 装备分层贴图 ----
+     *
+     * 每件装备都**预先烘成一张静态贴图**，运行时只切换 image 的 texture key。
+     * 不用"每帧 Graphics.clear()+重画"是因为：60fps 下每帧重画五层矢量
+     * 会稳定掉帧，而且会和无敌帧的 setAlpha 闪烁、左右镜像的 setFlipX
+     * 打架（clear 之后这些状态需要重设，很容易漏）。
+     *
+     * 坐标系与 hero 一致：40×60，底边是脚（origin 0.5,1），y 越小越靠上。
+     * 贴图只画**右视图**，左视图靠 setFlipX 镜像 ——
+     * 这正是"主角也要做左右视图"的做法。
+     */
+    const equipLayer = (key, draw) => {
+      g.clear();
+      draw(g);
+      g.generateTexture(key, 40, 60);
+    };
+
+    // 头部：头盔 / 兜帽，套在头上（头顶约 y=10~26）
+    equipLayer('eq-head-leatherHelm', (d) => {
+      d.fillStyle(0x7a5230, 1); d.fillRoundedRect(10, 12, 20, 13, 5);
+      d.fillStyle(0x8f6238, 1); d.fillRoundedRect(11, 12, 18, 5, 3);
+    });
+    equipLayer('eq-head-ironHelm', (d) => {
+      d.fillStyle(0x8b949e, 1); d.fillRoundedRect(9, 11, 22, 14, 5);
+      d.fillStyle(0xa8b1bb, 1); d.fillRoundedRect(10, 11, 20, 5, 3);
+      d.fillStyle(0x5d666f, 1); d.fillRect(19, 12, 2.5, 13);
+    });
+    equipLayer('eq-head-guardHelm', (d) => {
+      d.fillStyle(0x77808a, 1); d.fillRoundedRect(9, 11, 22, 14, 5);
+      d.fillStyle(0x99a2ac, 1); d.fillRoundedRect(10, 11, 20, 5, 3);
+      d.fillStyle(0xc9d2dc, 1); d.fillTriangle(30, 16, 36, 20, 30, 25);   // 护鼻
+    });
+    equipLayer('eq-head-hornHelm', (d) => {
+      d.fillStyle(0x6e7782, 1); d.fillRoundedRect(9, 11, 22, 14, 5);
+      d.fillStyle(0x8d96a1, 1); d.fillRoundedRect(10, 11, 20, 5, 3);
+      d.fillStyle(0xe6e0cc, 1);                                        // 双角
+      d.fillTriangle(11, 12, 4, 4, 12, 8);
+      d.fillTriangle(29, 12, 36, 4, 28, 8);
+    });
+    equipLayer('eq-head-thunderHelm', (d) => {
+      d.fillStyle(0x6e7782, 1); d.fillRoundedRect(9, 11, 22, 14, 5);
+      d.fillStyle(0x8d96a1, 1); d.fillRoundedRect(10, 11, 20, 5, 3);
+      d.fillStyle(0xffe066, 1); d.fillTriangle(20, 4, 16, 14, 24, 14);   // 电冠
+    });
+
+    // 躯干：胸甲 / 外衣（身体约 y=26~44）
+    equipLayer('eq-torso-leatherVest', (d) => {
+      d.fillStyle(0x8a5f34, 1); d.fillRoundedRect(11, 26, 19, 17, 4);
+      d.fillStyle(0xa07042, 1); d.fillRect(20, 26, 2, 17);
+    });
+    equipLayer('eq-torso-chestPlate', (d) => {
+      d.fillStyle(0x9aa3ad, 1); d.fillRoundedRect(10, 25, 21, 18, 5);
+      d.fillStyle(0xc2cbd5, 1); d.fillRoundedRect(11, 25, 19, 5, 3);
+      d.fillStyle(0x6d757e, 1); d.fillRect(20, 26, 2, 17);
+    });
+    equipLayer('eq-torso-pauldron', (d) => {
+      d.fillStyle(0x8b949e, 1); d.fillRoundedRect(10, 25, 21, 18, 5);
+      d.fillStyle(0xb4bdc7, 1); d.fillCircle(9, 28, 6); d.fillCircle(31, 28, 6);
+    });
+    equipLayer('eq-torso-fullPlate', (d) => {
+      d.fillStyle(0xa9b2bc, 1); d.fillRoundedRect(9, 24, 23, 20, 6);
+      d.fillStyle(0xd2dbe5, 1); d.fillRoundedRect(10, 24, 21, 6, 3);
+      d.fillStyle(0x7c848d, 1); d.fillRect(20, 25, 2, 19);
+      d.fillStyle(0xd2dbe5, 1); d.fillCircle(8, 27, 6); d.fillCircle(32, 27, 6);
+    });
+    equipLayer('eq-torso-thornMail', (d) => {
+      d.fillStyle(0x4a4038, 1); d.fillRoundedRect(10, 25, 21, 18, 5);
+      d.fillStyle(0xb06a52, 1);                                       // 尖刺
+      for (let i = 0; i < 5; i++) d.fillTriangle(11 + i * 4.5, 26, 9 + i * 4.5, 19, 13 + i * 4.5, 19);
+    });
+    equipLayer('eq-torso-frostArmor', (d) => {
+      d.fillStyle(0x4a6a86, 1); d.fillRoundedRect(10, 25, 21, 18, 5);
+      d.fillStyle(0x9ad7ff, 0.9); d.fillRoundedRect(11, 25, 19, 5, 3);  // 霜层
+      d.fillStyle(0xd8f0ff, 1);
+      d.fillTriangle(14, 26, 11, 34, 17, 34);                           // 冰棱
+      d.fillTriangle(26, 26, 23, 36, 29, 36);
+    });
+    equipLayer('eq-torso-aegisPlate', (d) => {
+      d.fillStyle(0x9aa3ad, 1); d.fillRoundedRect(10, 25, 21, 18, 5);
+      d.fillStyle(0x9ad7ff, 0.85); d.fillCircle(20.5, 34, 5.5);        // 蓝核
+      d.fillStyle(0xd8f0ff, 0.9); d.fillCircle(20.5, 34, 2.4);
+    });
+
+    // 背部：披风 / 斗篷（画在身体后面，y=24~48）
+    equipLayer('eq-back-shortCape', (d) => {
+      d.fillStyle(0x5d6b46, 1); d.fillRoundedRect(8, 27, 24, 13, 4);
+    });
+    equipLayer('eq-back-longCloak', (d) => {
+      d.fillStyle(0x3f4a58, 1); d.fillRoundedRect(7, 26, 26, 22, 5);
+      d.fillStyle(0x536072, 1); d.fillRect(19, 26, 3, 22);
+    });
+    equipLayer('eq-back-runeCloak', (d) => {
+      d.fillStyle(0x404a72, 1); d.fillRoundedRect(7, 26, 26, 22, 5);
+      d.fillStyle(0x9ad7ff, 0.9); d.fillCircle(20, 36, 4);             // 符文核
+      d.fillStyle(0xd8f0ff, 0.9); d.fillCircle(20, 36, 1.6);
+    });
+    equipLayer('eq-back-wingCape', (d) => {
+      d.fillStyle(0x6b4f7a, 1); d.fillRoundedRect(7, 26, 26, 22, 5);
+      d.fillStyle(0xc9a6ff, 0.85);                                     // 翼形
+      d.fillTriangle(8, 27, 0, 30, 9, 36);
+      d.fillTriangle(32, 27, 40, 30, 31, 36);
+    });
+    equipLayer('eq-back-bloodCharm', (d) => {
+      d.fillStyle(0x5a2a2a, 1); d.fillRoundedRect(9, 28, 22, 16, 5);
+      d.fillStyle(0xc23a3a, 1); d.fillCircle(20, 36, 5.5);             // 血滴
+      d.fillStyle(0xff8a8a, 0.95); d.fillCircle(18, 34, 2);
+    });
+    equipLayer('eq-back-cinderCloak', (d) => {
+      d.fillStyle(0x5a3b30, 1); d.fillRoundedRect(7, 26, 26, 22, 5);
+      d.fillStyle(0xff9a6c, 1);                                        // 余烬
+      for (let i = 0; i < 4; i++) d.fillCircle(10 + i * 6.5, 40 - (i % 2) * 5, 2.2);
+    });
+    equipLayer('eq-head-stormRing', (d) => {
+      // 暴风指环实际是**头部**装备（配置里 slot:'head'）。
+      // 首版按"指环"直觉画在背部，贴图 key 与 slot 对不上，
+      // 结果这件装备穿上后什么都不显示。
+      d.fillStyle(0x3a4a5e, 1); d.fillRoundedRect(9, 13, 22, 6, 3);     // 头箍
+      d.fillStyle(0x9ad7ff, 1); d.fillCircle(20, 11, 4.5);              // 顶上雷珠
+      d.fillStyle(0xd8f0ff, 0.95); d.fillCircle(20, 11, 1.8);
+      d.fillStyle(0xffe066, 1);
+      d.fillTriangle(26, 13, 33, 9, 27, 17);                            // 小雷弧
+    });
+
+    // 武器：画在右手侧
+    equipLayer('eq-weapon-rustySword', (d) => {
+      d.fillStyle(0x8a7355, 1); d.fillRect(31, 22, 3.5, 26);
+      d.fillStyle(0xa08a68, 1); d.fillRect(31, 22, 1.4, 26);
+    });
+    equipLayer('eq-weapon-shortSword', (d) => {
+      d.fillStyle(0xc2cbd5, 1); d.fillRect(31, 20, 3.5, 28);
+      d.fillStyle(0xe8f2fa, 1); d.fillRect(31, 20, 1.4, 28);
+      d.fillStyle(0x2b2016, 1); d.fillRect(29, 47, 8, 4);
+    });
+    equipLayer('eq-weapon-broadSword', (d) => {
+      d.fillStyle(0xcdd6e0, 1); d.fillRect(30, 16, 6, 32);
+      d.fillStyle(0xeff6fc, 1); d.fillRect(30, 16, 2, 32);
+      d.fillStyle(0x2b2016, 1); d.fillRect(28, 47, 10, 4.5);
+    });
+    equipLayer('eq-weapon-twinBlades', (d) => {
+      d.fillStyle(0xd2dbe5, 1);
+      d.fillRect(29, 22, 3, 25); d.fillRect(35, 24, 3, 23);            // 双刀
+      d.fillStyle(0x2b2016, 1); d.fillRect(28, 46, 5, 3.5); d.fillRect(34, 46, 5, 3.5);
+    });
+    equipLayer('eq-weapon-crystalStaff', (d) => {
+      d.fillStyle(0x6b5439, 1); d.fillRect(31, 20, 3.5, 29);
+      d.fillStyle(0xc9a6ff, 1); d.fillCircle(32.5, 17, 5);             // 棱晶
+      d.fillStyle(0xe8dcff, 0.9); d.fillCircle(31.5, 16, 2);
+    });
+    equipLayer('eq-weapon-battleAxe', (d) => {
+      d.fillStyle(0x6b5439, 1); d.fillRect(31, 20, 3.5, 29);
+      d.fillStyle(0xb9c2cc, 1); d.fillTriangle(35, 20, 46, 26, 35, 34);
+      d.fillStyle(0xd8e0e8, 1); d.fillTriangle(35, 21, 43, 26, 35, 31);
+    });
+    equipLayer('eq-weapon-voidBlade', (d) => {
+      d.fillStyle(0x4a3566, 1); d.fillRect(30, 16, 5, 32);
+      d.fillStyle(0xc9a6ff, 1); d.fillRect(30, 16, 1.8, 32);
+      d.fillStyle(0x2b1f3a, 1); d.fillRect(28, 47, 9, 4.5);
+    });
+    equipLayer('eq-weapon-trident', (d) => {
+      d.fillStyle(0x6b5439, 1); d.fillRect(31, 26, 3.5, 23);
+      d.fillStyle(0xd2dbe5, 1);
+      d.fillRect(29, 14, 2.5, 14); d.fillRect(32.5, 12, 2.5, 16); d.fillRect(36, 14, 2.5, 14);
+      d.fillRect(27, 26, 13, 2.5);
+    });
+    equipLayer('eq-weapon-oathkeeper', (d) => {
+      d.fillStyle(0xe0d6a8, 1); d.fillRect(30, 16, 5, 32);             // 圣剑
+      d.fillStyle(0xfff6cc, 1); d.fillRect(30, 16, 2, 32);
+      d.fillStyle(0x9a8a4c, 1); d.fillRect(27, 46, 11, 5);
+      d.fillStyle(0xffe066, 1); d.fillCircle(32.5, 14, 3.6);
+    });
+    equipLayer('eq-weapon-arcaneTome', (d) => {
+      d.fillStyle(0x3f5a7a, 1); d.fillRoundedRect(29, 30, 11, 13, 2);  // 书
+      d.fillStyle(0x8fb8e0, 1); d.fillRoundedRect(30, 31, 9, 11, 2);
+      d.fillStyle(0xc9a6ff, 1); d.fillCircle(34.5, 36.5, 2.6);
+    });
+
+    // 脚部：靴子（y=48~60）
+    equipLayer('eq-feet-strawShoes', (d) => {
+      d.fillStyle(0xb99a5e, 1); d.fillRoundedRect(11, 50, 19, 8, 3);
+    });
+    equipLayer('eq-feet-windBoots', (d) => {
+      d.fillStyle(0x5f7a52, 1); d.fillRoundedRect(10, 49, 21, 9, 3);
+      d.fillStyle(0x7fa06c, 1); d.fillRect(10, 49, 21, 3);
+    });
+    equipLayer('eq-feet-greaves', (d) => {
+      d.fillStyle(0x8b949e, 1); d.fillRoundedRect(10, 48, 21, 10, 3);
+      d.fillStyle(0xb4bdc7, 1); d.fillRect(10, 48, 21, 3.5);
+    });
+    equipLayer('eq-feet-stoneBoots', (d) => {
+      d.fillStyle(0x6e7782, 1); d.fillRoundedRect(9, 47, 23, 11, 4);
+      d.fillStyle(0x939ca7, 1); d.fillRoundedRect(10, 47, 21, 4, 2);
+    });
+    equipLayer('eq-feet-emberBoots', (d) => {
+      d.fillStyle(0x7a4636, 1); d.fillRoundedRect(10, 49, 21, 9, 3);
+      d.fillStyle(0xff9a6c, 1); d.fillCircle(13, 52, 2.4); d.fillCircle(28, 52, 2.4);
+    });
+    equipLayer('eq-feet-phaseBoots', (d) => {
+      d.fillStyle(0x4a4a72, 1); d.fillRoundedRect(10, 49, 21, 9, 3);
+      d.fillStyle(0xc9a6ff, 1); d.fillRoundedRect(10, 49, 21, 3, 2);
+    });
+
 
     // ---- 爬虫：六足 + 甲壳分层 ----
     g.clear();
@@ -431,6 +711,35 @@
     // 支柱
     g.fillStyle(0x3a2a1c, 1); g.fillRect(2, 14, 4, 28); g.fillRect(74, 14, 4, 28);
     g.generateTexture('shop', 80, 68);
+
+    /*
+     * 兵器架（装备商店）。
+     * 剪影必须和铁匠铺（矮方石头）、药水铺（尖顶帐篷）都不同 ——
+     * 这里用"横向长架上斜插的几把武器"，是全身唯一带**多根细长斜线**
+     * 的建筑，远景压缩后靠这个轮廓区分，不靠颜色。
+     */
+    g.clear();
+    // 石台
+    g.fillStyle(0x2b313a, 1); g.fillRoundedRect(2, 52, 86, 16, 4);
+    g.fillStyle(0x39404a, 1); g.fillRoundedRect(2, 52, 86, 6, 3);
+    // 两根立柱 + 横梁
+    g.fillStyle(0x5a4630, 1); g.fillRect(10, 18, 6, 36); g.fillRect(74, 18, 6, 36);
+    g.fillStyle(0x6b5439, 1); g.fillRoundedRect(6, 14, 78, 7, 3);
+    // 斜插的武器：剑 / 斧 / 杖，各自不同色，靠形状区分
+    // 长剑
+    g.fillStyle(0xd8dde4, 1); g.fillRect(26, 20, 4, 26);
+    g.fillStyle(0x8a7355, 1); g.fillRect(23, 44, 10, 4);
+    // 战斧
+    g.fillStyle(0x9aa3ad, 1); g.fillRect(45, 22, 4, 26);
+    g.fillStyle(0xb9c2cc, 1); g.fillTriangle(49, 22, 63, 29, 49, 36);
+    // 法杖：顶端一颗宝石，模仿棱晶杖
+    g.fillStyle(0x6b5439, 1); g.fillRect(66, 22, 4, 26);
+    g.fillStyle(0xc9a6ff, 1); g.fillCircle(68, 18, 5);
+    g.fillStyle(0xe8dcff, 0.8); g.fillCircle(67, 17, 2);
+    // 挂着的头盔，进一步强化"这里是卖装备的"
+    g.fillStyle(0x7a828c, 1); g.fillRoundedRect(14, 22, 14, 12, 4);
+    g.fillStyle(0x9aa3ad, 1); g.fillRect(14, 31, 14, 3);
+    g.generateTexture('rack', 90, 70);
 
     // 远征文门
     g.clear();
@@ -1006,6 +1315,17 @@
             this.tweens.add({ targets: gl, alpha: 0.7, duration: 900 + i * 260,
               yoyo: true, repeat: -1, ease: 'Sine.inOut', delay: i * 200 });
           });
+        } else if (z.art === 'rack') {
+          // 兵器架：石台 + 武器架，外加一道冷色反光
+          img = this.add.container(z.x, y);
+          img.add(this.add.rectangle(0, -2, 84, 9, 0x2b313a).setOrigin(0.5, 1));
+          img.add(this.add.image(0, 0, 'rack').setOrigin(0.5, 1).setScale(1.0));
+          // 法杖宝石的呼吸光（对应棱晶杖），位置与贴图里的宝石对齐
+          const gem = this.add.ellipse(6, -52, 14, 14, 0xc9a6ff, 0.3)
+            .setBlendMode(Phaser.BlendModes.ADD);
+          img.add(gem);
+          this.tweens.add({ targets: gem, alpha: 0.62, duration: 1200,
+            yoyo: true, repeat: -1, ease: 'Sine.inOut' });
         } else if (z.art === 'altar') {
           img = this.add.container(z.x, y);
           img.add(this.add.image(0, 0, 'altar').setOrigin(0.5, 1).setScale(1.2));
@@ -1043,7 +1363,7 @@
       this.refreshPlots();
 
       this.shadow = this.add.image(0, 0, 'shadow').setScale(0.8).setDepth(1);
-      this.hero = this.add.image(0, 0, 'hero').setDepth(100);
+      this.hero = makeHero(this, 100);
       this.prompt = this.add.text(0, 0, '', {
         fontSize: '14px', color: '#ffe07a', backgroundColor: '#00000088',
         padding: { x: 8, y: 4 }, fontFamily: 'sans-serif',
@@ -1098,6 +1418,16 @@
         }
         const r = H.perform(this.state, action);
         const isPlant = action.kind === 'plant' || action.kind === 'plant-all';
+        /*
+         * 换装必须"当场"看得见。
+         *
+         * Hub.update 的第一行是 if (this.panelOpen) return; —— 面板开着时
+         * 整个 update 直接返回，里面的 refreshHeroEquip 根本执行不到。
+         * 而买/穿/升级全都发生在面板开着的时候，于是玩家在兵器架前
+         * 换上头盔，主角毫无变化，要关掉面板才更新 —— 换装这个动作
+         * 等于没有反馈。所以这里在动作成功后就地刷一次。
+         */
+        if (r && r.ok) refreshHeroEquip(this.hero, this.state);
         global.EmberfieldUI.refreshPanel(zone, this.state);
         this.refreshPlots();
         global.EmberfieldUI.save(this.state);
@@ -1141,6 +1471,9 @@
       this.hero.setPosition(s.sx, s.sy).setDepth(1000 - hub.z);
       this.hero.setFlipX(hub.facing < 0);
       this.hero.setScale(s.sc * HERO_SCALE);
+      // 基地里也要显示已穿的装备 —— 玩家在兵器架前换装，
+      // 必须当场看到自己换了什么，否则"换装"这件事没有任何反馈。
+      refreshHeroEquip(this.hero, this.state);
       this.shadow.setPosition(s.sx, s.sy + 2).setDepth(1000 - hub.z - 1);
 
       const zone = H.zoneAt(this.state);
@@ -1190,7 +1523,7 @@
       this.bossGfx = this.add.graphics().setDepth(1400);
 
       this.shadow = this.add.image(0, 0, 'shadow').setDepth(1).setScale(0.8);
-      this.hero = this.add.image(0, 0, 'hero').setDepth(100);
+      this.hero = makeHero(this, 100);
       // 主角与小怪在 1000-z（z∈[0,210] → 790~1000），
       // 刀光若放在 101 会被画在角色和怪物背后，等于看不见
       this.heroSwing = this.add.graphics().setDepth(1100);
@@ -1245,6 +1578,7 @@
       const ps = toScreen(p.x, p.z, p.h);
       this.hero.setPosition(ps.sx, ps.sy).setScale(ps.sc * HERO_SCALE);
       this.hero.setFlipX(p.facing < 0);
+      refreshHeroEquip(this.hero, this.state);
       this.hero.setDepth(1000 - p.z);
       this.hero.setAlpha(p.invuln > 0 && Math.floor(time / 60) % 2 === 0 ? 0.55 : 1);
       this.shadow.setPosition(ps.sx, toScreen(p.x, p.z, 0).sy + 2)

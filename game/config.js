@@ -241,6 +241,213 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
   const POTION_ORDER = ['heal', 'strength', 'wall'];
 
   /**
+   * 装备（设计文档 §4）。
+   *
+   * 定位：铁匠铺管**基础属性**，装备管**独特机制**（方案 C）。
+   * 如果装备只是"第三个加属性的地方"，三层就退化成同一件事，
+   * 玩家只会比较数字大小 —— 那是最省事也最没有内容的设计。
+   *
+   * 三条不变量（改数值时必须一起检查，测试里有对应断言）：
+   *   1. 特效装备价格挤在 680–900：让玩家按打法选，不是按数值选。
+   *   2. 任何装备的等效强度不超过同部位基础装备的 1.3 倍，防止唯一最优解。
+   *   3. 特效装备升级只提升**强度参数**，绝不改变机制本身 ——
+   *      反伤 30%→34%→38% 永远是"反伤"，不会升级成别的东西。
+   *
+   * 价格按 1.45 倍递增（§4.4），基础装备 3 级、特效装备 5 级。
+   */
+  const EQUIP_SLOTS = ['head', 'torso', 'back', 'weapon', 'feet'];
+
+  const EQUIP_SLOT_NAMES = {
+    head: '头部', torso: '躯干', back: '背部', weapon: '武器', feet: '鞋',
+  };
+
+  // 等级价格倍率与效果倍率。效果每级约 +8%，价格 1.45 倍递增 ——
+  // 价格涨得比效果快，是为了让"升到满级"始终是一个需要攒钱的决定，
+  // 而不是顺手点两下就完成的事。
+  const EQUIP_LEVEL = {
+    priceGrowth: 1.45,
+    effectPerLevel: 0.08,
+    levels: { base: 3, special: 5 },
+  };
+
+  /**
+   * 基础装备 16 件：主要是属性倾向，视觉靠轮廓区分（§4.2）。
+   * 扩到 16 件是为了让 5% 掉落能持续 10+ 局 —— 只做 4 件会被 2–3 局掉完，
+   * 掉落的价值立刻归零，"重复品折算 30%"也就没有了意义。
+   *
+   * 每件只给 1–2 条属性，且单件强度都低于一级强化，
+   * 避免装备叠加后把难度阶梯压平。
+   */
+  const EQUIPMENT = {
+    // ---- 头部（4 档）----
+    leatherHelm: { name: '皮盔', slot: 'head', tier: 0, price: 80, kind: 'base',
+      desc: '生命上限 +12', mods: { maxHp: 12 } },
+    ironHelm: { name: '铁盔', slot: 'head', tier: 1, price: 190, kind: 'base',
+      desc: '生命上限 +22', mods: { maxHp: 22 } },
+    guardHelm: { name: '护颊盔', slot: 'head', tier: 2, price: 380, kind: 'base',
+      desc: '生命上限 +32 · 受伤 −6%', mods: { maxHp: 32, hurtMul: 0.94 } },
+    hornHelm: { name: '角盔', slot: 'head', tier: 3, price: 700, kind: 'base',
+      desc: '生命上限 +44 · 受伤 −8%', mods: { maxHp: 44, hurtMul: 0.92 } },
+
+    // ---- 躯干（4 档）----
+    leatherVest: { name: '皮甲', slot: 'torso', tier: 0, price: 90, kind: 'base',
+      desc: '受伤 −6%', mods: { hurtMul: 0.94 } },
+    chestPlate: { name: '胸甲', slot: 'torso', tier: 1, price: 210, kind: 'base',
+      desc: '受伤 −11% · 生命 +10', mods: { hurtMul: 0.89, maxHp: 10 } },
+    pauldron: { name: '肩甲', slot: 'torso', tier: 2, price: 420, kind: 'base',
+      desc: '受伤 −16% · 生命 +18', mods: { hurtMul: 0.84, maxHp: 18 } },
+    fullPlate: { name: '全身板甲', slot: 'torso', tier: 3, price: 780, kind: 'base',
+      desc: '受伤 −22% · 生命 +28 · 移速 −4%',
+      mods: { hurtMul: 0.78, maxHp: 28, speedMul: 0.96 } },
+
+    // ---- 背部（4 档）----
+    shortCape: { name: '短披风', slot: 'back', tier: 0, price: 85, kind: 'base',
+      desc: '移速 +3%', mods: { speedMul: 1.03 } },
+    longCloak: { name: '长斗篷', slot: 'back', tier: 1, price: 200, kind: 'base',
+      desc: '移速 +5% · 受伤 −5%', mods: { speedMul: 1.05, hurtMul: 0.95 } },
+    // 背部是移动/防护槽，**不承担输出**。
+    // 原本这里给了 +4/+7 伤害，加上武器与 buff 后满套基础装能到 3 倍基础伤害，
+    // 装备就从"倾向"变成了"替代难度选择"，30 节的平衡不变量会被击穿。
+    runeCloak: { name: '符文披风', slot: 'back', tier: 2, price: 440, kind: 'base',
+      desc: '移速 +7% · 受伤 −4%', mods: { speedMul: 1.07, hurtMul: 0.96 } },
+    wingCape: { name: '翼形斗篷', slot: 'back', tier: 3, price: 760, kind: 'base',
+      desc: '移速 +10% · 受伤 +3%（跑得快，也更脆）',
+      mods: { speedMul: 1.10, hurtMul: 1.03 } },
+
+    // ---- 武器（5 档）----
+    rustySword: { name: '锈剑', slot: 'weapon', tier: 0, price: 100, kind: 'base',
+      desc: '伤害 +4', mods: { damage: 4 } },
+    shortSword: { name: '短剑', slot: 'weapon', tier: 1, price: 230, kind: 'base',
+      desc: '伤害 +8', mods: { damage: 8 } },
+    broadSword: { name: '阔剑', slot: 'weapon', tier: 2, price: 450, kind: 'base',
+      desc: '伤害 +13', mods: { damage: 13 } },
+    twinBlades: { name: '双刀', slot: 'weapon', tier: 3, price: 720, kind: 'base',
+      desc: '伤害 +10 · 移速 +4%', mods: { damage: 10, speedMul: 1.04 } },
+    crystalStaff: { name: '棱晶杖', slot: 'weapon', tier: 4, price: 900, kind: 'base',
+      desc: '伤害 +12 · 受伤 −5%', mods: { damage: 12, hurtMul: 0.95 } },
+
+    // ---- 鞋（4 档）----
+    strawShoes: { name: '草鞋', slot: 'feet', tier: 0, price: 80, kind: 'base',
+      desc: '移速 +4%', mods: { speedMul: 1.04 } },
+    windBoots: { name: '疾风靴', slot: 'feet', tier: 1, price: 200, kind: 'base',
+      desc: '移速 +7%', mods: { speedMul: 1.07 } },
+    greaves: { name: '护膝胫甲', slot: 'feet', tier: 2, price: 400, kind: 'base',
+      desc: '移速 +9% · 生命 +14', mods: { speedMul: 1.09, maxHp: 14 } },
+    stoneBoots: { name: '磐石靴', slot: 'feet', tier: 3, price: 740, kind: 'base',
+      desc: '移速 +12% · 受伤 −7%', mods: { speedMul: 1.12, hurtMul: 0.93 } },
+  };
+
+  /**
+   * 特效装备 12 件：数值刻意接近，**差异全在效果**（§4.2）。
+   * 价格挤在 680–900，就是为了让选择发生在"我想怎么打"这一层。
+   *
+   * fx 字段是机制的声明式描述，具体实现集中在 logic.js，
+   * 这里只写"是什么"和强度参数，方便测试逐条断言机制真的触发了。
+   */
+  const EQUIP_FX = {
+    // ---- 技能改造 6 件（§4.6）----
+    battleAxe: { name: '战斧', slot: 'weapon', price: 700, kind: 'special',
+      desc: '震地范围 +50%，冷却 +15%',
+      fx: { id: 'slamWide', areaMul: 1.5, cdMul: 1.15 } },
+    voidBlade: { name: '虚空之刃', slot: 'weapon', price: 820, kind: 'special',
+      desc: '裂风斩附加吸血（伤害的 15% 回血）',
+      fx: { id: 'waveLifesteal', lifesteal: 0.15 } },
+    frostArmor: { name: '霜缚护甲', slot: 'torso', price: 760, kind: 'special',
+      desc: '闪现落点留下冰霜，减速范围内的敌人',
+      fx: { id: 'blinkFrost', slowMul: 0.55, duration: 2.2, radius: 110 } },
+    thunderHelm: { name: '雷鸣角盔', slot: 'head', price: 740, kind: 'special',
+      desc: '第 3 段普攻附带电击',
+      fx: { id: 'comboShock', radius: 90, damageMul: 0.6 } },
+    emberBoots: { name: '熔火战靴', slot: 'feet', price: 720, kind: 'special',
+      desc: '震地留下灼烧地面，持续伤害',
+      fx: { id: 'slamBurn', dps: 9, duration: 3.0, radius: 100 } },
+    trident: { name: '三叉圣杖', slot: 'weapon', price: 880, kind: 'special',
+      desc: '大招范围 +20%',
+      fx: { id: 'ultWide', areaMul: 1.2 } },
+
+    // ---- 其余特效 6 件 ----
+    thornMail: { name: '荆棘甲', slot: 'torso', price: 700, kind: 'special',
+      desc: '受击时反弹 30% 伤害给攻击者',
+      fx: { id: 'thorns', reflect: 0.30 } },
+    bloodCharm: { name: '血滴护符', slot: 'back', price: 800, kind: 'special',
+      desc: '击杀敌人回复 2 点生命',
+      fx: { id: 'killHeal', heal: 2 } },
+    stormRing: { name: '雷鸣指环', slot: 'head', price: 690, kind: 'special',
+      desc: '攻击有 20% 概率触发连锁闪电',
+      fx: { id: 'chainLightning', chance: 0.20, radius: 120, damageMul: 0.5 } },
+    cinderCloak: { name: '余烬披风', slot: 'back', price: 750, kind: 'special',
+      desc: '受击后在身周爆出火星，灼烧附近敌人',
+      fx: { id: 'ashBurst', radius: 100, damage: 10 } },
+    aegisPlate: { name: '庇护胸铠', slot: 'torso', price: 860, kind: 'special',
+      desc: '生命低于 35% 时获得护盾，减伤 25%',
+      fx: { id: 'lowHpShield', threshold: 0.35, hurtMul: 0.75 } },
+    phaseBoots: { name: '相位战靴', slot: 'feet', price: 790, kind: 'special',
+      desc: '受到致命伤时免疫一次并回 15 血（每局一次）',
+      fx: { id: 'deathWard', heal: 15 } },
+
+    // ---- 专属技能 2 件（占武器位，§4.7）----
+    oathkeeper: { name: '守誓者', slot: 'weapon', price: 900, kind: 'special',
+      desc: '获得专属技能「格挡」：举盾 2 秒减伤 70%，期间不能移动',
+      fx: { id: 'grantSkill', skill: 'block' } },
+    arcaneTome: { name: '秘法之书', slot: 'weapon', price: 860, kind: 'special',
+      desc: '获得专属技能「短距传送」：前冲 240px，无敌',
+      fx: { id: 'grantSkill', skill: 'blink2' } },
+  };
+
+  /** 专属技能定义。键位 V，与现有技能栏并列但**只在装备时出现**。 */
+  const SPECIAL_SKILLS = {
+    block: {
+      key: 'V', name: '格挡', short: '格挡',
+      desc: '举盾 2 秒，减伤 70%，期间不能移动',
+      cooldown: 12.0, duration: 2.0, hurtMul: 0.30,
+      color: 0x9ad7ff,
+    },
+    blink2: {
+      key: 'V', name: '短距传送', short: '传送',
+      desc: '向前突进 240px，途中无敌',
+      cooldown: 9.0, distance: 240, invuln: 0.45,
+      color: 0xc9a6ff,
+    },
+  };
+
+  /** 掉落与折算（§4.3）。5% 是明确要求，重复品折 30% 是经济闭环的关键。 */
+  const EQUIP_DROP = {
+    chance: 0.05,
+    refundRatio: 0.30,
+    // 只掉基础装备：特效装备是"目标"，需要攒钱买，
+    // 掉落会让它失去稀缺性，玩家也就不会再为它攒钱了。
+    baseOnly: true,
+  };
+
+  /** 全部装备的查询表与排序。基础装备按部位+档位，特效装备随后。 */
+  const ALL_EQUIPMENT = Object.assign({}, EQUIPMENT, EQUIP_FX);
+
+  function equipDef(id) { return ALL_EQUIPMENT[id] || null; }
+
+  /** 某件装备在给定等级（1 起）的价格。等级越高越贵，1.45 倍递增。 */
+  function equipPrice(id, level) {
+    const def = equipDef(id);
+    if (!def) return 0;
+    const lv = Math.max(1, level || 1);
+    return Math.round(def.price * Math.pow(EQUIP_LEVEL.priceGrowth, lv - 1));
+  }
+
+  function equipMaxLevel(id) {
+    const def = equipDef(id);
+    if (!def) return 1;
+    return def.kind === 'special' ? EQUIP_LEVEL.levels.special
+                                  : EQUIP_LEVEL.levels.base;
+  }
+
+  /**
+   * 等级带来的效果倍率。1 级 = 1.0，每级 +8%。
+   * **只缩放强度参数，不改变机制**（§4.4 的关键约束）。
+   */
+  function equipEffectMul(level) {
+    return 1 + (Math.max(1, level || 1) - 1) * EQUIP_LEVEL.effectPerLevel;
+  }
+
+  /**
    * 强化：三条独立线，成本递增。
    * 与「种田」并列，构成每局结束后的第二个花钱去处 —— 玩家的取舍就在这里。
    */
@@ -357,6 +564,9 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
     BASE_HP, BASE_DAMAGE, BASE_ATTACK_SPEED,
     DIFFICULTIES, ENEMIES, UPGRADES, FARM, LOOT, SKILLS, SKILL_ORDER, SPAWN, BOSS,
     POTIONS, POTION_ORDER,
+    EQUIP_SLOTS, EQUIP_SLOT_NAMES, EQUIPMENT, EQUIP_FX, ALL_EQUIPMENT,
+    SPECIAL_SKILLS, EQUIP_DROP, EQUIP_LEVEL,
+    equipDef, equipPrice, equipMaxLevel, equipEffectMul,
     waveComposition,
     difficultyById: function (id) {
       return DIFFICULTIES.find(function (d) { return d.id === id; }) || DIFFICULTIES[1];
