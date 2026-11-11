@@ -663,7 +663,7 @@ section('14. 核心循环可以真的被打通');
     if (!dodging && Math.abs(dz) > 18) { if (dz > 0) i.up = true; else i.down = true; }
     if (d > 52) { if (dx < 0) i.left = true; else i.right = true; }
     else if (d < 34) { if (dx < 0) i.right = true; else i.left = true; }
-    if (d < 62 && Math.abs(dz) <= C.ATTACK_DEPTH * 0.85) i.attack = true;
+    if (d < C.ATTACK_RANGE && Math.abs(dz) <= C.ATTACK_DEPTH * 0.85) i.attack = true;
     return i;
   }
 
@@ -747,12 +747,41 @@ section('15. 难度梯度（测量全部四个档位，并断言阶梯单调）'
   // 终局状态 = 强化满 **且** 穿齐一套基础装备。只量强化会把终局强度
   // 低估一大截（实测 70% vs 92%），于是"游戏能不能打通"这个问题
   // 被一个玩家永远不会处于的状态回答。
-  const forgeEndgame = B.winRate('forge', B.FULL_UP, N, 137, B.FULL_SET).rate;
+  //
+  // 测量口径：原先这里是 winRate('forge', FULL_UP, 30, 137, FULL_SET)。
+  // 固定种子 + 确定性机器人下 n=30 时 **1 局 = 3.33 个百分点**，颗粒度根本
+  // 区分不了 95% 与 100%：它既会把没变坏的实现判红（运气好就 30/30），
+  // 也会把真变坏的实现放过。改用仓库权威口径（tests/balance_report.js 的
+  // 同一套种子步长）：n=200 × 4 个步长 = 800 局，颗粒度 0.125pp
+  // （比 n=30 细 26.7 倍；不是为了让这条过，是因为被测的余量比 160 局的
+  // 颗粒度 0.625pp 还薄，粗尺子量细余量只会随机跳红跳绿 —— 见下面刀尖位置）。
+  //
+  // 这条线的**刀尖位置**（改数值时先看这里，别被它吓到）：
+  //   旧配置 58/62/74  n=200×4 = 772/800 = 96.50%（±1.27pp，95%CI）
+  //   新配置 61/66/78  n=200×4 = 782/800 = 97.75%（±1.03pp，95%CI）
+  //   阈值 0.98 → 余量只有 **0.25pp**，落在 800 局抽样噪声（±1.03pp）之内。
+  // 若将来再提高玩家输出，这条先红是正常的：先看真实损失局数（下面那条
+  // 「800 局里至少输过 1 局」），再决定是调数值还是调这条线。
+  // 阈值本身不动 —— 0.98 是设计意图（终局不能变成必胜）。
+  const ENDGAME_STRIDES = [137, 211, 977, 1231];
+  const ENDGAME_N = 200;
+  let endgameWins = 0;
+  ENDGAME_STRIDES.forEach(function (st) {
+    endgameWins += B.winRate('forge', B.FULL_UP, ENDGAME_N, st, B.FULL_SET).wins;
+  });
+  const endgameGames = ENDGAME_N * ENDGAME_STRIDES.length;
+  const forgeEndgame = endgameWins / endgameGames;
   ok(forgeEndgame >= 0.75,
      '强化满 + 穿齐基础套装后可以稳定通关（游戏有"打通"状态）',
      `强化 ${(forgeUp * 100).toFixed(0)}% -> 强化+装备 ${(forgeEndgame * 100).toFixed(0)}%`);
   // 有上限：终局也不能变成必胜，最高难度要一直是赌局
   ok(forgeEndgame <= 0.98, '终局也不是必胜（最高难度仍有风险）', forgeEndgame);
+  // 上面那条卡在噪声里（余量 0.25pp、噪声 ±1.03pp），所以再补一条**不依赖
+  // 任何阈值**的意图断言：同一批 800 局里到底输过几局。"有风险"不等于"胜率
+  // 低于 0.98 这个特定小数"，而是"真的还会输"。改前改后各 800 局都输过
+  // （改后 18 局），离 1 局有 18 倍余量，不会因为抽样噪声翻脸。
+  const forgeLosses = endgameGames - endgameWins;
+  ok(forgeLosses >= 1, '终局 800 局里至少输过 1 局（否则就是事实必胜）', forgeLosses);
 }
 
 // ---------------------------------------------------------------- 16. 远程敌人与弹道
@@ -2119,6 +2148,50 @@ section('ESC 菜单与「退出战斗」结算（Task 13）');
        exitFull.lastResult.coins + ' vs ' + wonS.lastResult.coins);
     ok(exitLow.lastResult.coins < exitFull.lastResult.coins,
        '血越少早退拿得越少', exitLow.lastResult.coins);
+  }
+}
+
+// ---------------------------------------------------------------- V18. 攻击范围 +5%
+section('V18. 攻击连段与判定范围整体加长 5%');
+{
+  // 用户要的是「每段都比之前大或远」，所以不能只看 ATTACK_RANGE ——
+  // 玩普攻走的是 p.comboRange（= COMBO.steps[step].range），
+  // ATTACK_RANGE 只是还没出手时的兜底（logic.js 里 `p.comboRange || C.ATTACK_RANGE`）。
+  // 断言写成「原值 × 1.05」，不写死新数值：将来再调平衡不该打红一整片。
+  const base = [58, 62, 74];
+  const baseRange = 62, baseDepth = 52, baseBack = 14;
+
+  eq(C.COMBO.steps.length, base.length, '连段仍是三段');
+  C.COMBO.steps.forEach(function (st, i) {
+    ok(st.range > base[i] * 1.05,
+       `第 ${i + 1} 段 range 比原值大 5% 以上（${base[i]} -> ${st.range}）`,
+       st.range);
+  });
+  // 单调递增：否则「每段都更远」只是平均数上的假象。
+  for (let i = 1; i < C.COMBO.steps.length; i++) {
+    ok(C.COMBO.steps[i].range > C.COMBO.steps[i - 1].range,
+       `第 ${i + 1} 段比第 ${i} 段更远（${C.COMBO.steps[i - 1].range} -> ${C.COMBO.steps[i].range}）`);
+  }
+  ok(C.ATTACK_RANGE > baseRange,
+     `普攻基准射程也放大（${baseRange} -> ${C.ATTACK_RANGE}）`, C.ATTACK_RANGE);
+  ok(C.ATTACK_DEPTH > baseDepth * 1.05,
+     `纵深判定同比放大（${baseDepth} -> ${C.ATTACK_DEPTH}，否则侧面打不到）`,
+     C.ATTACK_DEPTH);
+  ok(C.ATTACK_BACK > baseBack * 1.05,
+     `身后判定同比放大（${baseBack} -> ${C.ATTACK_BACK}）`, C.ATTACK_BACK);
+
+  // 行为层：真的挥一刀，命中距离必须跟着配置走。
+  // 敌人放在「旧第一段射程之外、新射程之内」，且同深度。
+  {
+    const gap = (base[0] + C.COMBO.steps[0].range) / 2;
+    const { s, run } = armedRun('wood', 500, 105);
+    run.player.facing = 1;
+    const e = addEnemy(s, run, 500 + gap, 105);
+    const hp0 = e.hp;
+    L.step(s, Object.assign({}, INPUT, { attack: true }), DT);
+    ok(e.hp < hp0 || e.state === 'dead',
+       `第 1 段真的能打到 ${gap.toFixed(1)}px 外的敌人（旧射程 ${base[0]}）`,
+       e.hp);
   }
 }
 

@@ -42,15 +42,15 @@ const SPRINT_DEPTH_MULT = 1.35; // 深度轴上冲刺的倍率（比水平收敛
    */
   const COMBO = {
     steps: [
-      { damageMul: 1.00, cooldown: 0.26, range: 58, knockback: 120, stun: 0.10 },
-      { damageMul: 1.15, cooldown: 0.28, range: 62, knockback: 180, stun: 0.12 },
-      { damageMul: 1.85, cooldown: 0.62, range: 74, knockback: 460, stun: 0.34 },
+      { damageMul: 1.00, cooldown: 0.26, range: 61, knockback: 120, stun: 0.10 },
+      { damageMul: 1.15, cooldown: 0.28, range: 66, knockback: 180, stun: 0.12 },
+      { damageMul: 1.85, cooldown: 0.62, range: 78, knockback: 460, stun: 0.34 },
     ],
     window: 0.55,   // 两段之间允许的间隔
   };
-  const ATTACK_RANGE = 62;      // 前方攻击距离
-  const ATTACK_DEPTH = 52;      // 深度容差：|z 差| 超过它就打不中
-  const ATTACK_BACK = 14;       // 身后也能蹭到一点
+  const ATTACK_RANGE = 66;      // 前方攻击距离（V18：三段连段与判定整体 +5%，62×1.05=65.1 故取 66）
+  const ATTACK_DEPTH = 55;      // 深度容差：|z 差| 超过它就打不中（原 52，同比放大）
+  const ATTACK_BACK = 15;       // 身后也能蹭到一点（原 14，同比放大）
   const INVULN_AFTER_HIT = 0.8;
   const WAVE_BREAK = 1.4;       // 清波后的间歇
 const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在数学上不可通关

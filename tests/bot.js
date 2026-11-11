@@ -74,7 +74,7 @@ function decide(state) {
   if (!dodging && Math.abs(dz) > 18) { if (dz > 0) i.up = true; else i.down = true; }
   if (d > 52) { if (dx < 0) i.left = true; else i.right = true; }
   else if (d < 34) { if (dx < 0) i.right = true; else i.left = true; }
-  if (d < 62 && Math.abs(dz) <= C.ATTACK_DEPTH * 0.85) i.attack = true;
+  if (d < C.ATTACK_RANGE && Math.abs(dz) <= C.ATTACK_DEPTH * 0.85) i.attack = true;
   return i;
 }
 
