@@ -1273,6 +1273,23 @@ Expected: FAIL —— 坐标在变，说明仍每帧推进。
 3. 两个场景都用 `this.scene.pause()` / `this.scene.resume()`，**成对**，关闭路径唯一化保证异常时也能恢复
 4. `esc` 是**电平**不是边沿（`app.js:943`），菜单开关必须用 `justPressed('esc')`，否则长按会每帧重开
 
+> **⚠️ 死锁陷阱（本任务最容易做错的一处）**：`scene.pause()` 会把该场景的
+> `update()` 停掉。**所以「再按一次 Tab 关闭」绝对不能写在 `update()` 里** ——
+> 一暂停就再也进不去 update，背包永远关不掉（测试表现为
+> `再按 Tab 关闭背包` FAIL 且 `pauseSceneResumed` 也 FAIL）。
+>
+> 正确做法：Tab 的开/关都放在 **`createInput` 的 DOM 键盘回调**里
+> （`app.js:850-947`，那是挂在 `window` 上的原生监听，**不受 Phaser 场景暂停影响**）：
+> ```js
+> // onDown 里，preventDefault 之后：
+> if (ev.code === 'Tab') { toggleBag(); return; }   // toggleBag 里 open/close + pause/resume
+> ```
+> `toggleBag()` 自己负责 `BagHud.open/close` 与 `scene.pause()/scene.resume()` 配对。
+> 判断"背包是否开着"用 `BagHud.isOpen()`，**不要**再存一份状态（两份状态一定会不同步）。
+>
+> 同理，Task 8 的 `onChange → refreshHeroEquip` 也必须由 DOM 侧的点击回调直接驱动，
+> 不能指望暂停中的 `update()` 去补。
+
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `"$N" tests/browser/smoke.js`
