@@ -231,7 +231,7 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
   // 战利品：每只小怪的基础掉落，再乘难度 lootMul
   const LOOT = {
     coinsPerKill: 4,
-    seedChance: 0.38,       // 每只小怪掉种子的概率
+    seedChance: 0.05,       // 每只小怪掉种子的概率（0.05 = 5%）
     clearBonusCoins: 20,    // 清完一波的额外奖励
     lossKeep: 0.5,          // 倒下时保留的战利品比例
     // 掉落物需要走过去捡。这是战斗节奏的关键：
