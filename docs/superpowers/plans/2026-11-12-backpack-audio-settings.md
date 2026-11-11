@@ -1483,6 +1483,88 @@ git commit -m "feat: 药水统一为治疗/力量/护盾，兵器架加页签与
 
 ---
 
+## Task 10b: 背包面板紧凑化（V2「约占 40%」尺寸修正）
+
+**Files:**
+- Modify: `game/index.html`（`#bag` 尺寸与网格列宽、格子贴图尺寸、槽位尺寸、字号）
+- Modify: `game/baghud.js`（`PANEL_W`/`PANEL_H` 兜底常量、tooltip 最小宽度）
+- Modify: `docs/superpowers/specs/2026-11-12-backpack-audio-settings-design.md`（已在 `aab65f9` 改好 §4.1，**不用再改**）
+
+**Interfaces:**
+- Consumes: Task 7/8 的 `BagHud`（不改 API）
+- Produces: `#bag` 实测 **470 × 500**（= 画布 `960×600` 的 **40.8%**），5×7 网格不变
+
+> **为什么要单独做这一刀**：设计初稿写「620 × 540，占 960×600 的 ~40%」，
+> **算错了**：`620×540 / 576000 = 58%`，纵向吃掉画布 90%。用户原话是「不要占满整个屏幕，
+> 差不多 40%」，验收 **V2** 也写「面板约占 40%」——**620×540 不满足 V2**。
+> Task 8 的截图里，面板确实把基地挡掉了大半（`/tmp/bag_shot_normal.png`）。
+> 尺寸的唯一来源是 CSS：`baghud.js:846/870` 的夹边用 `root.offsetWidth/Height` 实测，
+> `PANEL_W/PANEL_H` 只是 `display:none` 时的兜底，所以**改 CSS 就能整体缩放**，
+> 但必须同步兜底常量，否则面板隐藏时算出的夹边范围是错的。
+
+| 项 | 现在 | 改成 |
+|---|---|---|
+| `#bag` width / height | `620px` / `540px` | **`470px`** / **`500px`** |
+| `#bag-grid` `grid-template-columns` | `repeat(5,56px)` | **`repeat(5,48px)`** |
+| `#bag .cell img` width / max-height | `40px` / `60px` | **`32px`** / **`46px`** |
+| `#bag-wear .slot` | `38×30` | **`34×27`** |
+| `#bag-wear .slot img` | `22×32` | **`20×28`** |
+| `baghud.js` `PANEL_W` / `PANEL_H` | `620` / `540` | **`470`** / **`500`** |
+
+- [ ] **Step 1: 先加尺寸断言（会红）**
+
+追加到 `tests/browser/smoke.js` 的页面内片段（`return out;` 之前）：
+
+```js
+  // ---- 面板尺寸（V2：约占画布 40%）----
+  // 画布是 960×600，但 #bag 是 position:fixed（按 viewport 夹边），
+  // 所以面积比要用画布算，不能用 innerWidth/innerHeight —— 窗口大小是玩家的。
+  const bagBox = document.getElementById('bag').getBoundingClientRect();
+  out.ratioW = bagBox.width;
+  out.ratioH = bagBox.height;
+  out.areaRatio = (bagBox.width * bagBox.height) / (960 * 600);
+```
+
+Node 侧：
+
+```js
+console.log('\n--- 背包面板尺寸（V2）---');
+ok(r.ratioW >= 440 && r.ratioW <= 500, '面板宽度在 440–500 之间', r.ratioW);
+ok(r.ratioH >= 460 && r.ratioH <= 540, '面板高度在 460–540 之间', r.ratioH);
+ok(r.areaRatio >= 0.36 && r.areaRatio <= 0.46,
+   '面板面积占画布 36%–46%（目标 41%）', (r.areaRatio * 100).toFixed(1) + '%');
+```
+
+> 用区间不用等号：以后微调 10px 不该打红一整条断言，但**偏到 58% 必须红**。
+
+- [ ] **Step 2: 跑测试确认失败**
+
+Run: `"$N" tests/browser/smoke.js`
+Expected: 三条新断言 FAIL（`620×540` → 58.1%），既有 124 条仍 PASS。
+
+- [ ] **Step 3: 改 CSS 与兜底常量**（按上表）
+
+- [ ] **Step 4: 跑测试确认通过 + 截图复核**
+
+Run: `"$N" tests/browser/smoke.js`
+Expected: 全绿。
+再截图确认：**7 行网格一格不少、第 7 行没有被 `overflow:hidden` 裁掉**、
+格子里的贴图仍看得出区分、左侧 10 个装备槽没被挤成一条线、四项数值没换行。
+
+> 这一段是本次最容易被"断言绿了但画面坏了"骗过去的地方：
+> 网格用 `1fr` 分高度，面板一矮，第 7 行会被裁掉而**格子数仍是 35**（DOM 还在，只是看不见）。
+> 所以必须看截图，或者断言"第 7 行格子的 `getBoundingClientRect().bottom` 小于面板的 bottom"。
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add game/index.html game/baghud.js tests/browser/smoke.js
+git commit -m "feat(bag): 面板收到 470x500（画布 40.8%），修正 V2 尺寸不达标"
+```
+
+---
+
+
 ## Task 11: 基地错落布局 + 键帽提示
 
 **Files:**
