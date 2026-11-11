@@ -358,79 +358,112 @@ git commit -m "feat(bag): 库存改为条目数组，STATE_VERSION 5->6 顺序�
 
 ---
 
-## Task 3: 装备函数改按条目操作
+## Task 3: 装备函数接受可选 `uid`（同 id 多件时指哪一件）
+
+> **本任务的范围已按 Task 2 的实测**收窄**。** 原稿让本任务把六个函数从
+> `meta.inventory` 改到条目数组——**这部分 Task 2 已经做完了**（Task 2 的 diff 里
+> `equipOwned:476`、`buyEquipment:492`、`equipItem:508`、`unequipSlot:538`、
+> `equipUpgradeCost:555`、`upgradeEquipment:581` 全部已按 `bag` 条目读写，
+> Task 2 的 435 项断言已覆盖）。
+> 本任务**只剩一件事**：给 `equipItem`/`equipUpgradeCost`/`upgradeEquipment`
+> 加上可选第三参 `uid`，修掉"同 id 多件时永远只作用第一件"的错位。
 
 **Files:**
-- Modify: `game/logic.js:410-545`（`equipOwned`/`buyEquipment`/`equipItem`/`unequipSlot`/`equipUpgradeCost`/`upgradeEquipment`）
+- Modify: `game/logic.js:508`（`equipItem`）、`game/logic.js:555`（`equipUpgradeCost`）、`game/logic.js:581`（`upgradeEquipment`）
 - Test: `tests/test_game_logic.js`
 
 **Interfaces:**
-- Consumes: Task 2 的 `bagAdd`/`bagRemove`/`bagAt`/`bagIndexOfUid`
-- Produces: 上述六个函数**签名不变**（除新增可选 `uid` 参数），但内部按条目操作：
-  - `equipItem(state, id, uid?)` —— 有 `uid` 时穿指定的那一件
-  - `upgradeEquipment(state, id, uid?)` —— 有 `uid` 时升指定的那一件
+- Consumes: Task 2 的 `bagAdd`/`bagRemove`/`bagAt`/`bagIndexOfUid`/`bagIndexOfId`
+- Produces:
+  - `equipItem(state, id, uid?)` —— 有 `uid` 时穿指定的那一件，否则穿第一件同 id 条目
+  - `equipUpgradeCost(state, id, uid?)` —— 有 `uid` 时按那条目报价，否则按第一条同 id 条目
+  - `upgradeEquipment(state, id, uid?)` —— 同上，写回**对应条目**的 level
+  - `equipOwned(state, id)` **签名不变**（Task 2 已改好，本任务不动）
 
-> **为什么必须有 `uid` 参数（Task 2 已实测的悬空缺陷）**：Task 2 之后背包里可以有
-> 同 id 多件（Task 1 让每件掉落都进包，重复件不再折算）。此时
-> `bagIndexOfId` 只返回**第一个**同 id 条目的下标，实测：
+> **实测的悬空缺陷（Task 2 交付后我复现）**：
 > ```
 > bag = [longCloak@1 (u1), longCloak@3 (u2)]
-> equipUpgradeCost(s,'longCloak') -> 290   // 按 @1 那件报价
-> upgradeEquipment(s,'longCloak') -> 升的是 u1，@3 那件纹丝不动
+> equipUpgradeCost(s,'longCloak')      -> 290     // 按 @1 报价，不是 @3
+> upgradeEquipment(s,'longCloak')      -> 升的是 u1，@3 那件纹丝不动
+> upgradeEquipment(s2,'longCloak', uidB) -> [2,1]  // uid 被整个忽略，仍升第一件
 > ```
-> 玩家在 UI 上点的是 `u2`（3 级那件），却被升了 `u1`，且按 1 级报价。
-> Task 3 的 `uid` 第三参正是为修这个；`bagIndexOfUid`/`bagAt` 已在 Task 2 就位。
-  - `equipOwned(state, id) -> 'equipped' | 'owned' | null` **签名不变**
+> 玩家在 UI 上点的是 `u2`（3 级那件），却被升了 `u1`，且按 1 级报价——**白付钱、升错件**。
+> `bagIndexOfUid`/`bagAt` 已在 Task 2 就位，本任务只做接线。
 
 - [ ] **Step 1: 写测试（覆盖 Review Focus #3）**
 
 ```js
-// 穿一件 + 背包里还有一件同 id：三处判定都不能选错
-const s = L.createState(11);
-L.buyEquipment(s, 'longCloak');       // 背包 1 件
-const uid1 = s.meta.bag[0].uid;
-L.equipItem(s, 'longCloak');          // 穿上
-L.bagAdd(s, 'longCloak', 5);          // 背包里再来一件 Lv5
-ok(L.equipOwned(s, 'longCloak') === 'equipped', '已穿戴优先');
-ok(s.meta.bag.length === 1 && s.meta.bag[0].level === 5, '背包里那件仍是 Lv5');
-
-// 升级指定条目：必须升背包里那件（Lv5 -> 满级则换一件测）
+// 背包里两件同 id：不带 uid 作用于第一件，带 uid 作用于指定的那件
 const s2 = L.createState(12);
 L.bagAdd(s2, 'longCloak', 1);
 L.bagAdd(s2, 'longCloak', 1);
 s2.meta.coins = 99999;
 const uidB = s2.meta.bag[1].uid;
+ok(s2.meta.bag[0].level === 1 && s2.meta.bag[1].level === 1, '初始两件都是 Lv1');
 L.upgradeEquipment(s2, 'longCloak', uidB);
 ok(s2.meta.bag[0].level === 1, '没有 uid 的那件没被动过');
 ok(s2.meta.bag[1].level === 2, '指定 uid 的那件被升级');
+
+// 报价也要按 uid 指定的那件算，否则玩家会被按错件收费
+const s3 = L.createState(13);
+L.bagAdd(s3, 'longCloak', 1);
+L.bagAdd(s3, 'longCloak', 3);
+s3.meta.coins = 99999;
+const uidHi = s3.meta.bag[1].uid;
+const costHi = L.equipUpgradeCost(s3, 'longCloak', uidHi);
+const costLo = L.equipUpgradeCost(s3, 'longCloak');
+ok(costHi !== costLo, '按 uid 与不按 uid 的报价不同（等级不同，价就不同）');
+ok(costHi === C.equipPrice('longCloak', 4), '按 Lv3 那件报价 = 下一级(4)的价');
+ok(costLo === C.equipPrice('longCloak', 2), '不带 uid 按第一件(Lv1)报价 = 2 级的价');
+
+// 穿戴也要能指定：穿背包里第 2 件，且穿走的是它的等级
+const s4 = L.createState(14);
+L.bagAdd(s4, 'longCloak', 1);
+L.bagAdd(s4, 'longCloak', 4);
+const uidWear = s4.meta.bag[1].uid;
+L.equipItem(s4, 'longCloak', uidWear);
+eq(s4.meta.equipment.back.level, 4, '穿上的是 uid 指定那件（等级 4）');
+eq(s4.meta.bag[0].level, 1, '另一件留在背包里，等级没变');
+
+// 三处判定都不能选错：已穿戴优先于背包（Review Focus #3）
+const s5 = L.createState(15);
+L.buyEquipment(s5, 'longCloak');
+L.equipItem(s5, 'longCloak');
+L.bagAdd(s5, 'longCloak', 5);
+ok(L.equipOwned(s5, 'longCloak') === 'equipped', '已穿戴优先');
+ok(s5.meta.bag.length === 1 && s5.meta.bag[0].level === 5, '背包里那件仍是 Lv5');
 ```
 
 - [ ] **Step 2: 跑测试确认失败**
 
 Run: `"$N" tests/test_game_logic.js`
-Expected: FAIL —— `buyEquipment` 仍写 `meta.inventory`，`meta.bag` 为空。
+Expected: FAIL —— 实测当前 `L.upgradeEquipment(s2,'longCloak',uidB)` 得 `[2,1]`
+（uid 被忽略，升的是第一件），故"没有 uid 的那件没被动过"必须失败。
+`equipUpgradeCost` 的第三参目前也不存在，两件等级不同时报价必然相同。
 
-- [ ] **Step 3: 改这六个函数**
+> **注意**：Task 2 已完成存储层改造，所以**不要**再期待
+> `meta.inventory`/`meta.bag` 相关的失败——那些断言现在就是绿的。
 
-- `equipOwned`：`state.meta.inventory.indexOf(id)` → `state.meta.bag.some(e => e.id === id)`。
-- `buyEquipment`：`push(id)` + 记等级 → `bagAdd(state, id, 1)`。
-- `equipItem(state, id, uid)`：从 `bag` 删条目（有 `uid` 删那件，否则删第一件），换下的旧装备 `bagAdd(state, prev.id, prev.level)`，新装备的 `level` 取**被删条目的 level**。
-- `unequipSlot`：`bagAdd(state, it.id, it.level)`。
-- `equipUpgradeCost(state, id, uid)`：等级来源从 `inventoryLevels[id]` 改为「`uid` 指定条目，或 `bag` 里第一个同 id 条目」。
-- `upgradeEquipment(state, id, uid)`：同上，写回**对应条目**的 `level`。
+- [ ] **Step 3: 给三个函数接上 `uid`**
 
-> **关键**：`equipUpgradeCost` 与 `upgradeEquipment` **必须一起改**，只改存储会让升级永远只作用于第一件同 id 装备。
+- `equipItem(state, id, uid)`：删条目时优先用 `bagIndexOfUid(state, uid)`，
+  `uid` 缺省或找不到才退回 `bagIndexOfId(state, id)`；新装备的 `level` 取**被删条目的 level**。
+- `equipUpgradeCost(state, id, uid)`：等级来源改为「`uid` 指定条目，否则 `bag` 里第一个同 id 条目」。
+- `upgradeEquipment(state, id, uid)`：透传 `uid` 给 `equipUpgradeCost`，并写回**同一条目**的 level。
+
+> **关键**：`equipUpgradeCost` 与 `upgradeEquipment` **必须一起改**，只改其中一个会让
+> 报价与实收价对不上（玩家按 A 件的价付钱、B 件被升级）。
 
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `"$N" tests/test_game_logic.js`
-Expected: PASS。
+Expected: PASS（断言数 ≥ 435 + 本任务新增）。
 
 - [ ] **Step 5: 提交**
 
 ```bash
 git add game/logic.js tests/test_game_logic.js
-git commit -m "refactor(bag): 装备读写改按条目（支持同 id 多件）"
+git commit -m "refactor(bag): 装备函数接受可选 uid（同 id 多件时指哪一件）"
 ```
 
 ---
