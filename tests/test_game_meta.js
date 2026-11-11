@@ -153,8 +153,18 @@ section('6. 区域动作的可用性');
   ok(altar.find((a) => a.payload.key === 'nova').ultimate === true, '大招被标记出来');
 
   const gate = H.zoneActions(s, 'gate');
-  eq(gate.length, C.DIFFICULTIES.length, '门口列出全部难度');
-  ok(gate.every((a) => a.enabled), '任何难度都可以出发');
+  // 门口现在有两类入口：普通难度 + Boss 挑战。
+  // 之前断言"数量等于难度数"，加了 Boss 后失效 —— 改成按类型分别断言，
+  // 这样以后再加入口不会又让这条测试变红。
+  const normalRuns = gate.filter((a) => a.kind === 'run');
+  const bossRuns = gate.filter((a) => a.kind === 'boss');
+  eq(normalRuns.length, C.DIFFICULTIES.length, '门口列出全部普通难度');
+  eq(bossRuns.length, Object.keys(C.BOSS.tiers).length, '门口列出全部 Boss 难度档');
+  ok(gate.every((a) => a.enabled), '任何入口都可以出发');
+  // Boss 入口要标出它对应的装备门槛，否则玩家不知道该带什么来
+  bossRuns.forEach((a) => {
+    ok(a.sub && a.sub.length > 0, `Boss 入口「${a.label}」写明了门槛`, a.sub);
+  });
 }
 
 section('7. 农场田块几何（成品里点击播种走的就是这一段）');
