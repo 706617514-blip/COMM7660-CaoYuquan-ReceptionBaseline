@@ -197,8 +197,19 @@ const dataUrl = src.toDataURL('image/png');            // 这才有 src
 | `logic.js:1286` | `killEnemy` 里 `run.loot.coins += drop.refund` |
 | `app.js:1667` | 掉落提示文案显示「折算 N 铜币」 |
 | `tests/test_game_logic.js:1383` | 断言 `refundRatio === 0.30` |
+| `analysis/build_report2.py:109` | **报告生成器**：`Math.round(C.EQUIP_DROP.refundRatio*100)` |
+| `analysis/build_report2.py:119` | `vals["refund_pct"] = eq["refund"]` |
+| `analysis/build_report2.py:303` | 报告正文 `f"refunded at {v['refund_pct']}%"` |
 
 最后一条是**测试**：删掉退款后这条断言必须改写，不能留着假装还成立。
+
+**第 7–9 处（本轮复审补记，原稿漏列）**：报告生成器 `analysis/build_report2.py` 也读 `refundRatio`。
+它**不在任何任务的 Files 列表里**，Task 15 只跑游戏内测试套件，所以没有任何任务会碰到它。
+失败模式比"崩溃"更隐蔽：`Math.round(undefined*100)` 是 `NaN`，`JSON.stringify` 把 `NaN`
+序列化成 **`null`**（键不会消失，所以**不抛 `KeyError`**），脚本继续跑到 :303，
+把 **`refunded at None%`** 静默写进 Phase 2 报告。崩溃会被发现，`None%` 会一路进文档。
+→ 必须在重新生成 Phase 2 报告之前处理：删掉 :109 的 `refund` 表达式、:119 的赋值、
+以及 :303 那句"折算"叙述（产品已改为玩家自行出售）。**已归入 Task 15（收尾）**。
 
 ---
 

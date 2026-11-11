@@ -1277,10 +1277,32 @@ git commit -m "feat: 攻击连段与判定范围整体加长 5%"
 
 **Files:**
 - Test: 全部
+- Modify: `analysis/build_report2.py`（**本轮复审补记**：报告生成器仍读已删除的 `refundRatio`）
 
 **Interfaces:**
 - Consumes: 前 14 个任务的全部产出
 - Produces: 一份可提交的验证证据
+
+> **为什么 Task 15 要碰 `analysis/build_report2.py`**：它读 `C.EQUIP_DROP.refundRatio`
+> （:109），而该字段已被 Task 1 删除。`Math.round(undefined*100)` = `NaN`，
+> `JSON.stringify` 把 `NaN` 写成 `null`，**键不会消失、不抛异常**，脚本继续跑到 :303
+> 把 **`refunded at None%`** 静默写进 Phase 2 报告。没有别的任务拥有这个文件，
+> Task 15 是最后的收口点。
+
+- [ ] **Step 0: 修掉报告生成器对已删字段的依赖（`analysis/build_report2.py`）**
+
+删 :109 的 `" refund:Math.round(C.EQUIP_DROP.refundRatio*100)"` 表达式、
+:119 的 `vals["refund_pct"] = eq["refund"]`、以及 :303 那句
+`f"refunded at {v['refund_pct']}%, because otherwise a drop is worthless once the "` 叙述
+（产品已改为"掉落全部进包、玩家自行出售"，报告不该再讲折算）。
+
+验证不要靠读代码，直接跑一次生成器并 grep 产物：
+
+```bash
+python3 analysis/build_report2.py
+```
+Expected: 生成 `reports/COMM7660_Phase2_report.docx` 且**不再出现** `None%`；
+`grep -c "None%" reports/` 在产物文本里为 0。
 
 - [ ] **Step 1: 跑全套测试**
 
@@ -1336,7 +1358,8 @@ git commit -m "test: 全批回归（含截图验证与老存档兼容）"
 | §3.5 B4 Tab 抢焦点 | Task 9 |
 | §3.5 B5 贴图转 dataURL | Task 7 |
 | §3.5 B6 卖价公式 | Task 5 |
-| §3.5 B7 refundRatio 六处 | Task 1 |
+| §3.5 B7 refundRatio 六处（游戏内） | Task 1 |
+| §3.5 B7 报告生成器三处 | Task 15 |
 | §3.5 B8 迁移 | Task 2 |
 | §4.1 布局 | Task 7 |
 | §4.2 拖动夹边 | Task 7 |
