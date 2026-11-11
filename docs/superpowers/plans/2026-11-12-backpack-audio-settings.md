@@ -695,11 +695,27 @@ ok(L.sellValue('thornMail', 3) === 1593, 'thornMail Lv3 = 1593');
 ok(L.sellValue('longCloak', 2) === 245, 'longCloak Lv2 = 245');
 
 // V27 + V9：已穿戴不可卖
+// ⚠ 注意：`sellItem(s, 已穿戴的uid).ok === false` 是**恒真断言**，证明不了规则——
+//   因为穿戴时该条目已从 meta.bag 移除（实测 bagIndexOfUid 返回 -1、bag 变空），
+//   sellItem 找不到 uid 自然失败，与"已穿戴"毫无关系。
+//   要证明的其实是：卖光同 id 的背包件之后，身上那件**必须还在**。
 const s = L.createState(31);
+s.meta.coins = 99999;
 L.buyEquipment(s, 'longCloak');
-const uid = s.meta.bag[0].uid;
-L.equipItem(s, 'longCloak', uid);
-ok(L.sellItem(s, uid).ok === false, '已穿戴（不在背包）不可卖');
+L.equipItem(s, 'longCloak', s.meta.bag[0].uid);
+const wornUidBefore = JSON.stringify(s.meta.equipment.back);
+L.bagAdd(s, 'longCloak', 1);
+L.bagAdd(s, 'longCloak', 1);
+const n0 = s.meta.bag.length;
+const rSell = L.sellBatch(s, L.sellableUids(s));
+ok(rSell.ok === true, '批量出售成功');
+ok(JSON.stringify(s.meta.equipment.back) === wornUidBefore,
+   '身上那件装备卖不掉，卖完还在（不能连穿着的都卖掉）');
+ok(s.meta.bag.length < n0,
+   '背包件确实被卖掉了一些（否则上一条是空转）');
+ok(L.sellableUids(s).indexOf(s.meta.equipment.back.uid) === -1,
+   'sellableUids 不包含已穿戴条目');
+ok(L.sellItem(s, 'u-not-exist').ok === false, '不存在的 uid 出售失败');
 
 // V26：每 id 强制保留 1 件，全选也不清空
 const s2 = L.createState(32);
