@@ -31,9 +31,17 @@
 (function (global) {
   'use strict';
 
-  const PANEL_W = 620;      // 设计 §4.1：620 × 540，约占 960×600 画布的 40%
-  const PANEL_H = 540;
-  const CELLS = 35;         // 5 列 × 7 行（设计 §4.3）
+  // 面板尺寸的唯一来源是 index.html 的 CSS：#bag 现在是
+  // min(470px, 100vw - 24px) × min(500px, 100vh - 24px)（= 画布的 40.8%）。
+  // 这两个常量只在 display:none、拿不到 offsetWidth/Height 时当兜底 ——
+  // 兜底值错了，夹边就会算出一个不存在的范围，所以改 CSS 必须同步改这里。
+  const PANEL_W = 470;
+  const PANEL_H = 500;
+  // 5 列 × 7 行 = 35 格（设计 §4.3）。这个数值只写在 config.js 的
+  // BAG.cellsPerPage（它自己写着"数值只写这里"），logic.js 的 BAG_GRID_PER_PAGE
+  // 也是从那里读的：这里再写一个字面量，就多一个会漂移的真相。
+  const CELLS = (global.GameConfig && global.GameConfig.BAG &&
+    global.GameConfig.BAG.cellsPerPage) || 35;
 
   // 页签：全部 + 五个槽位 + 特殊（设计 §4.4）。
   // 判据只能是 kind === 'special' —— config.js 里没有 ultimate 这个字段，
@@ -79,6 +87,7 @@
   let page = 0;             // 0 基页号
   let view = [];            // 当前页的 35 个条目（缺位是 null），与 ui.cells 一一对应
   let batch = null;         // null = 普通态；{ sel: { uid: true } } = 批量选择态
+  let keptUids = {};        // 批量态里"每 id 会被保留的那件"（由 logic 的补集决定）
   let drag = null;          // { pointerId, dx, dy }
 
   const doc = () => global.document;
@@ -247,6 +256,10 @@
           if (tab === t.id) return;
           tab = t.id;
           page = 0;
+          // 勾选态是"看得见的承诺"：换了页签，被勾的格子就不在眼前了。
+          // 留着勾选，确认条上会挂着一堆玩家看不见的件，一点就卖掉（F2）。
+          // 只清勾选、不退出批量态 —— 玩家还在批量流程里，只是从零开始挑。
+          if (batch) batch.sel = {};
           refresh();
         });
         ui.tabs.appendChild(b);
@@ -354,12 +367,18 @@
     if (batch) {
       const worn = isWorn(entry.id);
       const lastOne = copiesOf(entry.id) < 2;
+      // 同 id 有多件时，逻辑层只卖等级低的那些，最高那件会留下 —— 它同样
+      // 勾不动，得在格子上标出来（否则玩家勾两件、以为两件都没了）。
+      const keptOne = !worn && !lastOne && !!keptUids[entry.uid];
       if (worn) {
         cell.classList.add('worn');
         cell.title = name + ' · 已穿戴，先卸下才能卖';
       } else if (lastOne) {
         cell.classList.add('keep');
         cell.title = name + ' · 每件至少留一件，批量出售不卖它';
+      } else if (keptOne) {
+        cell.classList.add('keep');
+        cell.title = name + ' · Lv' + lv + '（同 id 里保留这件）';
       } else if (batch.sel[entry.uid]) {
         cell.classList.add('sel', 'pickable');
       } else {
@@ -464,7 +483,27 @@
       }
     }
 
+    // 批量态：「每 id 保留的那一件」由 logic.duplicateUids（经 sellableUids）决定，
+    // UI 只取补集，不自己比等级 —— 比法一旦和逻辑层分叉，标出来的件就会和真正
+    // 留下的那件不是同一件，玩家按标记做决定反而亏。
+    keptUids = {};
+    if (batch) {
+      const Lk = logic();
+      const sellable = (Lk && typeof Lk.sellableUids === 'function')
+        ? Lk.sellableUids(state) : [];
+      const sellSet = {};
+      sellable.forEach(function (u) { sellSet[u] = true; });
+      bagOf().forEach(function (e) {
+        if (sellSet[e.uid]) return;
+        if (copiesOf(e.id) >= 2) keptUids[e.uid] = true;
+      });
+    }
+
     // 网格永远 35 格：这一页的内容不足 35 就补 null，翻页只换内容不换格数。
+    // 这里**不要**换成 logic.js 的 pageSlice：那个按整个背包的下标切页，
+    // 而 UI 的分页基准是"当前页签筛选后的列表"（切到「武器」页签时第一页
+    // 就该是前 35 件武器）。两套语义混用会翻出空页 —— 筛选后只剩 3 件，
+    // pageSlice 却按整包第 36 件开始。
     const start = page * CELLS;
     view = [];
     for (let i = 0; i < CELLS; i++) view.push(start + i < list.length ? list[start + i] : null);
@@ -657,6 +696,8 @@
     const p = Math.max(0, Math.min(pages - 1, next));
     if (p === page) return;
     page = p;
+    // 同页签：翻页后勾的件已经不在眼前，留着它等于默许卖掉看不见的东西（F2）。
+    if (batch) batch.sel = {};
     hideTip();
     refresh();
   }
@@ -946,6 +987,7 @@
     // 一个奇怪的地方"不如"每次都在同一个地方"。
     placeDefault();
     page = 0;
+    tab = 'all';
     batch = null;
     if (!wasOpen && host && typeof host.onOpen === 'function') host.onOpen();
     refresh();
@@ -963,6 +1005,15 @@
       ui.root.classList.remove('on');
       ui.root.setAttribute('aria-hidden', 'true');
     }
+    // 拖到一半关闭：抓取光标必须撤掉，pointer capture 也必须释放 ——
+    // 否则指针形状永久停在 grabbing，后续 pointermove 还在往标题栏喂。
+    // 沿用 onUp 的 try/catch：capture 可能已经被浏览器自己释放了。
+    if (ui && ui.bar) {
+      ui.bar.classList.remove('grabbing');
+      if (drag && drag.id !== undefined && ui.bar.releasePointerCapture) {
+        try { ui.bar.releasePointerCapture(drag.id); } catch (err) { /* 已释放 */ }
+      }
+    }
     drag = null;
     if (wasOpen && host && typeof host.onClose === 'function') host.onClose();
     return true;
@@ -977,7 +1028,5 @@
     isOpen: isOpen,
     clamp: clamp,
     setHost: setHost,
-    // 测试用：清掉贴图缓存（贴图在任何时候都可能被重烘，缓存必须可失效）
-    _clearSpriteCache: function () { spriteCache.clear(); },
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

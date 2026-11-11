@@ -98,6 +98,19 @@ app.whenReady().then(async () => {
     result = await win.webContents.executeJavaScript(script);
   } catch (err) { result = { error: err.message }; }
   log('RESULT ' + JSON.stringify(result));
+  // 第二段：真正的 520x420 视口。
+  // 面板"比视口大就只夹左上角"这个缺陷在 1100x800 下根本复现不了 —— 620x540
+  // 在那个视口里塞得下，两条夹边断言对着坏实现也是绿的。所以必须真的把窗口改小。
+  // setContentSize 设的是内容区 = innerWidth/innerHeight；setSize 含边框，会差几十像素。
+  if (process.env.SMALLSCRIPT) {
+    try { win.setContentSize(520, 420); } catch (err) { log('RESIZE-FAIL ' + err.message); }
+    await new Promise(r => setTimeout(r, 900));
+    let small;
+    try {
+      small = await win.webContents.executeJavaScript(process.env.SMALLSCRIPT);
+    } catch (err) { small = { error: err.message }; }
+    log('SMALL ' + JSON.stringify(small));
+  }
   log('ERRORS ' + JSON.stringify(errors));
   process.stdout.write(out.join('\\n'));
   app.exit(0);
@@ -789,8 +802,257 @@ const SCRIPT = `
   await wait(250);
   window.BagHud.close();
 
+  // ---- 背包面板收口（Task 10b）：尺寸 / 层级 / 跨页签勾选 / 保留件 / 拖动 ----
+  // 本段整体在 SCRIPT 模板字符串里：注释里一个反引号都不许出现。
+  // 上一段最后 close() 了面板，display:none 的元素 rect 全是 0，
+  // 所以尺寸必须在重新 open() 之后再量。
+  window.BagHud.open(stI);
+  await wait(250);
+  // 先放点东西进背包：空格子没有贴图，量不到"贴图有没有被挤扁"，
+  // 而且下面逐页签计数也要非空才有意义。
+  stI.meta.bag.length = 0;
+  ['ironHelm', 'fullPlate', 'crystalStaff', 'emberBoots', 'bloodCharm', 'battleAxe']
+    .forEach(function (id) { Lg.bagAdd(stI, id, 1); });
+  window.BagHud.refresh();
+  await wait(150);
+  {
+    const el = document.getElementById('bag');
+    const box = el.getBoundingClientRect();
+    out.ratioW = Math.round(box.width);
+    out.ratioH = Math.round(box.height);
+    out.areaRatio = Math.round((box.width * box.height) / (960 * 600) * 1000) / 1000;
+
+    const allCells = el.querySelectorAll('.cell');
+    const lastCell = allCells[allCells.length - 1];
+    out.lastRowInside = lastCell
+      ? lastCell.getBoundingClientRect().bottom <= box.bottom + 0.5 : null;
+    const cellImg = document.querySelector('#bag .cell img');
+    out.cellImgW = cellImg ? Math.round(cellImg.getBoundingClientRect().width) : null;
+
+    // toast 必须画在面板之上：右键出售的反馈全靠它，被盖住就是静默失败。
+    const toast = document.getElementById('toast');
+    const toastTextBefore = toast.textContent;
+    toast.textContent = '探针';
+    toast.classList.add('on');
+    out.toastZ = parseInt(getComputedStyle(toast).zIndex, 10) || 0;
+    out.bagZ = parseInt(getComputedStyle(el).zIndex, 10) || 0;
+    // #toast 是 pointer-events:none（纯展示层，不该挡住点击），而 elementFromPoint
+    // 会跳过这类元素 —— 不临时打开命中测试，正确实现下这条断言也永远是 false。
+    // 绘制顺序与 pointer-events 无关，所以临时打开不改变被断言的事实。
+    const peBefore = toast.style.pointerEvents;
+    toast.style.pointerEvents = 'auto';
+    const tb = toast.getBoundingClientRect();
+    const hit = document.elementFromPoint((tb.left + tb.right) / 2, (tb.top + tb.bottom) / 2);
+    out.toastHit = !!(hit && (hit === toast || toast.contains(hit)));
+    out.toastHitTag = hit ? (hit.id || hit.className || hit.tagName) : 'null';
+    toast.style.pointerEvents = peBefore;
+    toast.classList.remove('on');
+    toast.textContent = toastTextBefore;
+
+    // 夹边两角都要夹：只测左上角时，Math.min(..., maxL) 写坏也照样通过。
+    el.style.left = '9999px';
+    el.style.top = '9999px';
+    window.BagHud.clamp(el);
+    const se = el.getBoundingClientRect();
+    out.clampSE = { right: Math.round(se.right), bottom: Math.round(se.bottom),
+      vw: innerWidth, vh: innerHeight,
+      inside: se.right <= innerWidth + 0.5 && se.bottom <= innerHeight + 0.5 };
+  }
+
+  // 逐页签：可见填充格数必须与逻辑层同口径（bagFilter 的长度，本页最多 35 格）。
+  // 注意没有 filled 这个类（paintCell 只给 empty / noart / worn / keep / sel / pickable），
+  // 所以"有东西的格子"只能按 :not(.empty) 数。
+  out.tabCounts = {};
+  out.tabExpect = {};
+  out.tabButtons = 0;
+  const tabIds = ['all', 'head', 'torso', 'back', 'weapon', 'feet', 'special'];
+  for (let ti = 0; ti < tabIds.length; ti++) {
+    const tid = tabIds[ti];
+    const tabBtn = document.querySelector('#bag [data-tab="' + tid + '"]');
+    if (tabBtn) out.tabButtons++;
+    if (!tabBtn) continue;
+    tabBtn.click();
+    await wait(120);
+    out.tabCounts[tid] = document.querySelectorAll('#bag .cell:not(.empty)').length;
+    out.tabExpect[tid] = Math.min(Lg.bagFilter(stI.meta.bag, tid).length, 35);
+  }
+  // 页签太多时会被 #bag-tabs 裁掉：截图上就看不见「特殊」了。
+  const tabsRow = document.getElementById('bag-tabs');
+  out.tabsFit = tabsRow ? { scroll: tabsRow.scrollWidth, client: tabsRow.clientWidth } : null;
+
+  const allTabBtn = document.querySelector('#bag [data-tab="all"]');
+  if (allTabBtn) { allTabBtn.click(); await wait(120); }
+
+  // 批量勾选不许跨页签 / 跨页保留（勾选态是"看得见的承诺"，切走后就不该还在）。
+  // 用 3 件同名、等级 1/2/3：逻辑层保留等级最高那件，UI 必须把那件标出来。
+  stI.meta.bag.length = 0;
+  Lg.bagAdd(stI, 'ironHelm', 1);
+  Lg.bagAdd(stI, 'ironHelm', 2);
+  Lg.bagAdd(stI, 'ironHelm', 3);
+  window.BagHud.refresh();
+  await wait(120);
+  const batchBtn2 = document.querySelector('#bag [data-act="batch-sell"]');
+  out.batchBtn2 = !!batchBtn2;
+  if (batchBtn2) { batchBtn2.click(); await wait(150); }
+  const pickDups2 = document.querySelector('#bag [data-act="pick-dups"]');
+  if (pickDups2) { pickDups2.click(); await wait(200); }
+  out.selBeforeTabSwitch = document.querySelectorAll('#bag .cell.sel').length;
+
+  const keepCells = [].slice.call(document.querySelectorAll('#bag .cell.keep'));
+  out.keepCount = keepCells.length;
+  out.keepLv = keepCells.length === 1 && keepCells[0].querySelector('.lv')
+    ? keepCells[0].querySelector('.lv').textContent : null;
+  out.keepTitleHasNote = keepCells.length === 1
+    ? (keepCells[0].title || '').indexOf('保留') >= 0 : null;
+  const sellableNow = Lg.sellableUids(stI) || [];
+  let keepUidExpect = null;
+  stI.meta.bag.forEach(function (e) {
+    if (sellableNow.indexOf(e.uid) < 0) keepUidExpect = e.uid;
+  });
+  out.keepUid = keepCells.length === 1 ? keepCells[0].dataset.uid : null;
+  out.keepUidExpect = keepUidExpect;
+
+  const weaponTab2 = document.querySelector('#bag [data-tab="weapon"]');
+  if (weaponTab2) { weaponTab2.click(); await wait(150); }
+  if (allTabBtn) { allTabBtn.click(); await wait(150); }
+  out.selAfterTabSwitch = document.querySelectorAll('#bag .cell.sel').length;
+  const confirm2 = document.querySelector('#bag .confirm-ok');
+  out.confirmDisabledAfterTabSwitch = !!(confirm2 && confirm2.disabled);
+
+  // 翻页同样要清空：勾了第 1 页的件、翻到第 2 页确认，卖掉的是看不见的东西。
+  if (pickDups2) { pickDups2.click(); await wait(150); }
+  out.selBeforePageSwitch = document.querySelectorAll('#bag .cell.sel').length;
+  const nextBtn2 = document.querySelector('#bag [data-page="next"]');
+  out.nextEnabled2 = !!(nextBtn2 && !nextBtn2.disabled);
+  if (nextBtn2 && !nextBtn2.disabled) { nextBtn2.click(); await wait(150); }
+  const prevBtn2 = document.querySelector('#bag [data-page="prev"]');
+  if (prevBtn2 && !prevBtn2.disabled) { prevBtn2.click(); await wait(150); }
+  out.selAfterPageSwitch = document.querySelectorAll('#bag .cell.sel').length;
+
+  const cancel2 = document.querySelector('#bag [data-act="batch-cancel"]');
+  if (cancel2) { cancel2.click(); await wait(150); }
+
+  // open() 要复位页签：第二次打开还停在「武器」就违背"打开就是一次全新开始"。
+  const feetTab2 = document.querySelector('#bag [data-tab="feet"]');
+  if (feetTab2) { feetTab2.click(); await wait(120); }
+  window.BagHud.close();
+  await wait(150);
+  window.BagHud.open(stI);
+  await wait(200);
+  const onTab2 = document.querySelector('#bag .tab.on');
+  out.tabAfterReopen = onTab2 ? onTab2.dataset.tab : null;
+
+  // 真实拖动：pointerdown 在标题栏 → pointermove → 面板跟着动；拖到屏幕外时当场夹住。
+  // 标题栏整条都是把手（只有标题文字能拖的话玩家会以为面板卡住了）。
+  {
+    const elD = document.getElementById('bag');
+    const barD = document.getElementById('bag-bar');
+    const r0 = elD.getBoundingClientRect();
+    barD.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true,
+      button: 0, pointerId: 11, clientX: r0.left + 60, clientY: r0.top + 12 }));
+    await wait(60);
+    out.barGrabbingDuringDrag = barD.classList.contains('grabbing');
+    barD.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, cancelable: true,
+      pointerId: 11, clientX: r0.left + 60 - 120, clientY: r0.top + 12 - 80 }));
+    await wait(60);
+    const r1 = elD.getBoundingClientRect();
+    out.dragDx = Math.round(r1.left - r0.left);
+    out.dragDy = Math.round(r1.top - r0.top);
+    // 拖到左上角之外：边拖边夹，left/top 必须停在 0 而不是负坐标
+    barD.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, cancelable: true,
+      pointerId: 11, clientX: -500, clientY: -500 }));
+    await wait(60);
+    const r2 = elD.getBoundingClientRect();
+    out.dragClampLeft = Math.round(r2.left);
+    out.dragClampTop = Math.round(r2.top);
+    barD.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true,
+      pointerId: 11 }));
+    await wait(60);
+    out.barGrabbingAfterUp = barD.classList.contains('grabbing');
+
+    // 拖到一半关闭：抓取光标不许留在那儿（close() 要清 grabbing 并释放 pointer capture）
+    barD.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true,
+      button: 0, pointerId: 12, clientX: 60, clientY: 12 }));
+    await wait(60);
+    out.barGrabbingBeforeClose = barD.classList.contains('grabbing');
+    window.BagHud.close();
+    await wait(150);
+    out.barGrabbingAfterClose = barD.classList.contains('grabbing');
+    // 关闭后残留的 pointermove 不许再动面板（drag 必须清干净）
+    const leftBefore = document.getElementById('bag').style.left;
+    barD.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, cancelable: true,
+      pointerId: 12, clientX: 400, clientY: 300 }));
+    await wait(60);
+    out.panelLeftAfterStrayMove = document.getElementById('bag').style.left === leftBefore;
+    window.BagHud.close();
+    await wait(100);
+  }
+
+  // F4 回归：连开两次 + 关一次，宿主只该收到一次 onOpen / 一次 onClose。
+  // 多通知一次就把"打开前的状态"记成了 true，关背包时永远恢复成 true，
+  // update() 从此早退 —— 角色永久走不动（原缺陷实测位移 0px）。
+  window.BagHud.open(stI);
+  window.BagHud.open(stI);
+  await wait(200);
+  out.doubleOpenPanelOpen = !!hubP.panelOpen;
+  window.BagHud.close();
+  await wait(250);
+  out.panelOpenAfterDoubleOpen = !!hubP.panelOpen;
+  stI.hub.x = 300;
+  stI.hub.z = 105;
+  await wait(150);
+  out.doubleOpenXBefore = stI.hub.x;
+  key('keydown', 'KeyD', 68);
+  await wait(700);
+  key('keyup', 'KeyD', 68);
+  await wait(120);
+  out.doubleOpenXAfter = stI.hub.x;
+  window.BagHud.close();
+  await wait(100);
+
   return out;
 })();
+`;
+
+// 第二段脚本：驱动先把窗口改成 520x420，再在这里量。#bag 一旦比视口大，
+// clamp() 只能把 left/top 夹到 0，right/bottom 照样越界 —— 1100x800 下永远复现不了。
+// 同样不许出现反引号（这本身也是模板字符串）。
+const SMALLSCRIPT = `
+(function () {
+  var out = {};
+  var el = document.getElementById('bag');
+  out.vw = innerWidth;
+  out.vh = innerHeight;
+  window.BagHud.open(window.EmberfieldApp.__state);
+  var box = el.getBoundingClientRect();
+  out.w = Math.round(box.width);
+  out.h = Math.round(box.height);
+  el.style.left = '9999px';
+  el.style.top = '9999px';
+  window.BagHud.clamp(el);
+  var r = el.getBoundingClientRect();
+  out.left = Math.round(r.left);
+  out.top = Math.round(r.top);
+  out.right = Math.round(r.right);
+  out.bottom = Math.round(r.bottom);
+  out.inside = r.left >= -0.5 && r.top >= -0.5 &&
+    r.right <= innerWidth + 0.5 && r.bottom <= innerHeight + 0.5;
+  var grid = document.getElementById('bag-grid');
+  out.gridOverflowY = getComputedStyle(grid).overflowY;
+  var cells = document.querySelectorAll('#bag .cell');
+  out.cells = cells.length;
+  var last = cells.length ? cells[cells.length - 1] : null;
+  out.lastRowBottom = last ? Math.round(last.getBoundingClientRect().bottom) : null;
+  out.gridBottom = Math.round(grid.getBoundingClientRect().bottom);
+  var tabs = document.getElementById('bag-tabs');
+  out.tabsFit = { scroll: tabs.scrollWidth, client: tabs.clientWidth };
+  var wear = document.getElementById('bag-wear');
+  out.wearH = Math.round(wear.getBoundingClientRect().height);
+  var slot = document.querySelector('#bag-wear .slot');
+  out.slotH = slot ? Math.round(slot.getBoundingClientRect().height) : null;
+  window.BagHud.close();
+  return out;
+})()
 `;
 
 (async () => {
@@ -804,7 +1066,7 @@ const SCRIPT = `
   const profileDir = '/tmp/emberfield-browser-' + process.pid + '-' + Date.now();
 
   const child = spawn(ELECTRON, ['--user-data-dir=' + profileDir, DRIVER], {
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '', TARGET: `http://127.0.0.1:${PORT}/game/`, SCRIPT },
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '', TARGET: `http://127.0.0.1:${PORT}/game/`, SCRIPT, SMALLSCRIPT },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -831,6 +1093,8 @@ const SCRIPT = `
 
   const r = JSON.parse(m[1]);
   const errors = e ? JSON.parse(e[1]) : [];
+  const sm = buf.match(/SMALL (\{.*\})/);
+  const small = sm ? JSON.parse(sm[1]) : null;
 
   // 页面脚本一旦抛异常，driver 会返回 {error}，此时 out 里所有字段都是 undefined，
   // 于是下面每条断言都失败 —— 24 条红色，看起来像游戏全线崩了，实际只有一处接线错误。
@@ -1065,6 +1329,88 @@ const SCRIPT = `
      '关闭后同样按 D 位置真的变了（反证：上一条不是按键失效）',
      r.pauseXBeforeReopen + ' -> ' + r.pauseXAfterClose);
   ok(r.tabDefaultPrevented === true, 'Tab 的浏览器默认行为被 preventDefault 拦掉');
+
+  console.log('\n--- 背包面板收到 470x500（Task 10b / V2）---');
+  ok(Math.abs(r.ratioW - 470) <= 1, '#bag 宽度收到 470（设计初稿写 620）', r.ratioW);
+  ok(Math.abs(r.ratioH - 500) <= 1, '#bag 高度收到 500（初稿写 540）', r.ratioH);
+  ok(typeof r.areaRatio === 'number' && r.areaRatio >= 0.38 && r.areaRatio <= 0.43,
+     '面板面积约占 960x600 画布的 40%（V2 的验收值；620x540 是 58%）', r.areaRatio);
+  ok(r.lastRowInside === true, '第 7 行整行仍在面板内（网格没被裁）', String(r.lastRowInside));
+  ok(typeof r.cellImgW === 'number' && r.cellImgW >= 28 && r.cellImgW <= 34,
+     '格子贴图仍是 32px 宽（收窄后没被挤扁）', r.cellImgW);
+
+  console.log('\n--- toast 必须画在背包之上（F1）---');
+  ok(r.toastZ > r.bagZ, 'toast 的层级高于面板（下层的话出售反馈看不见）',
+     r.toastZ + ' vs ' + r.bagZ);
+  ok(r.toastHit === true, 'toast 中心点命中的是 toast 本身，不是面板',
+     '命中: ' + String(r.toastHitTag));
+
+  console.log('\n--- 夹边两角 + 页签过滤（F3 / 尺寸表）---');
+  ok(r.clampSE && r.clampSE.inside === true, '推到右下角后 right/bottom 都不越界',
+     JSON.stringify(r.clampSE));
+  eq(r.tabButtons, 7, '七个页签都在 DOM 里');
+  ['all', 'head', 'torso', 'back', 'weapon', 'feet', 'special'].forEach((t) => {
+    eq(r.tabCounts ? r.tabCounts[t] : undefined, r.tabExpect ? r.tabExpect[t] : null,
+       '页签「' + t + '」的可见格数 = 逻辑层 bagFilter 的长度');
+  });
+  ok(r.tabsFit && r.tabsFit.scroll <= r.tabsFit.client + 1,
+     '七个页签一行放得下（面板收窄后没把「特殊」裁掉）', JSON.stringify(r.tabsFit));
+
+  console.log('\n--- 勾选不许跨页签 / 跨页保留（F2）---');
+  eq(r.selBeforeTabSwitch, 2, '勾上重复件后有两格是选中态');
+  eq(r.selAfterTabSwitch, 0, '切到别的页签再切回来：勾选已清空');
+  ok(r.confirmDisabledAfterTabSwitch === true, '确认按钮随之变灰（不能卖看不见的件）');
+  eq(r.selBeforePageSwitch, 2, '翻页前重新勾了两件（探针有效）');
+  ok(r.nextEnabled2 === true, '有第 2 页可翻（否则下面测不到翻页）');
+  eq(r.selAfterPageSwitch, 0, '翻到第 2 页再翻回来：勾选已清空');
+
+  console.log('\n--- 批量态标出「每 id 保留的那件」---');
+  eq(r.keepCount, 1, '3 件同名里只有一件标了「保留」');
+  eq(r.keepLv, 'Lv3', '标的是等级最高的那件');
+  ok(r.keepTitleHasNote === true, '保留件的 title 写出了原因', String(r.keepTitleHasNote));
+  ok(r.keepUid === r.keepUidExpect,
+     '标的就是逻辑层 duplicateUids 保留的那一件（UI 不自己比等级）',
+     String(r.keepUid) + ' vs ' + String(r.keepUidExpect));
+
+  console.log('\n--- open() 复位页签 / 真实拖动 / 关闭清场 ---');
+  eq(r.tabAfterReopen, 'all', '重新打开时页签回到「全部」');
+  eq(r.barGrabbingDuringDrag, true, '拖动时标题栏是抓取光标（探针有效）');
+  ok(Math.abs(r.dragDx + 120) <= 2, '真实拖动：面板横向跟手 120px', r.dragDx);
+  ok(Math.abs(r.dragDy + 80) <= 2, '真实拖动：面板纵向跟手 80px', r.dragDy);
+  eq(r.dragClampLeft, 0, '拖出左上角时 left 当场夹在 0');
+  eq(r.dragClampTop, 0, '拖出左上角时 top 当场夹在 0');
+  eq(r.barGrabbingAfterUp, false, '松手后抓取光标撤掉');
+  eq(r.barGrabbingBeforeClose, true, '拖到一半时确实是抓取态（探针有效）');
+  eq(r.barGrabbingAfterClose, false, '拖到一半关闭：抓取光标不留着');
+  eq(r.panelLeftAfterStrayMove, true, '关闭后残留的 pointermove 不再移动面板');
+
+  console.log('\n--- 重复 open 幂等（F4 回归）---');
+  eq(r.doubleOpenPanelOpen, true, '连开两次时宿主认为面板是开着的');
+  eq(r.panelOpenAfterDoubleOpen, false, '连开两次 + 关一次：宿主状态回到 false');
+  ok(r.doubleOpenXAfter > r.doubleOpenXBefore + 5,
+     '关掉后按 D 角色真的能走（反证：上一条不是按键失效）',
+     r.doubleOpenXBefore + ' -> ' + r.doubleOpenXAfter);
+
+  console.log('\n--- 小窗口 520x420：面板不许越界（F3）---');
+  ok(!!small, '小窗口探针返回了结果');
+  if (small) {
+    ok(small.error === undefined, '小窗口探针没有抛异常', small.error);
+    ok(small.vw <= 560 && small.vh <= 460,
+       '视口真的被改小了（否则下面测的还是大窗口）', small.vw + 'x' + small.vh);
+    ok(small.w <= small.vw && small.h <= small.vh,
+       '面板本身不超过视口（min(…, 100vw/vh - 24px)）', small.w + 'x' + small.h);
+    ok(small.inside === true, '推到右下角后 right/bottom 都在视口内',
+       'left ' + small.left + ' top ' + small.top + ' / right ' + small.right +
+       ' bottom ' + small.bottom + ' / 视口 ' + small.vw + 'x' + small.vh);
+    eq(small.gridOverflowY, 'auto', '小窗口时网格自己滚，不再被裁（overflow:auto）');
+    eq(small.cells, 35, '小窗口下格子数仍然是 35');
+    ok(small.lastRowBottom !== null && small.lastRowBottom <= small.gridBottom + 0.5,
+       '第 7 行没被网格切掉', small.lastRowBottom + ' vs ' + small.gridBottom);
+    ok(small.tabsFit && small.tabsFit.scroll <= small.tabsFit.client + 1,
+       '小窗口下七个页签也放得下', JSON.stringify(small.tabsFit));
+    ok(typeof small.slotH === 'number' && small.slotH >= 26 && small.slotH <= 28,
+       '装备槽没被挤扁（34x27）', small.slotH);
+  }
 
   console.log('\n--- 远征里按 Tab 也暂停（Task 9）---');
   ok(r.runSceneFound === true, '远征场景存在');
