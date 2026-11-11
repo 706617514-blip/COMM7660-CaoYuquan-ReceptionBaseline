@@ -178,6 +178,10 @@ git commit -m "feat(bag): 删除重复件 30% 自动退款，掉落全部进背�
 **Files:**
 - Modify: `game/logic.js:17`（`STATE_VERSION`）、`game/logic.js:36`（`createState`）、`game/logic.js:1623-1649`（`migrate`）
 - Test: `tests/test_game_logic.js`（迁移段）
+- Modify: `tests/test_game_meta.js`（**实施时补记**：`tests/test_game_meta.js:349-350` 直接断言
+  `s.meta.inventory.indexOf(...)` 与 `s.meta.inventoryLevels.leatherHelm`；
+  删掉这两个字段后该文件必抛 `TypeError`，Meta 套件整份变红。
+  原 Files 列表漏列，已补上，改读 `s.meta.bag` 条目数组，断言数仍为 110）
 
 **Interfaces:**
 - Consumes: Task 1 的 `rollEquipDrop`
@@ -271,10 +275,24 @@ settings: { volume: 0.30, muted: false },
 if (!s.meta.settings) s.meta.settings = { volume: 0.30, muted: false };
 ```
 
+> **实施时补记（两个必踩的坑）**：
+> 1. brief 原样的红阶段代码会在 `eq(m5.meta.bag.length, 2, ...)` 抛
+>    `TypeError: Cannot read properties of undefined (reading 'length')`，
+>    套件在打印汇总**之前**就崩，看不到失败清单。必须加守卫：
+>    `typeof L.bagAdd === 'function'` / `const bag = m5.meta.bag || []`。
+>    brief 自己在 Step 3 要求"不能是 TypeError"，示例代码却没满足它。
+> 2. brief 里的 `const v2` / `const v5` 与 `tests/test_game_logic.js:333` 起的
+>    既有 fixture **同名**，原样粘贴直接 `SyntaxError: Identifier 'v2' has already been declared`。
+>    改用 `v2s` / `v5s`。
+
 测试要断言 `L.createState(1).meta.settings.volume === 0.30`，
 以及老档迁移后 `settings` 存在（否则 Task 12 一读就 TypeError）。
 
-`STATE_VERSION = 6`。`createState` 里 `meta.bag = []`、`meta.bagPages = 1`，删 `inventory`/`inventoryLevels`。
+`STATE_VERSION = 6`。`createState` 里 `meta.bag = []`、`meta.bagPages = 1`、`meta.uidSeq = 0`，删 `inventory`/`inventoryLevels`。
+
+> **实施时补记**：只断言 `mig.version === L.STATE_VERSION` 是**空转断言**——
+> 忘了递增版本号时它照样绿（两边都是 5）。必须再加一条把常量钉死：
+> `eq(L.STATE_VERSION, 6, 'STATE_VERSION 升到 6')`。
 
 `migrate(s)` **追加一段**（在既有 `v4→v5` 块之后）：
 
