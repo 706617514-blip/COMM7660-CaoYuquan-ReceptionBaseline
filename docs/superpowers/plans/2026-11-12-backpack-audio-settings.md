@@ -369,6 +369,17 @@ git commit -m "feat(bag): 库存改为条目数组，STATE_VERSION 5->6 顺序�
 - Produces: 上述六个函数**签名不变**（除新增可选 `uid` 参数），但内部按条目操作：
   - `equipItem(state, id, uid?)` —— 有 `uid` 时穿指定的那一件
   - `upgradeEquipment(state, id, uid?)` —— 有 `uid` 时升指定的那一件
+
+> **为什么必须有 `uid` 参数（Task 2 已实测的悬空缺陷）**：Task 2 之后背包里可以有
+> 同 id 多件（Task 1 让每件掉落都进包，重复件不再折算）。此时
+> `bagIndexOfId` 只返回**第一个**同 id 条目的下标，实测：
+> ```
+> bag = [longCloak@1 (u1), longCloak@3 (u2)]
+> equipUpgradeCost(s,'longCloak') -> 290   // 按 @1 那件报价
+> upgradeEquipment(s,'longCloak') -> 升的是 u1，@3 那件纹丝不动
+> ```
+> 玩家在 UI 上点的是 `u2`（3 级那件），却被升了 `u1`，且按 1 级报价。
+> Task 3 的 `uid` 第三参正是为修这个；`bagIndexOfUid`/`bagAt` 已在 Task 2 就位。
   - `equipOwned(state, id) -> 'equipped' | 'owned' | null` **签名不变**
 
 - [ ] **Step 1: 写测试（覆盖 Review Focus #3）**
