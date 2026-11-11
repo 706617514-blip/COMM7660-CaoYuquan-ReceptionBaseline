@@ -481,7 +481,8 @@ git commit -m "refactor(bag): 装备函数接受可选 uid（同 id 多件时指
 **Files:**
 - Modify: `game/config.js`（加 `BAG`）
 - Modify: `game/logic.js`（`bagCapacity` 已存在于 Task 2；加 `buyBagPage`、`rollBagPage`；
-  **另修 `buyEquipment:497` / `unequipSlot:544` 的满包静默吞件**）
+  **另修 `buyEquipment:497` / `unequipSlot:544` 的满包静默吞件**；
+  **并把 `bagIndexOfId` 加进 `API` 导出**）
 - Modify: `game/hub.js:190`（**仍读已删除的 `inventoryLevels`**，见下）
 - Test: `tests/test_bag.js`（**新建**）
 - **Modify: `.github/workflows/ci.yml`（必须加一步，否则新测试在 CI 里永远不会跑）**
@@ -500,7 +501,7 @@ git commit -m "refactor(bag): 装备函数接受可选 uid（同 id 多件时指
 > **Task 7/8 若再新建 `tests/test_bag_ui.js` 之类，同样要加。**
 
 **Interfaces:**
-- Consumes: Task 2 的 `bagAdd`/`bagCapacity`
+- Consumes: Task 2 的 `bagAdd`/`bagCapacity`；**实测 `bagIndexOfId` 尚未导出**（见下）
 - Produces:
   - `C.BAG = { cols: 5, rows: 7, cellsPerPage: 35, maxPages: 6, pagePrices: [0, 200, 500, 1000, 2000, 5000] }`
   - `buyBagPage(state) -> { ok: boolean, reason?: string, cost?: number }`
@@ -509,6 +510,11 @@ git commit -m "refactor(bag): 装备函数接受可选 uid（同 id 多件时指
   - 修好后的 `buyEquipment(state,id)` / `unequipSlot(state,slot)` / `rollEquipDrop(state)`
 
 **前置修复（Task 2 复审实测，我复现确认 —— 先做这些再做分页）**
+
+**⓪ 预检（实测 2026-11-12，`require` 后逐项 `typeof`）**：本任务开始时
+`bagAdd`/`bagRemove`/`bagAt`/`bagCount`/`bagCapacity`/`bagIndexOfUid`/`bagEntry`/`nextUid`
+均为 `function`，但 **`bagIndexOfId` 是 `undefined`**（已定义在 `logic.js:465`，只是没进 `API` 导出块），
+`buyBagPage`/`pageOf`/`pageSlice` 均不存在，`C.BAG` 为 `undefined` —— 全部由本任务补上。
 
 **① `game/hub.js:190` 读已删除的字段。**
 `const lv = (state.meta.inventoryLevels || {})[id] || 1;` 里的 `inventoryLevels` 已被
