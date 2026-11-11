@@ -300,7 +300,21 @@ if (s.version === 5) {
 }
 ```
 
-同时**删掉** `deserialize` 末尾兜底块里的 `if (!s.meta.inventory) s.meta.inventory = [];` 与 `inventoryLevels` 两行，改为兜 `bag`/`bagPages`（兜底仍然不能替代迁移，只是防止 v6 存档缺字段）。
+同时**删掉** `deserialize` 末尾兜底块里的这两行（实测位置 **`game/logic.js:1653-1654`**）：
+
+```js
+if (!s.meta.inventory) s.meta.inventory = [];
+if (!s.meta.inventoryLevels) s.meta.inventoryLevels = {};
+```
+
+改为：
+
+```js
+if (!s.meta.bag) s.meta.bag = [];
+if (!s.meta.bagPages) s.meta.bagPages = 1;
+```
+
+（兜底仍然不能替代迁移，只是防止 v6 存档缺字段。**注意顺序**：兜底块在 `if (s.version !== STATE_VERSION) throw` **之后**，所以版本对不上时根本走不到这里 —— 迁移链必须自己把 v5 抬到 v6，光靠兜底是白屏。）
 
 `bagAdd` 必须**尊重页容量**，满了返回 `-1`：
 
