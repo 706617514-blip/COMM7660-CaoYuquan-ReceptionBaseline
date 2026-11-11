@@ -1281,10 +1281,23 @@ Expected: FAIL —— 坐标在变，说明仍每帧推进。
 > 正确做法：Tab 的开/关都放在 **`createInput` 的 DOM 键盘回调**里
 > （`app.js:850-947`，那是挂在 `window` 上的原生监听，**不受 Phaser 场景暂停影响**）：
 > ```js
-> // onDown 里，preventDefault 之后：
-> if (ev.code === 'Tab') { toggleBag(); return; }   // toggleBag 里 open/close + pause/resume
+> // app.js:870 的 onDown 里（这个回调挂在 window 上，暂停期间照样触发）：
+> const onDown = (ev) => {
+>   if (ev.code === 'Tab') { ev.preventDefault(); if (scene.toggleBag) scene.toggleBag(); return; }
+>   const name = CODES[ev.code];
+>   ...
+> };
 > ```
-> `toggleBag()` 自己负责 `BagHud.open/close` 与 `scene.pause()/scene.resume()` 配对。
+> `scene.toggleBag()` 是**场景上的方法**（`createInput` 拿得到 `scene`，方法里 `this.scene.pause()`
+> 指的就是它自己）。它自己负责 `BagHud.open/close` 与 `pause()/resume()` 配对：
+> ```js
+> toggleBag() {
+>   if (BagHud.isOpen()) { BagHud.close(); this.scene.resume(); }
+>   else { BagHud.open(this.state, { onChange: () => refreshHeroEquip(this.hero, this.state) }); this.scene.pause(); }
+> }
+> ```
+> 注意 `BagHud.open()` 要在 `pause()` **之前**调（它需要读 `__game` 的纹理，
+> 虽然暂停不影响纹理访问，但顺序清楚少一类玄学）。
 > 判断"背包是否开着"用 `BagHud.isOpen()`，**不要**再存一份状态（两份状态一定会不同步）。
 >
 > 同理，Task 8 的 `onChange → refreshHeroEquip` 也必须由 DOM 侧的点击回调直接驱动，
