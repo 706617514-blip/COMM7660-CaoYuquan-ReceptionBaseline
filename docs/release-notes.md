@@ -21,15 +21,16 @@ repository, not a description of intent.
 | Release | Tag | Date | Commit | What changed | Deployed URL | CI run |
 |---|---|---|---|---|---|---|
 | Phase 1 (frozen) | `phase1-analytics` | 2026-10-19 | `3e7f65e` | Executed analysis, decision memo, PRD, first product build (the locator) | _(not deployed at Phase 1)_ | _(Phase 1 predates CI)_ |
-| Phase 2, release 1 | `v0.2-mvp` | _record at tagging_ | _record at tagging_ | Playable core loop: run → loot → farm → upgrade | _record after first successful deploy_ | _paste the Actions run URL_ |
-| Phase 2, release 2 | `v0.2-submission` | _record at tagging_ | _record at tagging_ | Revision driven by evidence collected after release 1 | _same URL_ | _paste the Actions run URL_ |
+| Phase 2, release 1 | `v0.2-mvp` | 2026-11-10 | `55e0447` | Playable core loop: run → loot → farm → upgrade | https://706617514-blip.github.io/COMM7660-CaoYuquan-ReceptionBaseline/ | [run 42746488696](https://github.com/706617514-blip/COMM7660-CaoYuquan-ReceptionBaseline/actions/runs/42746488696) |
+| Phase 2, release 2 | `v0.2-equipment` | 2026-11-11 | `4f6e916` | Equipment system (35 items, 5 slots), the farm freeze fix, plus earlier untagged work now included | https://706617514-blip.github.io/COMM7660-CaoYuquan-ReceptionBaseline/ | [run 43045532080](https://github.com/706617514-blip/COMM7660-CaoYuquan-ReceptionBaseline/actions/runs/43045532080) |
+| Phase 2, release 2 (earlier tag, now out of date) | `v0.2-submission` | 2026-11-10 | `727e39b` | Revision driven by evidence collected after release 1. **Does not include the equipment system** — see the note under Release 2 | _same URL_ | [run 42792958880](https://github.com/706617514-blip/COMM7660-CaoYuquan-ReceptionBaseline/actions/runs/42792958880) |
 
 > The Phase 1 tag is **immutable**. Do not retag it, amend its commits, or move it to a later
 > commit. Phase 2 work happens in commits after it.
 >
-> The blank cells above are deliberately blank. A tag, a CI run and a deployment URL are
-> execution facts; they can only be filled in by running the commands. Writing a plausible
-> value there would be fabricating evidence.
+> The cells above were filled in from the repository and the Actions log rather than from
+> memory. A tag, a CI run and a deployment URL are execution facts; each one was read back
+> from the system that produced it before being written down here.
 
 ---
 
@@ -94,22 +95,108 @@ not to Phase 1.
 
 ---
 
-## Release 2 — `v0.2-submission`
+## Release 2 — `v0.2-equipment`
 
-**Purpose:** the build carrying the revision justified by evidence gathered after release 1.
+**Purpose:** the build that adds the equipment system, and that fixes one fault which made a
+core part of the game unplayable.
 
-_(To be completed. This section must name, per change, the observed behaviour or error that
-motivated it and link the record that shows it. A revision described without evidence is not a
-tested revision. If the evidence is developer self-play rather than a user pilot, say so in
-those words — the report must not present self-testing as user testing.)_
+> **Note on the tag name.** An earlier plan was to call this release `v0.2-submission`. That
+> name now belongs to an earlier commit (`727e39b`, 2026-11-10 11:14), which no longer
+> contains everything that is deployed. Reusing the name would have made two different builds
+> share one release name, so this release is tagged separately. The older tag is left in place
+> and is not moved.
 
 ### Included
 
-_(to be completed)_
+- **An equipment system with 35 items across five slots** — head, torso, back, weapon and feet.
+  Each slot holds one item at a time, and every position has basic items available, so a player
+  is never left with an empty slot that nothing can fill.
+- **Levelling.** Basic items go to level 3 and special items to level 5. Levelling makes an
+  item stronger; it never turns it into a different item. The mechanic stays the same, and only
+  the numbers change.
+- **Fourteen special effects**, such as damage reflection, chain lightning, a shield that
+  triggers at low health, and a burning patch left on the ground. Two special weapons grant a
+  skill instead of a stat, so the weapon slot can change what the player is able to do.
+- **Drops.** Ordinary enemies drop an item 5% of the time. A duplicate is not thrown away; it
+  is refunded at 30% of the price. Bosses are deliberately excluded, because a boss that can be
+  farmed would make repeating one fight the best way to play.
+- **A new hub building, the weapon rack (兵器架)**, which opens a panel listing all 35 items
+  with their price, level and description. Buying, equipping and upgrading all happen in this
+  one panel.
+- **The player character is now drawn in layers.** Each equipped item is a separate layer on
+  top of the body, so putting on a helmet visibly changes the character. The left-facing view
+  mirrors every layer together, which avoids the fault where the character faces one way and
+  the weapon faces the other.
+- **Potion system** (回春, 力量, 坚壁 on keys 1, 2 and 3) with a potion shop in the hub.
+- **A weapon skill on the V key**, which only appears in the skill bar when a weapon that
+  grants it is equipped.
+- **Visible ground zones.** Burning and frost patches are now drawn on the ground, so the
+  player can see why they are losing health or moving slowly.
+- **A drop notification.** Because a 5% drop is easy to miss, picking one up now shows a
+  message, and a duplicate drop states the refund amount.
 
 ### What the evidence changed and why
 
-_(to be completed — per change: observation → change → how it was verified)_
+Each change below names what was observed, what was changed, and how the change was checked.
+**The evidence is developer self-testing, not a user pilot.** No participants have played this
+build, so nothing here is a claim about how another person experiences the game.
+
+1. **Equipping an item while the shop panel was open had no visible effect.**
+   *Observed:* in the weapon rack panel, buying and equipping a helmet left the character
+   unchanged. The change only appeared after the panel was closed.
+   *Cause:* the hub's update loop begins by returning early while a panel is open, and the code
+   that updates the character's equipment layers was inside that loop. Since all buying and
+   equipping happens while the panel is open, that code never ran at the moment it mattered.
+   *Change:* the character is now refreshed immediately after a panel action succeeds.
+   *Checked:* a browser test drives the real panel — opens the weapon rack, clicks the buy
+   button, clicks the equip button — and asserts that the helmet layer is showing while the
+   panel is still open. Removing the one-line fix makes exactly this test fail.
+
+2. **Pressing J at the field made the game freeze on a black screen.**
+   *Observed:* reported during use — "pressing J to enter the field, it fades to black and then
+   seizes up; nothing works".
+   *Cause:* the farm scene's update loop read a property that was never set anywhere in the
+   codebase, so it threw an error on its first frame. Because that same loop also handles the
+   ESC key, the scene could not be left either. This fault was not introduced by the equipment
+   work; it dates from an earlier commit and had simply never been triggered, because no test
+   had ever walked to the field and pressed J.
+   *Change:* the unusable line was deleted. The keyboard is still handled by the input layer
+   that already worked.
+   *Checked:* a browser test walks to the field, presses J, waits for the fade to finish, and
+   then asserts that the farm is running, that no error was thrown, and that ESC returns to the
+   base. Putting the line back makes those assertions fail again.
+
+3. **Burning and frost zones affected the player but were invisible.**
+   *Observed:* the damage and slowdown were calculated correctly, but nothing was drawn on the
+   ground, so health loss had no visible cause.
+   *Change:* both zones are drawn as flat ellipses on the ground, using the same projection as
+   the character. The frost zone also shows ice cracks, so the two zones differ by shape and
+   not only by colour.
+   *Checked:* a screenshot taken from a running game shows one frost zone and two burning
+   zones, and the drawn radius shrinks as the zone's remaining time runs out.
+
+4. **The weapon skill, the potion keys and the drops existed in the rules but were not
+   connected to the screen.**
+   *Observed:* the rules layer could grant a skill and record a drop, but no key called the
+   skill and nothing displayed the drop.
+   *Change:* the V key now casts the weapon skill, the skill bar shows a slot for it only when
+   a suitable weapon is equipped, and a drop shows a message.
+   *Checked:* a browser test confirms the bar has five slots without such a weapon and six with
+   one, and that pressing V starts the cooldown and the effect.
+
+### Known limitations at this release
+
+- **Balance figures still come from a scripted agent, not from people.** With no upgrades the
+  four tiers are cleared about 100 / 94 / 54 / 1 percent of the time; with everything bought
+  they reach about 100 / 96 / 97 / 73 percent. These are lower bounds. They say the difficulty
+  ladder is still intact, not that the game is enjoyable.
+- **Reception is still unmeasured.** No pilot session has taken place at the time of writing.
+- **Visual checks are manual.** The Node tests cover rules and page wiring. The layered
+  character, the ground zones and the farm screen have been checked by reading screenshots,
+  which is not part of CI.
+- **The older `v0.2-submission` tag is out of date.** It points at a commit that does not
+  include the equipment system. Anyone comparing that tag with the deployed site will see a
+  difference, and this note is the record of that difference.
 
 ---
 
@@ -153,7 +240,18 @@ is a reason to bump `STATE_VERSION` only when a field genuinely changes.
 
 | Rollback rehearsal | Date | From → to | Revert commit | CI run | URL verified |
 |---|---|---|---|---|---|
-| 1 | _to be filled at rehearsal_ | | | | |
+| 1 | 2026-11-10 | `main` with an injected fault → `v0.2-mvp`'s `game/config.js` | `f7dd104` (fault injected in `0d55bfc`) | not retrievable via the API — see note below | mechanism verified locally, not re-deployed |
+
+> **Why the CI-run cell is not a link.** Both rehearsal commits are on `main` and both were
+> pushed, and the fault and the restore are in the history (`0d55bfc`, `f7dd104`). The Actions
+> runs for those two commits could not be retrieved through the API when this table was filled
+> in, and a plausible-looking run URL would be an invented one. The row therefore records what
+> was actually checked and marks the rest as unverified, rather than presenting a guess as
+> evidence.
+>
+> The rehearsal tested the **mechanism**: restore one file from the tag, confirm the assertions
+> pass again. It did not re-trigger a deployment, so it does not show how long a real restore of
+> the live site would take. That timing is unmeasured and is not claimed here.
 
 ### If the deploy workflow itself is broken
 
@@ -167,8 +265,19 @@ workflow triggers on `game/**`, so a workflow-only change still needs a manual
 ## Version numbering
 
 `v0.2.x` because Phase 1 already occupies `phase1-analytics` and the game is a second-phase
-deliverable. The brief suggests `v0.2-submission` as an example name, so the final release uses
-exactly that.
+deliverable. The brief gives `v0.2-submission` as an example name, and that name was used for the
+release tagged on 2026-11-10.
+
+It was then used up. Work continued after that tag — boss artwork and behaviour, potions, the
+swaying grass, a crop fix, and finally the equipment system — so the build that is deployed now
+is no longer the build that `v0.2-submission` names. Rather than move an existing tag or give two
+different builds the same name, the equipment release is tagged `v0.2-equipment`. The
+`v0.2-submission` tag stays where it is and remains an honest record of what was submitted on
+that date.
+
+If the assessed submission must be a single tag, tag the final commit at the deadline with a
+name of your choosing and record it here. Do not reuse a name that already points somewhere
+else.
 
 ## Tagging order (the order matters)
 
