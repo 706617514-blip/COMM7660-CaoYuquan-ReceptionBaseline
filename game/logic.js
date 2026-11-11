@@ -14,7 +14,7 @@
     ? require('./config.js')
     : global.GameConfig;
 
-  const STATE_VERSION = 5;
+  const STATE_VERSION = 6;
 
   // ---------------------------------------------------------------- 随机数
   // 用可序列化的 mulberry32：种子存在 state 里，
@@ -50,10 +50,15 @@
         // 五个装备位（设计文档 §4.8）。空位是 null，不是 undefined ——
         // 后者在 JSON 往返后会消失，导致"装备了但读不到"。
         equipment: { head: null, torso: null, back: null, weapon: null, feet: null },
-        inventory: [],                   // 已拥有但未装备的装备 id 列表
-        // 背包里装备的等级。装备位上的等级直接挂在装备位上，
-        // 背包里的没有位置可挂，只能单独存一张表。
-        inventoryLevels: {},
+        // 背包条目数组（v6 起）。旧版是「id 列表 + 按 id 的等级表」，
+        // 同一 id 只能记一件，装不下重复掉落 —— 所以改成每件一条记录。
+        bag: [],
+        bagPages: 1,                     // 已解锁页数，容量 = 页数 × 每页格数
+        // 条目的 uid 计数器。必须存档（放在 meta 里），否则读档后
+        // 新条目会从 1 重新计数，和旧条目的 uid 撞车。
+        uidSeq: 0,
+        // 音效与静音（Task 12 读写这里）。老档没有这个字段，迁移负责补。
+        settings: { volume: 0.30, muted: false },
       },
       farm: {
         plots: new Array(C.FARM.cols * C.FARM.rows).fill(null).map(function () {
@@ -400,6 +405,69 @@
     return { ok: true };
   }
 
+  // ---------------------------------------------------------------- 背包条目
+  // 背包是**条目数组**，每件一个 { id, level, uid }。
+  //
+  // 旧结构是「id 列表 + 按 id 的等级表」，它装不下重复件：同一件装备掉两把，
+  // 只能记一个等级、一个位置。改成条目数组之后，重复件各占一格、各升各的级。
+  // uid 是对外的稳定标识（DOM 用「第几格」做 key 会在排序后错位），
+  // 它只活在条目里，不参与战斗中掉落的其它语义。
+  const BAG_GRID_PER_PAGE = 35;
+
+  /** 造一个带新 uid 的条目。uid 计数器挂在 state.meta 上，随存档走。 */
+  function bagEntry(state, id, level) {
+    return { id: id, level: level || 1, uid: nextUid(state) };
+  }
+
+  function nextUid(state) {
+    const n = (state.meta.uidSeq || 0) + 1;
+    state.meta.uidSeq = n;
+    return 'u' + n;
+  }
+
+  /** 背包总格数 = 已解锁页数 × 每页格数。 */
+  function bagCapacity(state) {
+    return (state.meta.bagPages || 1) * BAG_GRID_PER_PAGE;
+  }
+
+  function bagCount(state) {
+    return (state.meta.bag || []).length;
+  }
+
+  function bagAt(state, index) {
+    const e = (state.meta.bag || [])[index];
+    return e ? { id: e.id, level: e.level, uid: e.uid } : null;
+  }
+
+  /** 放一件进背包，返回落位下标；容量内满了返回 -1（由调用方决定怎么办）。 */
+  function bagAdd(state, id, level) {
+    if (!state.meta.bag) state.meta.bag = [];
+    if (!state.meta.bagPages) state.meta.bagPages = 1;
+    if (state.meta.bag.length >= bagCapacity(state)) return -1;
+    state.meta.bag.push(bagEntry(state, id, level || 1));
+    return state.meta.bag.length - 1;
+  }
+
+  function bagRemove(state, index) {
+    const bag = state.meta.bag || [];
+    if (!(index >= 0 && index < bag.length)) return { ok: false, reason: '格子里没有东西' };
+    bag.splice(index, 1);
+    return { ok: true };
+  }
+
+  function bagIndexOfUid(state, uid) {
+    const bag = state.meta.bag || [];
+    for (let i = 0; i < bag.length; i++) if (bag[i].uid === uid) return i;
+    return -1;
+  }
+
+  /** 背包里第一件该 id 的下标，没有返回 -1。 */
+  function bagIndexOfId(state, id) {
+    const bag = state.meta.bag || [];
+    for (let i = 0; i < bag.length; i++) if (bag[i].id === id) return i;
+    return -1;
+  }
+
   // ---------------------------------------------------------------- 装备
   /**
    * 某件装备当前的持有状态。
@@ -411,7 +479,7 @@
       const it = eq[C.EQUIP_SLOTS[i]];
       if (it && it.id === id) return 'equipped';
     }
-    if (state.meta.inventory.indexOf(id) >= 0) return 'owned';
+    if (bagIndexOfId(state, id) >= 0) return 'owned';
     return null;
   }
 
@@ -427,10 +495,9 @@
     if (equipOwned(state, id)) return { ok: false, reason: '已拥有' };
     if (state.meta.coins < def.price) return { ok: false, reason: '铜币不够' };
     state.meta.coins -= def.price;
-    state.meta.inventory.push(id);
-    // 新买的按 1 级记账。不记的话 equipItem 读 inventoryLevels 会拿到
-    // undefined，升级过的背包件换出去再换回来就会悄悄掉级。
-    state.meta.inventoryLevels[id] = 1;
+    // 新买的按 1 级入格。等级直接记在条目上，穿戴 / 卸下都跟着条目走，
+    // 不会再出现"换出去再换回来就悄悄掉级"。
+    bagAdd(state, id, 1);
     return { ok: true, id: id };
   }
 
@@ -443,23 +510,19 @@
     if (!def) return { ok: false, reason: '没有这件装备' };
     if (equipOwned(state, id) === 'equipped') return { ok: false, reason: '已经装备着' };
 
-    const idx = state.meta.inventory.indexOf(id);
+    const idx = bagIndexOfId(state, id);
     if (idx < 0) return { ok: false, reason: '背包里没有' };
-    state.meta.inventory.splice(idx, 1);
+    const entry = state.meta.bag.splice(idx, 1)[0];
 
     const prev = state.meta.equipment[def.slot];
     if (prev) {
-      state.meta.inventory.push(prev.id);
-      // 换下来的装备要连同它的等级一起收回背包，否则升级成果会丢。
-      // 玩家花了铜币升到 3 级、只是换把武器试一下，回来变成 1 级，
-      // 这种惩罚会让"换装"这个核心乐趣直接废掉。
-      state.meta.inventoryLevels[prev.id] = prev.level;
+      // 换下来的装备连同它的等级一起收回背包（条目自带等级），
+      // 否则升级成果会丢：花了铜币升到 3 级、只是换把武器试一下，
+      // 回来变成 1 级，这种惩罚会让"换装"这个核心乐趣直接废掉。
+      bagAdd(state, prev.id, prev.level || 1);
     }
 
-    // 等级从背包记账里取，失败才退回 1。
-    const level = state.meta.inventoryLevels[id] || 1;
-    delete state.meta.inventoryLevels[id];
-    state.meta.equipment[def.slot] = { id: id, level: level };
+    state.meta.equipment[def.slot] = { id: id, level: (entry && entry.level) || 1 };
 
     // 换装可能改变生命上限。不能让当前血量超过新上限（血条会画到框外），
     // 但也不能白送血 —— 所以只做截断，不做补满。
@@ -477,8 +540,8 @@
     const it = state.meta.equipment[slot];
     if (!it) return { ok: false, reason: '这个部位是空的' };
     state.meta.equipment[slot] = null;
-    state.meta.inventory.push(it.id);
-    state.meta.inventoryLevels[it.id] = it.level;
+    // 等级跟着条目走，不需要另一张表记账。
+    bagAdd(state, it.id, it.level || 1);
 
     if (state.run && state.run.player) {
       const st = playerStats(state);
@@ -502,8 +565,8 @@
         if (it && it.id === id) level = it.level || 1;
       });
     } else {
-      const lv = state.meta.inventoryLevels && state.meta.inventoryLevels[id];
-      level = lv || 1;
+      const idx = bagIndexOfId(state, id);
+      level = (idx >= 0 && state.meta.bag[idx].level) || 1;
     }
     if (level >= max) return null;
     return C.equipPrice(id, level + 1);
@@ -513,7 +576,7 @@
    * 升级装备。**只提升强度参数，不改变机制**（§4.4）。
    *
    * 背包里的装备与身上的装备都要能升级，所以等级存在两处：
-   * 装备位上直接带 level，背包里用 inventoryLevels 映射。
+   * 装备位上直接带 level，背包条目里也各自带 level（v6 起）。
    */
   function upgradeEquipment(state, id) {
     const cost = equipUpgradeCost(state, id);
@@ -533,8 +596,10 @@
         if (it && it.id === id) it.level = (it.level || 1) + 1;
       });
     } else {
-      if (!state.meta.inventoryLevels) state.meta.inventoryLevels = {};
-      state.meta.inventoryLevels[id] = (state.meta.inventoryLevels[id] || 1) + 1;
+      // 背包里只升一件：同一 id 可能有重复件，各升各的级，
+      // 不能把它们一起抬上去（那等于凭空送出升级）。
+      const idx = bagIndexOfId(state, id);
+      if (idx >= 0) state.meta.bag[idx].level = (state.meta.bag[idx].level || 1) + 1;
     }
 
     if (state.run && state.run.player) {
@@ -558,8 +623,15 @@
     if (pool.length === 0) return null;
     const id = pool[Math.floor(nextRandom(state) * pool.length)];
     const duplicate = !!equipOwned(state, id);
-    state.meta.inventory.push(id);
-    return { id: id, duplicate: duplicate };
+    // 容量感知落位：全满时不丢、也不越界（§4.7「不丢装备」），
+    // 而是覆盖最后已解锁页的末格，由 UI 提示"背包已满"。
+    const idx = bagAdd(state, id, 1);
+    if (idx === -1) {
+      const last = bagCapacity(state) - 1;
+      state.meta.bag[last] = bagEntry(state, id, 1);
+      return { id: id, duplicate: duplicate, bagFull: true };
+    }
+    return { id: id, duplicate: duplicate, bagFull: false };
   }
 
   /** 敌人死亡时调用：按概率决定是否掉装备。返回掉落结果或 null。 */
@@ -1630,9 +1702,30 @@
       if (!s.meta.equipment) {
         s.meta.equipment = { head: null, torso: null, back: null, weapon: null, feet: null };
       }
-      if (!s.meta.inventory) s.meta.inventory = [];
-      if (!s.meta.inventoryLevels) s.meta.inventoryLevels = {};
+      // v5 的库存字段（inventory / inventoryLevels）**故意不补** ——
+      // 它们已经废掉了，补出来只会被下一步的 5→6 块当成真数据再搬一次。
       s.version = 5;
+    }
+    // v5 → v6：库存从「id 列表 + 按 id 的标量等级」改为「条目数组」。
+    // 旧结构装不下重复件（同一 id 只能记一个等级），而本批要求重复件也进背包。
+    // 迁移按 id 去重 —— 老档本来也只存得下一件，不凭空造件。
+    if (s.version === 5) {
+      if (!s.meta) s.meta = {};
+      const oldIds = s.meta.inventory || [];
+      const oldLv = s.meta.inventoryLevels || {};
+      const seen = {};
+      s.meta.bag = [];
+      oldIds.forEach(function (id) {
+        if (seen[id]) return;
+        seen[id] = true;
+        s.meta.bag.push(bagEntry(s, id, oldLv[id] || 1));
+      });
+      delete s.meta.inventory;
+      delete s.meta.inventoryLevels;
+      s.meta.bagPages = 1;
+      // 音效设置也在这一版进来：老档没有，Task 12 一读就 TypeError。
+      if (!s.meta.settings) s.meta.settings = { volume: 0.30, muted: false };
+      s.version = 6;
     }
     return s;
   }
@@ -1649,8 +1742,12 @@
     if (!s.meta.equipment) {
       s.meta.equipment = { head: null, torso: null, back: null, weapon: null, feet: null };
     }
-    if (!s.meta.inventory) s.meta.inventory = [];
-    if (!s.meta.inventoryLevels) s.meta.inventoryLevels = {};
+    // 注意：兜底块在版本校验**之后**，所以它救不了迁移没抬版本的老档 ——
+    // 版本链必须自己走完，这里只是防止 v6 存档缺字段。
+    if (!s.meta.bag) s.meta.bag = [];
+    if (!s.meta.bagPages) s.meta.bagPages = 1;
+    if (!s.meta.uidSeq) s.meta.uidSeq = 0;
+    if (!s.meta.settings) s.meta.settings = { volume: 0.30, muted: false };
     if (!s.farm || !s.farm.plots) {
       s.farm = { plots: new Array(C.FARM.cols * C.FARM.rows).fill(null)
         .map(function () { return { state: 'empty', growth: 0 }; }) };
@@ -1681,6 +1778,7 @@
     buyPotion, usePotion, hurtPlayer, potionDamageMul,
     equipBonus, hasFx, equipOwned, buyEquipment, equipItem, unequipSlot,
     equipUpgradeCost, upgradeEquipment, rollEquipDrop, tryEquipDrop,
+    bagAdd, bagRemove, bagAt, bagCount, bagCapacity, bagIndexOfUid, bagEntry, nextUid,
     playerStats, maturePlots, passiveIncome,
     serialize, deserialize,
     nextRandom, buildWave, makeEnemy,

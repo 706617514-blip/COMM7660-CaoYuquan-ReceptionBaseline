@@ -346,8 +346,9 @@ section('兵器架：买 → 穿 → 升级 → 换装');
   H.perform(s, find('equip-buy', 'ironHelm'));
   H.perform(s, find('equip-wear', 'ironHelm'));
   eq(s.meta.equipment.head.id, 'ironHelm', '换上了铁盔');
-  eq(s.meta.inventory.indexOf('leatherHelm') >= 0, true, '换下来的皮盔回到背包');
-  eq(s.meta.inventoryLevels.leatherHelm, 3, '换下来时等级记在背包里');
+  const bagHelm = s.meta.bag.filter(function (e) { return e.id === 'leatherHelm'; })[0];
+  ok(!!bagHelm, '换下来的皮盔回到背包（v6 条目数组）', JSON.stringify(s.meta.bag));
+  eq(bagHelm && bagHelm.level, 3, '换下来时等级记在条目上（不是另一张等级表）');
   L.equipItem(s, 'leatherHelm');
   eq(s.meta.equipment.head.level, 3, '换回来等级没有丢（升级成果不会被换装罚掉）');
 

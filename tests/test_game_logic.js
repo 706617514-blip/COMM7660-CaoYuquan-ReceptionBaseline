@@ -356,6 +356,118 @@ section('10. 存档往返');
   }));
   ok(bare.meta.skills && bare.meta.upgrades, '残缺存档补齐了 skills 与 upgrades');
   eq(bare.farm.plots.length, 9, '残缺存档补齐了农田');
+
+  // ---- 版本链：v2 → v6（背包改成条目数组后多了 5→6 一跳）----
+  // 断言 STATE_VERSION 本身，而不是只断言"等于 L.STATE_VERSION"——
+  // 后者在版本号忘了加时依然绿，等于没测。
+  eq(L.STATE_VERSION, 6, 'STATE_VERSION 升到 6');
+  const v2s = JSON.stringify({ version: 2, meta: { coins: 10 }, hub: null });
+  const mig = L.deserialize(v2s);
+  eq(mig.version, L.STATE_VERSION, 'v2 老档能迁移到当前版本');
+  eq(mig.meta.bagPages, 1, '迁移补出 bagPages = 1');
+  ok(Array.isArray(mig.meta.bag), '迁移补出 bag 数组');
+  ok(!mig.meta.inventory && !mig.meta.inventoryLevels, '迁移后旧的 inventory 结构消失');
+  ok(mig.meta.settings && mig.meta.settings.volume === 0.30 && mig.meta.settings.muted === false,
+    '迁移补出 settings（Task 12 读它，不补就 TypeError）',
+    JSON.stringify(mig.meta.settings));
+
+  // v5 存档里的 inventory 要转成 bag 条目
+  const v5s = JSON.stringify({
+    version: 5, meta: { coins: 5, inventory: ['longCloak', 'windBoots'],
+                        inventoryLevels: { longCloak: 3 }, skills: {}, potions: {},
+                        upgrades: {}, equipment: {} }, hub: null,
+  });
+  const m5 = L.deserialize(v5s);
+  eq(m5.version, 6, 'v5 → v6');
+  eq(m5.meta.bag && m5.meta.bag.length, 2, 'v5 的两件库存转成两个条目');
+  const bag5 = (m5.meta.bag || []);
+  const lc = bag5.filter((e) => e.id === 'longCloak')[0];
+  eq(lc && lc.level, 3, '条目保留原等级');
+  eq(bag5.filter((e) => e.id === 'longCloak').length, 1, '按 id 去重，不凭空造件');
+  ok(bag5.length > 0 && bag5.every((e) => typeof e.uid === 'string' && e.uid.length > 0),
+    '每个条目都有 uid', JSON.stringify(bag5));
+  eq(bag5[1] && bag5[1].level, 1, '没有等级记录的条目默认 1 级');
+
+  // v4 存档要把整条链自己走完（4→5→6），不能靠兜底块
+  let m4 = null, e4 = null;
+  try {
+    m4 = L.deserialize(JSON.stringify({
+      version: 4, meta: { coins: 7, skills: {}, potions: {} }, hub: null,
+    }));
+  } catch (err) { e4 = err.message; }
+  ok(!e4, 'v4 老档能读出（4→5→6 链跑完）', e4 || '');
+  eq(m4 && m4.version, 6, 'v4 → 6');
+  ok(m4 && Array.isArray(m4.meta.bag) && m4.meta.bag.length === 0, 'v4 迁移得到空背包');
+
+  // 乱版本号仍然必须硬抛（迁移没覆盖到它）
+  let bogusThrew = false;
+  try { L.deserialize(JSON.stringify({ version: 999, meta: {} })); } catch (err) { bogusThrew = true; }
+  ok(bogusThrew, '未知版本号依然被拒绝（迁移只认已知版本）');
+}
+
+// ---------------------------------------------------------------- 10b. 背包条目
+section('10b. 背包条目（容量 / 落位 / uid）');
+{
+  ok(typeof L.bagAdd === 'function', 'logic 导出 bagAdd', typeof L.bagAdd);
+  const s = L.createState(1);
+  ok(s.meta.settings && s.meta.settings.volume === 0.30 && s.meta.settings.muted === false,
+    '新档自带 settings.volume = 0.30 / muted = false（缺了 Task 12 一读就崩）',
+    JSON.stringify(s.meta.settings));
+  ok(!s.meta.inventory && !s.meta.inventoryLevels, '新档没有旧的 inventory 字段');
+
+  // uid 必须存档往返后仍然不撞
+  // 未实现时 bagAdd 是 undefined，会在这里抛 TypeError 而不是记一条失败 ——
+  // 用 ok() 包一层，红的时候看到的是"哪个 API 缺了"，不是一个栈。
+  const hasBag = typeof L.bagAdd === 'function' && Array.isArray(s.meta.bag);
+  const a1 = hasBag ? L.bagAdd(s, 'longCloak', 2) : -99;
+  eq(a1, 0, '首件落在下标 0');
+  eq(s.meta.bag && s.meta.bag[0] && s.meta.bag[0].level, 2, '落位保留传入等级');
+  const uidA = (s.meta.bag && s.meta.bag[0] && s.meta.bag[0].uid) || '';
+  const phones = L.deserialize(L.serialize(s));
+  const pbag = phones.meta.bag || [];
+  eq(pbag[0] && pbag[0].uid, uidA, 'uid 跨序列化保留（否则读档后新条目会撞旧 uid）');
+  const idx2 = typeof L.bagAdd === 'function' ? L.bagAdd(phones, 'longCloak', 1) : -99;
+  ok(pbag[idx2] && pbag[idx2].uid !== uidA, '读档后再加同 id，uid 不重复',
+    (pbag[idx2] && pbag[idx2].uid) + ' vs ' + uidA);
+
+  // 容量 = 页数 × 35
+  eq(L.bagCapacity ? L.bagCapacity(s) : -1, 35, '一页容量 35');
+  s.meta.bagPages = 2;
+  eq(L.bagCapacity ? L.bagCapacity(s) : -1, 70, '两页容量 70');
+  s.meta.bagPages = 1;
+
+  eq(L.bagCount ? L.bagCount(s) : -1, 1, 'bagCount 计数');
+  eq(L.bagIndexOfUid ? L.bagIndexOfUid(s, uidA) : -2, 0, '按 uid 查下标');
+  eq(L.bagIndexOfUid ? L.bagIndexOfUid(s, '不存在') : -2, -1, '查不到返回 -1');
+  ok(L.bagAt ? L.bagAt(s, 50) === null : false, '越界取格返回 null，不是 undefined');
+
+  // 满了返回 -1，不越界、不静默丢弃内容
+  const full = L.createState(2);
+  const fbag = full.meta.bag || [];
+  for (let i = 0; i < 35; i++) if (L.bagAdd) L.bagAdd(full, 'strawShoes', 1);
+  eq(fbag.length, 35, '容量内加满 35 件');
+  eq(L.bagAdd ? L.bagAdd(full, 'strawShoes', 1) : 0, -1, '满页后 bagAdd 返回 -1');
+  eq(fbag.length, 35, '满页后长度没有被撑爆');
+
+  const rm = L.bagRemove ? L.bagRemove(s, 0) : { ok: false };
+  ok(rm.ok, '能移除条目');
+  eq((s.meta.bag || []).length, 0, '移除后少一件');
+  eq(L.bagRemove ? L.bagRemove(s, 0).ok : true, false, '空格子上移除失败');
+
+  // 掉落接进背包：满包时落在末格并标记 bagFull（设计 §4.7：不丢装备）
+  const dropFull = L.createState(3);
+  for (let i = 0; i < 35; i++) if (L.bagAdd) L.bagAdd(dropFull, 'strawShoes', 1);
+  const dfbag = dropFull.meta.bag || [];
+  const lastUid = (dfbag[34] || {}).uid;
+  const d = L.rollEquipDrop(dropFull);
+  ok(d && d.bagFull === true, '满包掉落标记 bagFull', JSON.stringify(d));
+  eq(dfbag.length, 35, '满包掉落不越界（仍是 35 件）');
+  eq(dfbag[34] && dfbag[34].id, d && d.id, '满包掉落写在末格（不丢装备）');
+  ok(dfbag[34] && dfbag[34].uid !== lastUid,
+    '末格换成了新条目（带新 uid）');
+
+  const d2 = L.rollEquipDrop(L.createState(4));
+  ok(d2.bagFull === false, '有空位时 bagFull 为 false', JSON.stringify(d2));
 }
 
 // ---------------------------------------------------------------- 11. 边界
@@ -1076,7 +1188,7 @@ section('22. 药水（消耗品）');
   let migrated = null, loadErr = null;
   try { migrated = L.deserialize(oldJson); } catch (err) { loadErr = err.message; }
   ok(!loadErr, 'v3 旧档能读出（不抛错误）', loadErr || '');
-  ok(migrated && migrated.version === 5, 'v3 旧档读取后升到 v5（跨两级迁移）',
+  ok(migrated && migrated.version === L.STATE_VERSION, 'v3 旧档读取后升到当前版本（跨三级迁移）',
     migrated ? String(migrated.version) : 'null');
   ok(migrated && migrated.meta.potions && migrated.meta.potions.heal === 0,
     '旧档补齐 potions 且默认是 0（不白送）',
@@ -1084,8 +1196,8 @@ section('22. 药水（消耗品）');
   ok(migrated && migrated.meta.equipment && migrated.meta.equipment.weapon === null,
     '旧档补齐五个空装备位（不白送装备）',
     JSON.stringify(migrated && migrated.meta.equipment));
-  ok(migrated && Array.isArray(migrated.meta.inventory)
-     && migrated.meta.inventory.length === 0, '旧档补齐空背包');
+  ok(migrated && Array.isArray(migrated.meta.bag)
+     && migrated.meta.bag.length === 0, '旧档得到空背包（v6 条目数组）');
   ok(migrated && migrated.meta.coins === 10 && migrated.meta.bestWave === 2,
     '迁移不丢原有数据');
 
@@ -1101,7 +1213,8 @@ section('22. 药水（消耗品）');
   let m4 = null, e4 = null;
   try { m4 = L.deserialize(v4Json); } catch (err) { e4 = err.message; }
   ok(!e4, 'v4 旧档能读出', e4 || '');
-  ok(m4 && m4.version === 5, 'v4 → v5', m4 ? String(m4.version) : 'null');
+  ok(m4 && m4.version === L.STATE_VERSION, 'v4 → 当前版本',
+    m4 ? String(m4.version) : 'null');
   ok(m4 && m4.meta.potions.heal === 2, 'v4 迁移保留已有药水（不清零）',
     JSON.stringify(m4 && m4.meta.potions));
   ok(m4 && m4.meta.upgrades.damage === 1 && m4.meta.skills.whirl === 2,
@@ -1285,7 +1398,7 @@ section('25. 装备（买卖 / 背包 / 卸下）');
   ok(b1.ok, '能买到装备');
   ok(s.meta.coins === 10000 - C.EQUIPMENT.ironHelm.price, '买装备扣钱',
     String(s.meta.coins));
-  ok(s.meta.inventory.indexOf('ironHelm') >= 0, '买到的装备进背包');
+  ok(L.bagCount(s) === 1 && L.bagAt(s, 0).id === 'ironHelm', '买到的装备进背包');
 
   const b2 = L.buyEquipment(s, 'ironHelm');
   ok(b2.ok === false, '已拥有的装备不能重复买', JSON.stringify(b2));
@@ -1294,34 +1407,41 @@ section('25. 装备（买卖 / 背包 / 卸下）');
   const e1 = L.equipItem(s, 'ironHelm');
   ok(e1.ok, '能穿上装备');
   ok(s.meta.equipment.head && s.meta.equipment.head.id === 'ironHelm', '装备位记录正确');
-  ok(s.meta.inventory.indexOf('ironHelm') < 0, '穿上后从背包移除');
+  ok(L.bagCount(s) === 0, '穿上后从背包移除');
 
   // 同部位换装：旧装备回背包，不消失
   L.buyEquipment(s, 'leatherHelm');
   const e2 = L.equipItem(s, 'leatherHelm');
   ok(e2.ok, '能换装');
   ok(s.meta.equipment.head.id === 'leatherHelm', '新装备穿上');
-  ok(s.meta.inventory.indexOf('ironHelm') >= 0, '被换下的装备回到背包（不凭空消失）');
+  ok(L.bagAt(s, L.bagCount(s) - 1).id === 'ironHelm', '被换下的装备回到背包（不凭空消失）');
 
   // 卸下
   const u1 = L.unequipSlot(s, 'head');
   ok(u1.ok, '能卸下装备');
   ok(s.meta.equipment.head === null, '卸下后该部位为空');
-  ok(s.meta.inventory.indexOf('leatherHelm') >= 0, '卸下的装备回背包');
+  ok(L.bagAt(s, L.bagCount(s) - 1).id === 'leatherHelm', '卸下的装备回背包');
 
   // 卸下后加成消失
   const st = L.playerStats(s);
   ok(st.maxHp === C.BASE_HP, '全部卸下后回到基础值', String(st.maxHp));
 
   // 背包里的装备也能升级
-  const invId = s.meta.inventory[0];
+  const invId = L.bagAt(s, 0).id;
   s.meta.coins = 10000;
   const cost = L.equipUpgradeCost(s, invId);
   ok(cost !== null, '背包里的装备可以升级（有价格）', String(cost));
   const up = L.upgradeEquipment(s, invId);
   ok(up.ok, '升级成功');
-  ok((s.meta.inventoryLevels[invId] || 1) === 2, '背包装备等级 +1',
-    String(s.meta.inventoryLevels[invId]));
+  ok(L.bagAt(s, 0).level === 2, '背包装备等级 +1', String(L.bagAt(s, 0).level));
+
+  // 重复件各占一格、各升各的：升级不能把同 id 的另一件一起抬上去
+  const dupUp = L.createState(31338);
+  dupUp.meta.bag = [L.bagEntry(dupUp, 'ironHelm', 1), L.bagEntry(dupUp, 'ironHelm', 1)];
+  dupUp.meta.coins = 10000;
+  ok(L.upgradeEquipment(dupUp, 'ironHelm').ok, '重复件可以升级');
+  eq(dupUp.meta.bag[0].level, 2, '只升了第一件');
+  eq(dupUp.meta.bag[1].level, 1, '另一件同 id 的不跟着涨级');
 
   // 没拥有的不能升级
   const nope = L.upgradeEquipment(s, 'trident');
@@ -1341,7 +1461,7 @@ section('26. 装备（掉落 5% / 重复件也进背包）');
   // "随机数实现的快照"，改一下 RNG 就红，那不是在测掉落率。
   const s = L.createState(777);
   s.meta.equipment = { head: null, torso: null, back: null, weapon: null, feet: null };
-  s.meta.inventory = [];
+  s.meta.bag = [];
   let drops = 0, tries = 4000;
   for (let i = 0; i < tries; i++) if (L.tryEquipDrop(s)) drops++;
   const rate = drops / tries;
@@ -1369,29 +1489,30 @@ section('26. 装备（掉落 5% / 重复件也进背包）');
   // 重复品仍然进库存，**不会**因为重复就被吞掉或折算。
   //
   // 注意两处顺序/命名陷阱（都踩过）：
-  //  1. 上面那个 5000 次的 warm-up 循环**每一次都在 push**，所以它结束时
-  //     inventory 已经被撑到 11 件。`invBefore` 必须在**重新播种之后**取，
-  //     否则拿到的是 11，`invBefore + 1` 就是 12，断言必挂。
-  //  2. 是 `meta.inventory.lastIndexOf`，**不是** `meta.lastIndexOf` ——
-  //     `meta` 是普通对象，写成后者会 `TypeError`，整个套件在汇总前就崩掉。
+  //  1. 上面那个 5000 次的 warm-up 循环**每一次都在入格**，它结束时背包
+  //     已经不是空的。`invBefore` 必须在**重新播种之后**取，
+  //     否则基数不对，`+1` 的断言必挂。
+  //  2. 用 `L.bagCount(state)` / `L.bagAt(state, i)` 读，**不是**直接伸手
+  //     `state.meta.bag[i]` —— 越界时后者是 `undefined`，取 `.id` 会 `TypeError`，
+  //     整个套件在汇总前就崩掉，看不到真正的失败项。
   const seeded = Object.keys(C.ALL_EQUIPMENT)
     .filter(function (i) { return C.ALL_EQUIPMENT[i].kind === 'base'; });   // 全部已拥有
-  dupState.meta.inventory = seeded.slice();
-  const invBefore = dupState.meta.inventory.length;        // === 21，此刻才取
+  dupState.meta.bag = seeded.map(function (i) { return L.bagEntry(dupState, i, 1); });
+  const invBefore = L.bagCount(dupState);                  // === 21，此刻才取
   const dupProbe = L.rollEquipDrop(dupState);
   ok(dupProbe && dupProbe.duplicate === true, '全拥有时掉落判定为重复');
   // 重复品"没被吞掉"的唯一含义就是库存**增长**：
   // 全 21 件已拥有 → 再掉一件 → 22。
   // 原稿写 === 21 是退款时代的残留（那时重复分支不 push，21 才成立）。
-  ok(dupState.meta.inventory.length === invBefore + 1, '重复品进了库存（没被吞掉）');
-  ok(dupState.meta.inventory.length === 22, '正好多一件（21 件已拥有 + 1 件重复掉落）');
-  ok(dupState.meta.inventory.lastIndexOf(dupProbe.id) === dupState.meta.inventory.length - 1,
+  ok(L.bagCount(dupState) === invBefore + 1, '重复品进了背包（没被吞掉）');
+  ok(L.bagCount(dupState) === 22, '正好多一件（21 件已拥有 + 1 件重复掉落）');
+  const lastEntry = L.bagAt(dupState, L.bagCount(dupState) - 1);
+  ok(lastEntry && lastEntry.id === dupProbe.id,
      '新增的那一件就是刚落下的 id（不是别处凭空多出来的）');
   ok(dupState.meta.coins === 0, '重复品不再产生任何铜币');
 
-  // 注：`meta.inventory` 在 Task 2 会整体迁移成 `meta.bag` 条目数组。
-  // 本任务断言的是"refund 已消失、重复品不消失"，**不依赖 Task 2 的模型**；
-  // Task 2 完成后这三条会跟着迁移（Task 2 的测试负责覆盖 bag 版本）。
+  // 注：库存已是 `meta.bag` 条目数组（v6）。本段断言的是"refund 已消失、
+  // 重复品不消失"，条目数组本身的语义由上面 10b 段覆盖。
 
   ok(C.EQUIP_DROP.chance === 0.05, '掉落率在配置里，值 0.05');
 }
