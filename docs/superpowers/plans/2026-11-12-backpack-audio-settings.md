@@ -894,6 +894,10 @@ Expected: FAIL。
 
 排序用 `Array.prototype.sort` 加明确的比较链；**由于 `sort` 在 V8 上已稳定**，四段比较写完即可保证「同 input 同 output」。`bagFilter` 的 `'special'` 分支判据是 `C.equipDef(e.id).kind === 'special'`。
 
+⚠ **必须同时把 `sortBag` / `bagFilter` 加进 `game/logic.js` 末尾的 API 导出块**
+（`module.exports = API` 那段，Task 4 时 `bagIndexOfId` 就是漏在这）
+—— 否则测试里 `L.sortBag` 是 `undefined`，红阶段能过、绿阶段永远过不了。
+
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `"$N" tests/test_bag.js`
