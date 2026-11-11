@@ -404,29 +404,37 @@ L.upgradeEquipment(s2, 'longCloak', uidB);
 ok(s2.meta.bag[0].level === 1, '没有 uid 的那件没被动过');
 ok(s2.meta.bag[1].level === 2, '指定 uid 的那件被升级');
 
-// 报价也要按 uid 指定的那件算，否则玩家会被按错件收费
+// 报价也要按 uid 指定的那件算，否则玩家会被按错件收费。
+// **必须用满级 >=4 的装备**：longCloak 满级只有 3，Lv3 是满级，
+// equipUpgradeCost 正确返回 null，拿它断言"4 级的价"永远不可能成立（实测）。
+// bloodCharm 是背部特效件，满级 5（实测 equipMaxLevel=5、equipPrice(bloodCharm,4)=2439）。
 const s3 = L.createState(13);
-L.bagAdd(s3, 'longCloak', 1);
-L.bagAdd(s3, 'longCloak', 3);
+L.bagAdd(s3, 'bloodCharm', 1);
+L.bagAdd(s3, 'bloodCharm', 3);
 s3.meta.coins = 99999;
 const uidHi = s3.meta.bag[1].uid;
-const costHi = L.equipUpgradeCost(s3, 'longCloak', uidHi);
-const costLo = L.equipUpgradeCost(s3, 'longCloak');
+const costHi = L.equipUpgradeCost(s3, 'bloodCharm', uidHi);
+const costLo = L.equipUpgradeCost(s3, 'bloodCharm');
 ok(costHi !== costLo, '按 uid 与不按 uid 的报价不同（等级不同，价就不同）');
-ok(costHi === C.equipPrice('longCloak', 4), '按 Lv3 那件报价 = 下一级(4)的价');
-ok(costLo === C.equipPrice('longCloak', 2), '不带 uid 按第一件(Lv1)报价 = 2 级的价');
+ok(costHi === C.equipPrice('bloodCharm', 4), '按 Lv3 那件报价 = 下一级(4)的价');
+ok(costLo === C.equipPrice('bloodCharm', 2), '不带 uid 按第一件(Lv1)报价 = 2 级的价');
 
-// 穿戴也要能指定：穿背包里第 2 件，且穿走的是它的等级
+// 穿戴也要能指定：穿背包里第 2 件，且穿走的是它的等级。
+// **等级不能超过满级**（longCloak 满级 3），否则是在断言一个当时不可能存在的状态。
 const s4 = L.createState(14);
 L.bagAdd(s4, 'longCloak', 1);
-L.bagAdd(s4, 'longCloak', 4);
+L.bagAdd(s4, 'longCloak', 3);
 const uidWear = s4.meta.bag[1].uid;
 L.equipItem(s4, 'longCloak', uidWear);
-eq(s4.meta.equipment.back.level, 4, '穿上的是 uid 指定那件（等级 4）');
+eq(s4.meta.equipment.back.level, 3, '穿上的是 uid 指定那件（等级 3 = 满级）');
 eq(s4.meta.bag[0].level, 1, '另一件留在背包里，等级没变');
 
 // 三处判定都不能选错：已穿戴优先于背包（Review Focus #3）
+// **必须给铜币**：createState 默认 coins = 0，而 longCloak 售价 200，
+// 不给钱 buyEquipment 会返回 {ok:false, reason:'铜币不够'}，
+// equipOwned 停在 'owned'，断言会因无关原因失败（实测）。
 const s5 = L.createState(15);
+s5.meta.coins = 99999;
 L.buyEquipment(s5, 'longCloak');
 L.equipItem(s5, 'longCloak');
 L.bagAdd(s5, 'longCloak', 5);
