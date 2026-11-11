@@ -1996,6 +1996,9 @@ git commit -m "feat(audio): 自建 AudioContext 合成 17 个音效 + 音量控�
 - Consumes: Task 9 的暂停封装、Task 12 的 `GameAudio.setMasterVolume`
 - Produces:
   - `exitRun(state) -> { ok, coins, hpRatio }` —— 按血量折扣结算
+  - `escMenuRows(state) -> string[]` —— 纯函数：`phase === 'run'` 时 `['设置','退出战斗']`，
+    其余（hub/farm/dead）`['设置']`。**必须加进 `game/logic.js` 末尾的 API 导出块**——
+    Task 4 漏导出过 `bagIndexOfId`、Task 6 漏导出过 `sortBag`，这是本仓库第 N 次同类坑。
   - 菜单：战斗中两行 `设置` / `退出战斗`；基地只有 `设置`
 
 - [ ] **Step 1: 写测试（V22 逻辑侧 + V20/V21/V23 浏览器侧）**
@@ -2131,7 +2134,19 @@ Expected: FAIL —— `L.exitRun is not a function`、`L.escMenuRows is not a fu
 
 - [ ] **Step 3: 实现**
 
-- 菜单开关用 `justPressed('esc')`
+- **菜单开关绝对不能写在 `update()` 里的 `justPressed('esc')`** —— 这是 Task 9 已经踩过的同一个坑：
+  菜单一开就 `scene.pause()`，该场景的 `update()` 立刻停止，于是"再按 ESC 关掉"永远不会被执行，
+  菜单永久卡死、游戏永久暂停，只能刷新页面。
+  正确做法照抄 Tab（`game/app.js:882-888`）：在 `createInput` 的 `onDown` 里当场处理——
+  ```js
+  if (name === 'esc' && typeof scene.toggleEscMenu === 'function') { scene.toggleEscMenu(); return; }
+  ```
+  **注意 `typeof ... === 'function'` 这个守卫不能省**：`FarmScene` 现在靠
+  `this.input2.justPressed('esc')` 回基地（`game/app.js` 里那句 `if (this.input2.justPressed('esc')) this.leave();`），
+  如果在 `onDown` 里无差别 `return`，`down.esc` 就永远不会被置位，**农场的 ESC 会直接失效**。
+  只有 Hub 与 Run 两个场景挂 `toggleEscMenu`，农场不受影响。
+- **与背包的先后关系**：ESC 菜单打开前先 `if (window.BagHud.isOpen()) { BagHud.close(); return; }` ——
+  背包开着时按 ESC 应该是"关背包"，不是"叠一层设置菜单"（两层都 `pause()`，恢复顺序会打架）。
 - 打开菜单 `scene.pause()`
 - 滑块：**圆形钮**，左端 0 右端 100，**左侧已扫过区域填充绿色**
 - 音乐滑块先落地**但不接音源**（没有 BGM），**界面上必须写明**，否则玩家以为坏了
