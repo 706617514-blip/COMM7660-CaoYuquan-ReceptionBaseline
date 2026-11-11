@@ -835,6 +835,107 @@ section('20. 成熟田自动产出，不需要手动收取');
      r.reason);
 }
 
+// ---------------------------------------------------------------- 21. Boss
+section('21. 藤蔓 Boss：技能、前摇、可躲避性');
+{
+  // Boss 的行为必须可测，否则"能不能靠闪现躲开全屏技能"这种要求
+  // 只能靠手感判断 —— 而那正是玩家投诉最多的地方。
+  const { s, run } = armedRun('wood', 480, 105);
+  run.enemies.length = 0;
+  run.spawnQueue.length = 0;
+  run.waveState = 'break';
+  run.breakTimer = 9999;
+
+  const boss = L.spawnBoss(s, run, 'normal');
+  ok(!!boss, '能生成 Boss');
+  ok(boss.isBoss === true, 'Boss 带 isBoss 标记');
+  ok(boss.hp > 400, 'Boss 血量远高于小怪', boss.hp);
+  ok(boss.speed < 40, 'Boss 移动很慢', boss.speed);
+
+  // (a) 技能表齐全：2 近身 + 2 范围 + 1 全屏
+  const skills = boss.bossSkills || [];
+  eq(skills.length, 5, 'Boss 有 5 个技能');
+  const byRange = skills.reduce((acc, k) => { acc[k.range] = (acc[k.range] || 0) + 1; return acc; }, {});
+  eq(byRange.melee, 2, '2 个近身技能');
+  eq(byRange.area, 2, '2 个范围技能');
+  eq(byRange.full, 1, '1 个全屏技能');
+
+  // (b) 范围技能不超过半屏（960 宽 → 半屏 480）
+  skills.filter(k => k.range === 'area').forEach(k => {
+    ok(k.radius * 2 <= 480, `${k.name} 的范围不超过半屏`, `直径 ${k.radius * 2}px`);
+  });
+
+  // (c) 全屏技能有前摇，且前摇足够长到能用闪现躲开
+  const full = skills.find(k => k.range === 'full');
+  ok(full.windup >= 1.0, '全屏技能有至少 1 秒前摇', `${full.windup}s`);
+  const blinkDist = C.SKILLS.blink.distance;
+  ok(full.windup > 0.35,
+     '前摇时长足以完成一次闪现（闪现无前摇）', `${full.windup}s > 0.35s`);
+
+  // (d) 在爆发前 0.3 秒闪现，靠无敌帧躲开
+  {
+    const r2 = armedRun('wood', 480, 105);
+    r2.run.enemies.length = 0; r2.run.spawnQueue.length = 0;
+    r2.run.waveState = 'break'; r2.run.breakTimer = 9999;
+    const b2 = L.spawnBoss(r2.s, r2.run, 'normal');
+    b2.x = 480; b2.z = 105;
+    r2.run.player.x = 480; r2.run.player.z = 105;
+    L.bossCast(r2.s, r2.run, b2, full.id);
+    const hpBefore = r2.run.player.hp;
+    const waitFrames = Math.floor((full.windup - 0.30) * 60);
+    for (let i = 0; i < waitFrames; i++) L.step(r2.s, {}, DT);
+    L.step(r2.s, { blink: true }, DT);
+    for (let i = 0; i < 90; i++) L.step(r2.s, {}, DT);
+    ok(r2.run.player.hp >= hpBefore - 1,
+       '在爆发前 0.3 秒闪现，靠无敌帧躲开全屏技能',
+       `${hpBefore} -> ${r2.run.player.hp}`);
+  }
+
+  // (d2) 闪现按得太早，无敌帧过期，仍会被打中
+  {
+    const r2b = armedRun('wood', 480, 105);
+    r2b.run.enemies.length = 0; r2b.run.spawnQueue.length = 0;
+    r2b.run.waveState = 'break'; r2b.run.breakTimer = 9999;
+    const b2b = L.spawnBoss(r2b.s, r2b.run, 'normal');
+    b2b.x = 480; b2b.z = 105;
+    r2b.run.player.x = 480; r2b.run.player.z = 105;
+    L.bossCast(r2b.s, r2b.run, b2b, full.id);
+    const hpBefore2 = r2b.run.player.hp;
+    L.step(r2b.s, { blink: true }, DT);
+    for (let i = 0; i < 150; i++) L.step(r2b.s, {}, DT);
+    ok(r2b.run.player.hp < hpBefore2,
+       '闪现按得太早，无敌帧过期，仍会被打中',
+       `${hpBefore2} -> ${r2b.run.player.hp}`);
+  }
+
+  // (e) 不躲则会被全屏技能打中
+  {
+    const r3 = armedRun('wood', 480, 105);
+    r3.run.enemies.length = 0; r3.run.spawnQueue.length = 0;
+    r3.run.waveState = 'break'; r3.run.breakTimer = 9999;
+    const b3 = L.spawnBoss(r3.s, r3.run, 'normal');
+    b3.x = 480; b3.z = 105;
+    r3.run.player.x = 480; r3.run.player.z = 105;
+    L.bossCast(r3.s, r3.run, b3, full.id);
+    const hpBefore = r3.run.player.hp;
+    for (let i = 0; i < 150; i++) L.step(r3.s, {}, DT);
+    ok(r3.run.player.hp < hpBefore,
+       '站着不动会被全屏技能打中', `${hpBefore} -> ${r3.run.player.hp}`);
+  }
+
+  // (f) 三档难度数值递增
+  const tiers = ['normal', 'hard', 'hell'].map(t2 => {
+    const r4 = armedRun('wood', 480, 105);
+    r4.run.enemies.length = 0; r4.run.spawnQueue.length = 0;
+    r4.run.waveState = 'break'; r4.run.breakTimer = 9999;
+    return L.spawnBoss(r4.s, r4.run, t2);
+  });
+  ok(tiers[1].hp > tiers[0].hp, '困难档血量高于普通', `${tiers[0].hp} -> ${tiers[1].hp}`);
+  ok(tiers[2].hp > tiers[1].hp, '地狱档血量高于困难', `${tiers[1].hp} -> ${tiers[2].hp}`);
+  ok(tiers[1].damage > tiers[0].damage, '困难档伤害高于普通');
+  ok(tiers[2].damage > tiers[1].damage, '地狱档伤害高于困难');
+}
+
 // ---------------------------------------------------------------- 汇总
 console.log('\n' + '='.repeat(56));
 if (fail === 0) {

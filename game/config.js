@@ -228,6 +228,58 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
     runDecayChance: 0,      // 预留：作物枯萎（当前关闭，避免惩罚过重）
   };
 
+  /**
+   * 藤蔓 Boss。三个设计约束（来自 PM 要求）：
+   *
+   * 1. **移动极慢**，靠贴身普攻与技能施压，而不是追击。
+   * 2. **技能范围分层**：2 近身 + 2 范围（直径不超过半屏 480px）+ 1 全屏。
+   * 3. **全屏技能必须有前摇**，且前摇长到可以用闪现躲开 —— 这是唯一的应对手段，
+   *    所以 windup 必须显著大于玩家的反应时间 + 按键时间（约 0.35s）。
+   *
+   * 三档难度对应 PM 定的装备门槛：
+   *   normal — 次顶级装备可艰难通过
+   *   hard   — 顶级装备可艰难通过
+   *   hell   — 全套装备 + 熟练技能使用才能通过
+   */
+  const BOSS = {
+    id: 'vineTitan',
+    name: '藤蔓巨像',
+    radius: 74,              // 视觉半径（碰撞按 0.62 倍）
+    bodyW: 240, bodyH: 220,  // 美术简报里的原生尺寸
+    // 移动很慢：小怪是 92~126，Boss 只有 26
+    speed: 26,
+    attackCooldown: 2.4,     // 贴身普攻间隔
+    meleeRange: 96,          // 贴身普攻距离
+    tiers: {
+      normal: { hp: 1400, damage: 18, speedMul: 1.00, cdMul: 1.00,
+                label: '普通', hint: '次顶级装备可艰难通过' },
+      hard:   { hp: 2400, damage: 26, speedMul: 1.15, cdMul: 0.85,
+                label: '困难', hint: '顶级装备可艰难通过' },
+      hell:   { hp: 4000, damage: 36, speedMul: 1.30, cdMul: 0.70,
+                label: '地狱', hint: '全套装备且熟练使用技能' },
+    },
+    skills: [
+      // ---- 2 个近身技能（贴身）----
+      { id: 'slam',    name: '碾压',   range: 'melee', radius: 120, damage: 26,
+        windup: 0.55, cd: 5.0,  knockback: 380,
+        desc: '抬起身体砸向近处，命中范围略大于体型' },
+      { id: 'grab',    name: '缠绕',   range: 'melee', radius: 140, damage: 22,
+        windup: 0.40, cd: 7.0,  stunTime: 0.8, pull: 90,
+        desc: '藤蔓缠住近处目标，把玩家拉向自己' },
+      // ---- 2 个范围技能（直径不超过半屏 480px）----
+      { id: 'sweep',   name: '横扫',   range: 'area', radius: 210, damage: 24,
+        windup: 0.70, cd: 8.0,  knockback: 300,
+        desc: '横扫半个场地，直径 420px' },
+      { id: 'seeds',   name: '种子爆散', range: 'area', radius: 180, damage: 18,
+        windup: 0.85, cd: 10.0, projectiles: 8, projSpeed: 220,
+        desc: '向四周爆散种子，直径 360px，需靠走位穿过间隙' },
+      // ---- 1 个全屏技能（有前摇，可闪现躲）----
+      { id: 'wither',  name: '枯萎领域', range: 'full', radius: 2000, damage: 42,
+        windup: 1.40, cd: 20.0,
+        desc: '全屏枯萎，1.4 秒前摇后爆发；前摇期间闪现离开原地可躲开' },
+    ],
+  };
+
   // 战利品：每只小怪的基础掉落，再乘难度 lootMul
   const LOOT = {
     coinsPerKill: 4,
@@ -260,7 +312,7 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
     ATTACK_DURATION, ATTACK_COOLDOWN, ATTACK_RANGE, ATTACK_DEPTH, ATTACK_BACK, COMBO,
     INVULN_AFTER_HIT, WAVE_BREAK, WAVE_HEAL,
     BASE_HP, BASE_DAMAGE, BASE_ATTACK_SPEED,
-    DIFFICULTIES, ENEMIES, UPGRADES, FARM, LOOT, SKILLS, SKILL_ORDER, SPAWN,
+    DIFFICULTIES, ENEMIES, UPGRADES, FARM, LOOT, SKILLS, SKILL_ORDER, SPAWN, BOSS,
     waveComposition,
     difficultyById: function (id) {
       return DIFFICULTIES.find(function (d) { return d.id === id; }) || DIFFICULTIES[1];

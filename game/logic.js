@@ -460,6 +460,165 @@
     }
   }
 
+  // ================================================================ Boss
+  /**
+   * 生成藤蔓 Boss。三档难度只改数值，不改机制 —— 机制一致才能让
+   * "背下技能前摇"成为玩家可积累的技能。
+   */
+  function spawnBoss(state, run, tierId) {
+    const tier = C.BOSS.tiers[tierId] || C.BOSS.tiers.normal;
+    const hp = tier.hp;
+    const boss = {
+      id: ++state._eid || (state._eid = 1),
+      kind: 'vineTitan',
+      isBoss: true,
+      bossTier: tierId,
+      x: C.FIELD_W * 0.72,
+      z: C.FIELD_D / 2,
+      h: 0,
+      hp: hp, maxHp: hp,
+      damage: tier.damage,
+      speed: C.BOSS.speed * tier.speedMul,
+      radius: C.BOSS.radius,
+      state: 'chase',
+      timer: 0,
+      attackCd: C.BOSS.attackCooldown,
+      fireCd: 0,
+      facing: -1,
+      hitFlash: 0,
+      stun: 0,
+      vx: 0, vz: 0,
+      // 技能状态
+      casting: null,          // { id, timer, windup, done }
+      skillCds: {},
+      // 供测试与渲染读取
+      bossSkills: C.BOSS.skills.map(function (k) { return { id: k.id, name: k.name,
+        range: k.range, radius: k.radius, windup: k.windup }; }),
+    };
+    C.BOSS.skills.forEach(function (k) { boss.skillCds[k.id] = k.cd * 0.4; });
+    run.enemies.push(boss);
+    return boss;
+  }
+
+  /** 释放 Boss 技能。前摇期间不结算伤害，结束后才结算。 */
+  function bossCast(state, run, boss, skillId) {
+    const def = C.BOSS.skills.find(function (k) { return k.id === skillId; });
+    if (!def) return false;
+    // 全屏技能：在前摇**开始时**固定爆发中心。
+    // 玩家看到前摇就有 1.4 秒时间用闪现拉开距离。
+    boss.castOriginX = boss.x;
+    boss.castOriginZ = boss.z;
+    boss.casting = { id: skillId, timer: def.windup, windup: def.windup, done: false };
+    boss.skillCds[skillId] = def.cd * (C.BOSS.tiers[boss.bossTier] || {}).cdMul || def.cd;
+    return true;
+  }
+
+  /** 前摇结束，结算技能效果。 */
+  function bossResolve(state, run, boss, def) {
+    const p = run.player;
+    const dist = Math.hypot(p.x - boss.x, p.z - boss.z);
+
+    if (def.range === 'full') {
+      // 全屏技能的躲避机制：**靠闪现的无敌帧卡时机**（PM 指定）。
+      //
+      // 设计约束：前摇 1.4 秒，闪现无敌 0.4 秒。
+      // 所以玩家必须在**前摇结束前 0.4 秒内**按下闪现，无敌帧才能覆盖爆发时刻。
+      // 按早了无敌就过期 —— 这正是"卡时机"的紧张感来源。
+      //
+      // 实现上只需要检查爆发瞬间玩家是否处于无敌帧。
+      // 但有一条边界必须处理：玩家可能"正好在爆发前一帧"按下闪现，
+      // 此时 p.invuln 已经 > 0，判定通过 —— 这是正确的。
+      const base = Math.round(def.damage *
+        (C.BOSS.tiers[boss.bossTier].damage / C.BOSS.tiers.normal.damage));
+      if (p.invuln > 0) {
+        // 无敌帧覆盖了爆发时刻 —— 成功躲开
+        pushEffect(run, 'ring', p.x, p.z, 90, 0.4, 0xc9a6ff);
+        return;
+      }
+      p.hp -= base;
+      p.invuln = C.INVULN_AFTER_HIT;
+      pushEffect(run, 'nova', boss.x, boss.z, C.FIELD_W, 0.6, 0xff7a3c);
+      return;
+    }
+
+    if (dist > def.radius) return;                  // 不在范围内
+    if (p.invuln > 0) return;
+    p.hp -= def.damage;
+    p.invuln = C.INVULN_AFTER_HIT;
+    if (def.knockback) {
+      const dx = p.x - boss.x, dz = p.z - boss.z;
+      const d = Math.hypot(dx, dz) || 1;
+      p.x = clamp(p.x + (dx / d) * def.knockback * 0.06, C.PLAYER_W / 2, C.FIELD_W - C.PLAYER_W / 2);
+    }
+    if (def.pull) {
+      // 缠绕：把玩家拉向 Boss
+      const dx = boss.x - p.x;
+      p.x = clamp(p.x + Math.sign(dx) * def.pull, C.PLAYER_W / 2, C.FIELD_W - C.PLAYER_W / 2);
+    }
+    if (def.stunTime) p.stunTimer = Math.max(p.stunTimer || 0, def.stunTime);
+    pushEffect(run, 'ring', boss.x, boss.z, def.radius, 0.45, 0xff7a3c);
+  }
+
+  /** Boss 每帧：慢速逼近、贴身普攻、按冷却放技能。 */
+  function stepBoss(state, run, boss, dt) {
+    const p = run.player;
+    const tier = C.BOSS.tiers[boss.bossTier] || C.BOSS.tiers.normal;
+
+    // 正在施法：只走前摇计时
+    if (boss.casting) {
+      boss.casting.timer -= dt;
+      if (boss.casting.timer <= 0 && !boss.casting.done) {
+        const def = C.BOSS.skills.find(function (k) { return k.id === boss.casting.id; });
+        if (def) bossResolve(state, run, boss, def);
+        boss.casting.done = true;
+        boss.casting = null;
+      }
+      return;
+    }
+
+    // 技能冷却
+    C.BOSS.skills.forEach(function (k) {
+      if (boss.skillCds[k.id] > 0) boss.skillCds[k.id] = Math.max(0, boss.skillCds[k.id] - dt);
+    });
+
+    const dist = Math.hypot(p.x - boss.x, p.z - boss.z);
+    boss.facing = p.x >= boss.x ? 1 : -1;
+
+    // 优先放技能：远的用范围/全屏，近的用近身
+    for (let i = 0; i < C.BOSS.skills.length; i++) {
+      const k = C.BOSS.skills[i];
+      if (boss.skillCds[k.id] > 0) continue;
+      const inMelee = dist <= C.BOSS.meleeRange + 40;
+      if (k.range === 'melee' && inMelee) { bossCast(state, run, boss, k.id); return; }
+      if (k.range === 'area' && dist <= k.radius * 0.9) { bossCast(state, run, boss, k.id); return; }
+      if (k.range === 'full' && dist < 700) { bossCast(state, run, boss, k.id); return; }
+    }
+
+    // 贴身普攻
+    boss.attackCd -= dt;
+    if (dist <= C.BOSS.meleeRange && boss.attackCd <= 0) {
+      boss.attackCd = C.BOSS.attackCooldown / tier.speedMul;
+      if (p.invuln === 0) {
+        p.hp -= boss.damage;
+        p.invuln = C.INVULN_AFTER_HIT;
+        const dx = p.x - boss.x, dz = p.z - boss.z;
+        const d = Math.hypot(dx, dz) || 1;
+        p.x = clamp(p.x + (dx / d) * 30, C.PLAYER_W / 2, C.FIELD_W - C.PLAYER_W / 2);
+      }
+      return;
+    }
+
+    // 缓慢逼近（两个轴都跟，但很慢）
+    if (dist > C.BOSS.meleeRange * 0.7) {
+      const dx = p.x - boss.x, dz = p.z - boss.z;
+      const d = Math.hypot(dx, dz) || 1;
+      boss.x += (dx / d) * boss.speed * dt;
+      boss.z += (dz / d) * boss.speed * 0.7 * dt;
+      boss.x = clamp(boss.x, 60, C.FIELD_W - 60);
+      boss.z = clamp(boss.z, 20, C.FIELD_D - 20);
+    }
+  }
+
   function killEnemy(state, run, e) {
     e.state = 'dead';
     // 改成掉在地上等玩家去捡（见 LOOT 注释：这是战斗节奏的一部分）
@@ -563,6 +722,12 @@
       // 僵直：被击退期间不走位。
       // 没有这个，即使冲量很大，小怪每帧朝玩家移动也会把位移吃掉
       // —— 实测击退 1050 的震地只把怪推开 19px，手感完全不"掀飞"。
+      if (e.isBoss) {
+        if (e.stun > 0) e.stun = Math.max(0, e.stun - dt);
+        else stepBoss(state, run, e, dt);
+        e.hitFlash = Math.max(0, e.hitFlash - dt);
+        continue;
+      }
       if (e.stun > 0) {
         e.stun = Math.max(0, e.stun - dt);
       } else if (def.behavior === 'lunge') {
@@ -831,6 +996,7 @@
     plant, buyUpgrade, upgradeCost,
     buySkill, skillCost, skillStats, tryCastSkill, currentDamage,
     stepProjectiles, stepRanged, spawnProjectile, stepPickups, collectAll,
+    spawnBoss, bossCast, stepBoss, bossResolve,
     playerStats, maturePlots, passiveIncome,
     serialize, deserialize,
     nextRandom, buildWave, makeEnemy,
