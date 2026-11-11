@@ -558,6 +558,37 @@ group('duplicateUids 与 sellableUids 等价', function(){
   eq(L.sellableUids(s).indexOf(s.meta.bag[2].uid), -1, '只有一件的 id 不进可卖列表');
 });
 
+// ---------------------------------------------------------------- 整理（排序）与页签过滤
+section('整理排序与页签过滤（V10、V11）');
+group('整理排序与页签过滤（V10、V11）', function(){
+  const s = L.createState(41);
+  L.bagAdd(s, 'longCloak', 1);      // base, back
+  L.bagAdd(s, 'thornMail', 1);      // special
+  L.bagAdd(s, 'longCloak', 3);
+  L.sortBag(s);
+  ok(s.meta.bag[0].id === 'thornMail', '特殊件排在基础件前');
+  ok(s.meta.bag[1].level === 3, '同 id 内等级高的在前');
+
+  // 「不同种类不独占一行」= 相同 id 必须挨在一起。
+  // ⚠ 不要写成 `ids.indexOf(X) + 1 === ids.lastIndexOf(X)` —— 实测该表达式
+  //   等价于「恰好出现两次且相邻」，对数量敏感：只出现一次时为 false
+  //   （会把正确实现判失败），三件同 id 时也为 false。要断言的是"分组连续"，
+  //   与出现几次无关，所以写成「对每个 id，其首次与末次出现之间不含别的 id」：
+  const ids = s.meta.bag.map((e) => e.id);
+  const grouped = ids.every((id) => {
+    const seg = ids.slice(ids.indexOf(id), ids.lastIndexOf(id) + 1);
+    return seg.every((x) => x === id);
+  });
+  ok(grouped === true, '同 id 的元素连续挨在一起，不被别的装备隔开（不独占行）');
+  ok(ids.indexOf('longCloak') >= 0 && ids.filter((x) => x === 'longCloak').length >= 2,
+     '前提成立：确实有两件 longCloak，否则上一条是空转');
+
+  // V11：页签过滤
+  ok(L.bagFilter(s.meta.bag, 'special').length === 1, '特殊页签只出特殊件');
+  ok(L.bagFilter(s.meta.bag, 'all').length === 3, '全部页签出所有件');
+  ok(L.bagFilter(s.meta.bag, 'weapon').length === 0, '空分类返回空数组而不是报错');
+});
+
 // ---------------------------------------------------------------- 汇总
 console.log('\n' + '='.repeat(56));
 if (fail === 0) {

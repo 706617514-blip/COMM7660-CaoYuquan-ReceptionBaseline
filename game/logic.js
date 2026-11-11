@@ -529,6 +529,70 @@
     return -1;
   }
 
+  // ---------------------------------------------------------------- 整理与页签过滤（§4.5）
+  /**
+   * 排序键的四段优先级（设计 §4.5，顺序不可调换）：
+   *   1. 特效装备在前、基础装备在后
+   *   2. 部位序 head → torso → back → weapon → feet
+   *   3. 等级**降序**（高的在前）
+   *   4. id 字典序 —— 前三条全并列时兜底，保证「同输入同输出」
+   *
+   * 前三段决定的是"哪一类排前面"，第四段才决定"同一类里谁先谁后"。
+   * 只看前两段就够把同 id 排在一起：同 id 必然同 kind、同 slot，
+   * 中间不可能夹进别的 id（等级/字典序只在同类内部起作用）。
+   */
+  function bagSortKey(entry) {
+    const def = C.equipDef(entry.id);
+    const special = !!(def && def.kind === 'special');
+    const slotRank = def ? C.EQUIP_SLOTS.indexOf(def.slot) : -1;
+    return {
+      kindRank: special ? 0 : 1,
+      // 查不到部位（含未知 id）排到最后，而不是因为 -1 就插到队首。
+      slotRank: slotRank < 0 ? C.EQUIP_SLOTS.length : slotRank,
+      level: entry.level || 1,
+      id: entry.id,
+    };
+  }
+
+  /**
+   * 原地整理背包（设计 §4.5）。返回 void —— 排序是背包自身的状态变更，
+   * 不产生新数组，否则调用方拿到的副本和真实背包会分叉。
+   *
+   * V8 的 Array.prototype.sort 已稳定，四段比较链写完之后，
+   * 完全相同的条目之间也保持原有相对顺序，「同输入同输出」由比较链本身保证。
+   */
+  function sortBag(state) {
+    if (!state || !state.meta) return;
+    const bag = state.meta.bag || [];
+    bag.sort(function (a, b) {
+      const ka = bagSortKey(a), kb = bagSortKey(b);
+      if (ka.kindRank !== kb.kindRank) return ka.kindRank - kb.kindRank;
+      if (ka.slotRank !== kb.slotRank) return ka.slotRank - kb.slotRank;
+      if (ka.level !== kb.level) return kb.level - ka.level;
+      return ka.id < kb.id ? -1 : (ka.id > kb.id ? 1 : 0);
+    });
+  }
+
+  /**
+   * 按页签过滤背包，返回**条目数组**（每项仍是 {id, level, uid}），不是 uid 列表 ——
+   * 调用方要读等级和 uid 才能渲染格子、点选穿哪一件。
+   *
+   * 'all' 返回全部；'special' 按 kind 判；其余按 def.slot 判。
+   * 空分类 / 未知页签返回空数组而不是 null：UI 拿到 null 就得处处判空。
+   *
+   * 'all' 返回浅拷贝：UI 若对结果再排序，不会顺手把真实背包也排掉。
+   */
+  function bagFilter(bag, tab) {
+    const list = bag || [];
+    if (!tab || tab === 'all') return list.slice();
+    return list.filter(function (e) {
+      const def = C.equipDef(e.id);
+      if (!def) return false;
+      if (tab === 'special') return def.kind === 'special';
+      return def.slot === tab;
+    });
+  }
+
   // ---------------------------------------------------------------- 装备
   /**
    * 某件装备当前的持有状态。
@@ -2036,6 +2100,8 @@
     bagAdd, bagRemove, bagAt, bagCount, bagCapacity,
     bagIndexOfId, bagIndexOfUid, bagEntry, nextUid,
     buyBagPage, pageOf, pageSlice, normBagPages,
+    // 整理与页签过滤（§4.5）：sortBag 原地排，bagFilter 返回条目数组。
+    sortBag, bagFilter,
     playerStats, maturePlots, passiveIncome,
     serialize, deserialize,
     nextRandom, buildWave, makeEnemy,
