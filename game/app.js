@@ -95,6 +95,38 @@
   }
 
   /**
+   * 头顶键帽：26x26 灰底圆角方块 + 一个黑色 J，贴在角色右上方。
+   *
+   * 为什么不是继续在地面写字：长文案（「按 J · 名字（提示）」）正好压在角色
+   * 与设施的脚边，走到跟前就被自己挡住；而且名字越长那行字越宽，六处点位
+   * 各写一行，画面上到处是黄字。键帽是一个固定的、离角色最近的提示符号。
+   *
+   * 尺寸写死 26x26、不随景深缩放：键帽是 UI，缩到 23px 反而糊。
+   * 透明度从 0 开始（create 之后由 update 根据需要淡入），配合 setVisible
+   * 让"没靠近"时它连绘制都省掉。
+   */
+  function makeKeycap(scene) {
+    const c = scene.add.container(0, 0);
+    const g = scene.add.graphics();
+    g.fillStyle(0x5b616b, 1);                        // 键帽本体（灰）
+    g.fillRoundedRect(-13, -13, 26, 26, 7);
+    g.fillStyle(0x767e8b, 1);                        // 顶面高光：上半截更亮
+    g.fillRoundedRect(-11, -11, 22, 12, 5);
+    g.lineStyle(1.5, 0x22262c, 1);                   // 压边：从草地里拎出来
+    g.strokeRoundedRect(-13, -13, 26, 26, 7);
+    c.add(g);
+    c.add(scene.add.text(0, 1, 'J', {
+      fontFamily: 'monospace', fontSize: '15px', fontStyle: 'bold',
+      color: '#11131a',
+    }).setOrigin(0.5, 0.5));
+    // 容器自己不带尺寸，getBounds() 只量得到里面那个 J 字（10x17），
+    // 量不出键帽本体 —— 显式声明 26x26，测试与后续布局才有一个可读的尺寸。
+    c.setSize(26, 26);
+    // 角色 depth 是 1000 - hub.z（≈895），键帽必须高于它，否则被自己脑袋挡住
+    return c.setDepth(1500).setVisible(false).setAlpha(0);
+  }
+
+  /**
    * 按当前 meta.equipment 刷新五层贴图。
    * 幂等：key 没变就不动贴图引用，换装时才真正切一次。
    */
@@ -1351,7 +1383,15 @@
       // 区域美术：每个设施加一圈地面灯光，把视线聚过去；细节各自补足
       this.zoneArt = {};
       H.ZONES.forEach((z) => {
-        const y = GROUND_Y - (H.HUB_D / 2) * Z_TO_Y;
+        /*
+         * 每个设施自己站在哪一行，由它自己的纵深 z 决定（88 靠前 / 122 靠后）。
+         * 以前这里写死 GROUND_Y - (HUB_D / 2) * Z_TO_Y，六个设施共用同一个 y，
+         * 画面上就是一条直线；而 ZONES 里加了 z 之后，绘制端必须跟着数据走 ——
+         * 只改数据不改这里，改的是"判定"而不是"画面"，两边会各说各话。
+         * 缩放也取同一个 toScreen：靠后的设施略小一点，才像站在远处。
+         */
+        const seat = toScreen(z.x, z.z, 0);
+        const y = seat.sy;
 
         // 地面光池（ADD 混合，成本极低但质感提升明显）
         // 光池：给设施一个暖色地面反光。缩放与透明度都要克制，
@@ -1431,9 +1471,13 @@
             duration: 1200, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
         }
         img.setDepth(10);
+        // 景深缩放：z 越大站得越远，整体略小一点（0.90 ~ 0.92，肉眼刚好能感觉到）
+        img.setScale(seat.sc);
         this.zoneArt[z.id] = img;
 
-        // 标签做成胶囊，比裸文字清楚
+        // 标签做成胶囊，比裸文字清楚。
+        // 位置跟着这一行自己的 y 走：错落之后还写死一个 y，名字就会浮在设施上方
+        // 或压进土里（上排和下排差 35px，足够看出来）。
         const label = this.add.text(z.x, y + 14, z.name, {
           fontSize: '12px', color: '#e6eef6', fontFamily: 'sans-serif',
           backgroundColor: '#0b1117cc', padding: { x: 9, y: 4 },
@@ -1484,10 +1528,16 @@
         });
       }
 
-      this.prompt = this.add.text(0, 0, '', {
-        fontSize: '14px', color: '#ffe07a', backgroundColor: '#00000088',
-        padding: { x: 8, y: 4 }, fontFamily: 'sans-serif',
-      }).setOrigin(0.5, 1).setDepth(500).setVisible(false);
+      /*
+       * 头顶键帽（取代原来的地面长提示）。
+       *
+       * 老做法是在角色脚下写一行「按 J · 名字（提示）」。问题有两个：
+       *   1. 那行字压在角色与设施的脚边，走到跟前正好被自己挡住；
+       *   2. 它是"按当前判定现写一行字"，名字一长就横穿整个画布。
+       * 换成一个贴着头顶的 26x26 键帽：靠近才出现，扫一眼就知道按什么键。
+       */
+      this.keycap = makeKeycap(this);
+      this.keycapNear = false;
 
       this.cameras.main.setBackgroundColor('#141a22');
       this.events.on('wake', () => { this.panelOpen = false; this.refreshPlots(); });
@@ -1520,7 +1570,9 @@
       this.plotSprites.forEach((s) => s.destroy());
       this.plotSprites = [];
       const field = H.ZONES.find((z) => z.id === 'field');
-      const y = GROUND_Y - (H.HUB_D / 2) * Z_TO_Y;
+      // 作物必须落在田地的土上：田地改到 z=88 之后，这里还按 HUB_D/2 算就会把
+      // 苗画在土面以上 17px，看起来像悬空。
+      const y = toScreen(field.x, field.z, 0).sy;
       this.state.farm.plots.forEach((plot, i) => {
         if (plot.state === 'empty') return;
         const col = i % 3, row = Math.floor(i / 3);
@@ -1621,12 +1673,32 @@
       this.shadow.setPosition(s.sx, s.sy + 2).setDepth(1000 - hub.z - 1);
 
       const zone = H.zoneAt(this.state);
-      if (zone) {
-        this.prompt.setVisible(true).setText('按 J · ' + zone.name + '（' + zone.hint + '）');
-        this.prompt.setPosition(s.sx, s.sy - 70 * s.sc);
+      /*
+       * 键帽：靠近才出现，150ms 淡入 / 淡出。
+       *
+       * 只在"状态翻转的那一帧"动 tween，不是每帧都加 —— 每帧重新 add 一个
+       * tween 会把上一条掐死在半路，alpha 永远涨不上去（表现为一直闪在 0.1）。
+       * 淡出结束后才 setVisible(false)：直接隐藏会缺最后那一下"缩回去"的过程。
+       */
+      const near = !!zone;
+      if (near !== this.keycapNear) {
+        this.keycapNear = near;
+        this.tweens.killTweensOf(this.keycap);
+        if (near) {
+          this.keycap.setVisible(true);
+          this.tweens.add({ targets: this.keycap, alpha: 1, duration: 150 });
+        } else {
+          this.tweens.add({
+            targets: this.keycap, alpha: 0, duration: 150,
+            onComplete: () => this.keycap.setVisible(false),
+          });
+        }
+      }
+      if (near) {
+        // 头顶右上方：角色贴图 40x60、origin (0.5, 1)，容器缩放 = s.sc * HERO_SCALE，
+        // 所以头顶在 sy - 71 * s.sc 附近；键帽中心再往上 7px、往右让 20px。
+        this.keycap.setPosition(s.sx + 20 * s.sc, s.sy - 78 * s.sc);
         this.shadow.setScale(s.sc * 0.8);
-      } else {
-        this.prompt.setVisible(false);
       }
 
       if (this.input2.justPressed('attack') && zone) {

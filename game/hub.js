@@ -26,22 +26,31 @@
 
   /**
    * 区域沿 x 轴排布（从左到右就是玩家的动线）：
-   *   田地 → 铁匠 → 技能祭坛 → 远征之门
-   * reach 是触发半径：玩家 x 落在 [x-reach, x+reach] 内即可交互。
+   *   田地 → 铁匠 → 兵器架 → 药水铺 → 技能祭坛 → 远征之门
+   *
+   * reach 是横向触发半径：玩家 x 落在 [x-reach, x+reach] 内才可能交互。
+   * z 是这一排设施自己的纵深（上下错落用）：绘制端据此算屏幕 y，
+   *   判定端据此算"站得够不够近"——两处读的是同一个数，不能各写一份。
+   * reachZ 是纵深容差（= 60）：玩家 z 与设施 z 的差超过它就不算站到跟前。
+   *
+   * 错落节奏：field / forgewear / altar 在 z=88（画面上更靠前、更低），
+   * anvil / shop 在 z=122（更靠后、更高），门留在中线 105 —— 门是整张图的
+   * 出口，摆在两排之间才不会让人以为"出门要斜着走"。
    */
+  const REACH_Z = 60;
   const ZONES = [
     { id: 'field', name: '田地', hint: '播种 · 成熟后自动产出',
-      x: 100, reach: 66, art: 'field' },
+      x: 100, z: 88, reach: 66, reachZ: REACH_Z, art: 'field' },
     { id: 'anvil', name: '铁匠铺', hint: '强化攻击、生命、移速',
-      x: 265, reach: 58, art: 'anvil' },
+      x: 265, z: 122, reach: 58, reachZ: REACH_Z, art: 'anvil' },
     { id: 'forgewear', name: '兵器架', hint: '购买 · 装备 · 升级装备',
-      x: 415, reach: 58, art: 'rack' },
+      x: 415, z: 88, reach: 58, reachZ: REACH_Z, art: 'rack' },
     { id: 'shop', name: '药水铺', hint: '补给消耗品 · 每局都要重新买',
-      x: 565, reach: 58, art: 'shop' },
+      x: 565, z: 122, reach: 58, reachZ: REACH_Z, art: 'shop' },
     { id: 'altar', name: '技能祭坛', hint: '提升技能等级',
-      x: 720, reach: 58, art: 'altar' },
+      x: 720, z: 88, reach: 58, reachZ: REACH_Z, art: 'altar' },
     { id: 'gate', name: '远征之门', hint: '选择难度并出发',
-      x: 880, reach: 60, art: 'gate' },
+      x: 880, z: 105, reach: 60, reachZ: REACH_Z, art: 'gate' },
   ];
 
   function ensureHub(state) {
@@ -50,12 +59,23 @@
     return state.hub;
   }
 
-  /** 玩家当前站在哪个区域里；不在任何区域返回 null。 */
+  /**
+   * 玩家当前站在哪个区域里；不在任何区域返回 null。
+   *
+   * 判定必须是二维的：设施上下错落之后，只比 x 会出现"站在两个点位中间、
+   * 却同时命中上下两个设施"的情况，按 J 进哪个就成了随机。所以 x 与 z
+   * 都要落在各自容差内。
+   */
   function zoneAt(state) {
     const hub = ensureHub(state);
     for (let i = 0; i < ZONES.length; i++) {
       const z = ZONES[i];
-      if (Math.abs(hub.x - z.x) <= z.reach) return z;
+      // 正面写法而不是两道 continue：hub.z 万一是 NaN（比如旧存档），
+      // NaN <= reachZ 是 false，会自然地判成"没站到跟前"；
+      // 而 NaN > reachZ 同样是 false，用 continue 反而会误判成命中。
+      if (Math.abs(hub.x - z.x) <= z.reach && Math.abs(hub.z - z.z) <= z.reachZ) {
+        return z;
+      }
     }
     return null;
   }

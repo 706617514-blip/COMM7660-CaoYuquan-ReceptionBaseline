@@ -105,11 +105,17 @@ section('4. 基地区域判定');
   // 写死会让"新增一个建筑"变成一堆无关测试变红。
   H.ZONES.forEach((z) => {
     s.hub.x = z.x;
-    eq(H.zoneAt(s).id, z.id, `站在「${z.name}」位置判定为该区域`);
+    // Task 11：判定改成二维（x 与纵深都要在容差内），所以必须同时站到
+    // 该点位自己的纵深上；只对 x 会落在 z 容差之外，六个点位全变红。
+    s.hub.z = z.z;
+    eq((H.zoneAt(s) || {}).id, z.id, `站在「${z.name}」位置判定为该区域`);
   });
 
   // 区域之间的空隙应当判定为"不在任何区域"：
   // 取相邻两区判定边界的中点，那里必须落空。
+  // 纵深先摆回默认值（HUB_D/2 = 105，门所在的中线），这样"空隙"就只剩
+  // x 一个变量；否则上一次循环残留的 z 会把结论搅混。
+  s.hub.z = 105;
   const sorted = H.ZONES.slice().sort((a, b) => a.x - b.x);
   let gapsChecked = 0, gapsOk = 0;
   for (let i = 0; i < sorted.length - 1; i++) {

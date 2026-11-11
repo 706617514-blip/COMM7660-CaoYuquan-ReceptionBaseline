@@ -1010,6 +1010,96 @@ const SCRIPT = `
   window.BagHud.close();
   await wait(100);
 
+  // ---- 基地六点位错落 + 头顶键帽（V16 现场 / V17）----
+  //
+  // 探针必须拿真实的 Hub 场景对象。旧的长提示是画布里的 Text，用 DOM 查询
+  // 永远拿到 null —— 那种写法出来的断言恒真恒假，什么也证明不了，所以这里
+  // 先断言"确实取到了 Hub 场景"，再往下测。
+  const stZ = window.EmberfieldApp.__state;
+  const hubZ = globalThis.__game.scene.getScene('Hub');
+  out.hubProbe = {
+    isScene: !!(hubZ && hubZ.scene && hubZ.scene.key === 'Hub'),
+    key: hubZ && hubZ.scene ? hubZ.scene.key : null,
+    hasZoneArt: !!(hubZ && hubZ.zoneArt),
+    hasKeycap: !!(hubZ && hubZ.keycap),
+  };
+  const hubTexts = function () {
+    return (hubZ && hubZ.children ? hubZ.children.list : [])
+      .filter(function (c) { return c && c.type === 'Text'; })
+      .map(function (c) { return String(c.text); });
+  };
+  // 场景里所有文字。要同时证明两件事：六个点位名字还在（别删过头），
+  // 长提示的文案一个不剩（别只把 visible 关掉）。
+  out.hubTexts = hubTexts();
+  out.hubTextsWithPrompt = out.hubTexts.filter(function (t) { return t.indexOf('按 J') >= 0; });
+  // 长提示对象是不是真的不在了（而不是 setVisible(false) 留着）
+  out.hasPromptObj = !!hubZ.prompt;
+  // 点位名字从 ZONES 现取，别在断言里写死中文名 —— 改名就误报
+  out.zoneNames = (window.GameHub.ZONES || []).map(function (z) { return z.name; });
+  // 六个设施实际画在屏幕上的底边 y 与缩放：错落必须能量出来，
+  // 而不是靠"看着像错落"。同一 y 说明仍然是一条直线。
+  out.zoneArtY = {};
+  out.zoneArtScale = {};
+  if (hubZ && hubZ.zoneArt) {
+    Object.keys(hubZ.zoneArt).forEach(function (id) {
+      const a = hubZ.zoneArt[id];
+      out.zoneArtY[id] = Math.round(a.y);
+      out.zoneArtScale[id] = Math.round((a.scaleX === undefined ? 1 : a.scaleX) * 1000) / 1000;
+    });
+  }
+
+  // 远离点位：x=500 落在 shop 与 forgewear 的横向容差之外，z 取默认中线。
+  stZ.hub.x = 500;
+  stZ.hub.z = 105;
+  await wait(500);
+  out.farZone = (window.GameHub.zoneAt(stZ) || {}).id || null;
+  out.farCap = !!(hubZ.keycap && hubZ.keycap.visible);
+  out.farCapAlpha = hubZ.keycap ? Math.round(hubZ.keycap.alpha * 100) / 100 : null;
+
+  // 站到铁匠铺前（anvil 的错落深度是 122，不是默认 105 —— 这正是二维判定的现场）
+  stZ.hub.x = 265;
+  stZ.hub.z = 122;
+  await wait(600);
+  out.nearZoneId = (window.GameHub.zoneAt(stZ) || {}).id || null;
+  out.nearCap = !!(hubZ.keycap && hubZ.keycap.visible);
+  out.nearCapAlpha = hubZ.keycap ? Math.round(hubZ.keycap.alpha * 100) / 100 : null;
+  out.nearPromptTexts = hubTexts().filter(function (t) { return t.indexOf('按 J') >= 0; });
+  if (hubZ.keycap && hubZ.hero) {
+    // 键帽必须贴在角色头顶右上方；尺寸要真是键帽那么大（约 26x26）。
+    // 注意：容器 getBounds() 只量得到里面的 J 字（10x17），量不到键帽本体，
+    // 所以优先读容器自己声明的尺寸。
+    const b = hubZ.keycap.getBounds();
+    out.capPos = { x: Math.round(hubZ.keycap.x), y: Math.round(hubZ.keycap.y) };
+    out.capSize = {
+      w: Math.round(hubZ.keycap.width || b.width),
+      h: Math.round(hubZ.keycap.height || b.height),
+    };
+    out.capBounds = { w: Math.round(b.width), h: Math.round(b.height) };
+    out.heroPos = { x: Math.round(hubZ.hero.x), y: Math.round(hubZ.hero.y) };
+    out.capDepth = hubZ.keycap.depth;
+    out.heroDepth = hubZ.hero.depth;
+    // 键帽里必须真的有 J 这个字，而且只有这一个字
+    out.capText = (hubZ.keycap.list || [])
+      .filter(function (o) { return o && o.type === 'Text'; })
+      .map(function (o) { return String(o.text); });
+  }
+
+  // 逐个点位走一遍：每个设施都得能触发（判定 + 键帽一起看）
+  out.zoneHits = [];
+  const zoneList = (window.GameHub.ZONES || []).slice();
+  for (let i = 0; i < zoneList.length; i++) {
+    const z = zoneList[i];
+    stZ.hub.x = z.x;
+    stZ.hub.z = z.z;
+    await wait(160);
+    out.zoneHits.push({
+      want: z.id,
+      got: (window.GameHub.zoneAt(stZ) || {}).id || null,
+      cap: !!(hubZ.keycap && hubZ.keycap.visible),
+      z: z.z,
+    });
+  }
+
   return out;
 })();
 `;
@@ -1421,6 +1511,75 @@ const SMALLSCRIPT = `
   ok(r.runBagClosedByTab === true, '再按 Tab 关闭背包（Run）');
   ok(r.runSceneResumed === true, '关闭后 Run 场景恢复运行');
   ok(r.runElapsedAfterResume > 0, '恢复后 run.elapsed 继续往上涨（反证：上一帧数不是本来就停）', r.runElapsedAfterResume);
+
+  console.log('\n--- 基地六点位上下错落 + 删长提示（Task 11 V16）---');
+  ok(r.hubProbe && r.hubProbe.isScene === true,
+     '探针确实拿到了 Hub 场景（不是查了个不存在的对象）', JSON.stringify(r.hubProbe));
+  ok(r.hubProbe && r.hubProbe.hasZoneArt === true,
+     'Hub 场景里有 zoneArt（下面量错落用得到）', JSON.stringify(r.hubProbe));
+  eq(r.hasPromptObj, false, '地面长提示的对象整个被删掉了（不是留着不写字）');
+  ok(Array.isArray(r.hubTextsWithPrompt) && r.hubTextsWithPrompt.length === 0,
+     '场景里没有任何「按 J · …」长提示文案', JSON.stringify(r.hubTextsWithPrompt));
+  ok(Array.isArray(r.hubTexts) && r.hubTexts.length >= 6,
+     '场景里还读得到文字（证明上一条不是"全删光了"的假绿）',
+     JSON.stringify(r.hubTexts));
+  {
+    const names = r.zoneNames || [];
+    const missing = names.filter(function (n) { return (r.hubTexts || []).indexOf(n) < 0; });
+    ok(names.length === 6 && missing.length === 0,
+       '六个点位的名字标签都还在（只删长提示，没删过头）',
+       '缺: ' + missing.join(','));
+  }
+  {
+    const ys = r.zoneArtY || {};
+    const vals = Object.keys(ys).map(function (id) { return ys[id]; });
+    const distinct = vals.filter(function (v, i, a) { return a.indexOf(v) === i; });
+    ok(Object.keys(ys).length === 6, '六个设施的绘制坐标都读到了', JSON.stringify(ys));
+    ok(distinct.length >= 3, '六个设施不再共用一个 y（至少三档高低）', JSON.stringify(ys));
+    ok(ys.field === ys.forgewear && ys.forgewear === ys.altar,
+       '下排三个（田地/兵器架/祭坛）在同一档', JSON.stringify(ys));
+    ok(ys.anvil === ys.shop, '上排两个（铁匠铺/杂货铺）在同一档', JSON.stringify(ys));
+    ok(ys.anvil < ys.gate && ys.gate < ys.field,
+       '门在中间档：上排比门高、门比下排高', JSON.stringify(ys));
+    ok(ys.field - ys.anvil >= 25,
+       '上下两档的落差肉眼可辨（>= 25px）', (ys.field - ys.anvil) + 'px');
+    ok(r.zoneArtScale && r.zoneArtScale.anvil < r.zoneArtScale.field,
+       '靠后的设施按景深略小一点（不是平铺同一尺寸）',
+       JSON.stringify(r.zoneArtScale));
+  }
+
+  console.log('\n--- 头顶键帽（Task 11 V17）---');
+  eq(r.farZone, null, '远离点位时判定不到任何区域');
+  eq(r.farCap, false, '远离点位时头顶没有键帽');
+  ok(r.farCapAlpha <= 0.01, '键帽淡出到底（不是留一层半透明）', r.farCapAlpha);
+  eq(r.nearZoneId, 'anvil', '站在铁匠铺坐标（265, 122）上判定为 anvil');
+  eq(r.nearCap, true, '靠近铁匠铺时头顶出现键帽');
+  ok(r.nearCapAlpha > 0.95, '键帽确实淡入到不透明（150ms 动画跑完了，不是只设了 visible）',
+     r.nearCapAlpha);
+  ok(Array.isArray(r.nearPromptTexts) && r.nearPromptTexts.length === 0,
+     '靠近时地面上也没有长提示（文案没退化成"靠近才写出来"）',
+     JSON.stringify(r.nearPromptTexts));
+  ok(r.capSize && r.capSize.w >= 22 && r.capSize.w <= 32 && r.capSize.h >= 20 && r.capSize.h <= 32,
+     '键帽就是键帽大小（约 26x26），不是一条横幅', JSON.stringify(r.capSize));
+  eq(Array.isArray(r.capText) ? r.capText.join('') : null, 'J',
+     '键帽上写的就是一个 J（不是「按 J」这类长文案）');
+  ok(r.capPos && r.heroPos && r.capPos.y < r.heroPos.y - 45,
+     '键帽在头顶上方（明显高于角色落脚点）', JSON.stringify([r.capPos, r.heroPos]));
+  ok(r.capPos && r.heroPos && r.capPos.x > r.heroPos.x + 3,
+     '键帽偏在角色的右上方（不是压在正中/左边）', JSON.stringify([r.capPos, r.heroPos]));
+  ok(typeof r.capDepth === 'number' && typeof r.heroDepth === 'number' && r.capDepth > r.heroDepth,
+     '键帽画在角色图层之上（不会被身体挡住）', r.capDepth + ' vs ' + r.heroDepth);
+
+  console.log('\n--- 逐个点位实测（每个设施都要能按 J）---');
+  {
+    const zh = r.zoneHits || [];
+    const bad = zh.filter(function (h) { return h.want !== h.got; });
+    const noCap = zh.filter(function (h) { return h.cap !== true; });
+    eq(zh.length, 6, '六个点位都走了一遍');
+    ok(bad.length === 0, '每个设施的坐标上都能判定到自己（走到跟前就能按 J）',
+       JSON.stringify(bad));
+    ok(noCap.length === 0, '每个设施前头顶都出现了键帽', JSON.stringify(noCap));
+  }
 
   console.log('\n' + '='.repeat(56));
   if (fail === 0) {

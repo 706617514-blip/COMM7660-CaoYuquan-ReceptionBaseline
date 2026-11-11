@@ -15,6 +15,8 @@
 const path = require('path');
 const C = require(path.join(__dirname, '..', 'game', 'config.js'));
 const L = require(path.join(__dirname, '..', 'game', 'logic.js'));
+// 基地点位（ZONES / zoneAt）在 hub.js，不在 logic.js —— 命名空间别搞错。
+const H = require(path.join(__dirname, '..', 'game', 'hub.js'));
 
 let pass = 0, fail = 0;
 const failures = [];
@@ -1926,6 +1928,67 @@ section('31. 专属技能：按键 -> 释放 -> 冷却 -> 失去');
   L.unequipSlot(e.s, 'weapon');
   ok(L.specialSkillOf(e.s) === null, '卸下授予类武器后技能消失');
   eq(L.castSpecial(e.s, e.run, e.p), false, '无武器时 castSpecial 返回 false');
+}
+
+// ---------------------------------------------------------------- 32. 基地错落（V16）
+section('32. 基地六点位错落：判定必须是二维的');
+{
+  /*
+   * 用户原话：「六个点位现在是排成一条直线的……做成上下错落的」。
+   *
+   * 为什么这条测试要盯"判定"而不是只盯画出来的 y：错落本身是数据，
+   * 判定一旦仍然只比 x，上下错开就只是"看起来错开了"，站在中间会同时命中
+   * 相邻两个点位 —— 玩家按 J 不知道该进哪个。
+   *
+   * 坐标写死是有意的：这条测的就是错落值本身，读 ZONES 再拿它断言等于自证。
+   * state.hub 是懒创建的：L.createState 之后必须先 H.ensureHub，否则 s.hub
+   * 是 undefined，赋值直接 TypeError。
+   */
+  const s = L.createState(51);
+  const h = H.ensureHub(s);
+
+  // 定稿的错落值：下排 z=88（画面上更靠前、更低），上排 z=122，门留在中线 105。
+  [['field', 100, 88], ['anvil', 265, 122], ['forgewear', 415, 88],
+    ['shop', 565, 122], ['altar', 720, 88], ['gate', 880, 105]].forEach(function (t) {
+    h.x = t[1]; h.z = t[2];
+    const z = H.zoneAt(s);
+    ok(z && z.id === t[0], '站在 ' + t[0] + ' 的点位坐标上命中自己（实际 ' +
+      (z ? z.id : 'null') + '）');
+  });
+
+  // 数据层：z 与 reachZ 必须显式写在 ZONES 里，不靠函数默认值兜底
+  ok(H.ZONES.every(function (z) { return typeof z.z === 'number'; }),
+    '每个点位都有自己的错落深度 z（不是绘制端临时加的偏移）',
+    JSON.stringify(H.ZONES.map(function (z) { return z.id + ':' + z.z; })));
+  ok(H.ZONES.every(function (z) { return z.reachZ === 60; }),
+    '每个点位都显式写了 reachZ = 60（数据在数据层，不藏默认值）',
+    JSON.stringify(H.ZONES.map(function (z) { return z.id + ':' + z.reachZ; })));
+  // x 容差字段名必须还是 reach —— 三处既有测试在读它，改名会误伤
+  ok(H.ZONES.every(function (z) { return typeof z.reach === 'number' && z.reach > 0; }),
+    'x 容差仍叫 reach（不是 reachX）');
+
+  // 判定必须真的是二维的：站在场地最前缘（z = 0）时，x 再怎么对着设施都不该命中。
+  // 旧的一维实现只比 x，这里会命中 —— 这就是这次改动的关键判据。
+  h.x = (100 + 265) / 2;
+  h.z = 0;
+  ok(H.zoneAt(s) === null, '站在场地最前缘（z=0）时谁都不命中（判定确实是二维的）',
+    (H.zoneAt(s) || {}).id);
+  h.x = 100; h.z = 0;
+  ok(H.zoneAt(s) === null, '田地正前方但深度不对（z=0）也不命中', (H.zoneAt(s) || {}).id);
+  h.x = 265; h.z = 122;
+  ok((H.zoneAt(s) || {}).id === 'anvil', 'z 正确时命中铁匠铺');
+  h.x = (265 + 415) / 2; h.z = 122;
+  ok(H.zoneAt(s) === null, '相邻点位中点（x 轴空隙）不命中任何区域',
+    (H.zoneAt(s) || {}).id);
+
+  // 深度容差真的就是 60：边界上要命中，再多一格必须落空。
+  // 这一对断言钉住 reachZ 真的被用上了，防止它被写成 Infinity 或只在别处存着。
+  h.x = 265; h.z = 122 + 60;
+  ok((H.zoneAt(s) || {}).id === 'anvil', '深度正好在容差边界（Δz = 60）仍命中',
+    (H.zoneAt(s) || {}).id);
+  h.x = 265; h.z = 122 + 61;
+  ok(H.zoneAt(s) === null, '深度超出容差一格（Δz = 61）不命中',
+    (H.zoneAt(s) || {}).id);
 }
 
 // ---------------------------------------------------------------- 汇总
