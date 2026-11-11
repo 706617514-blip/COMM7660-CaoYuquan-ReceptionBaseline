@@ -766,12 +766,22 @@ ok(r.count === 1, '两件同 id 只卖掉一件');
 ok(s2.meta.bag.length === 1, '强制保留一件');
 ok(s2.meta.bag[0].level === 3, '保留的是等级最高的那件');
 
-// V28：总价 = 逐件求和
+// V28：总价 = 逐件求和（不是单价 × 件数）
+// ⚠ 每个 id 必须放**两件**。V26 的「每 id 强制留一件」意味着 sellableUids
+//   只返回「除最高等级那件以外」的条目；若每个 id 只有一件，两件都是"该留的
+//   那件"，sellableUids 返回空数组，sellBatch 得 count 0 / total 0 ——
+//   期望的 345 恒不可能成立（实测：duplicateUids []、sellableUids []）。
+//   这里改的是 fixture，不是放宽断言：要证明的「逐件求和」完全保留。
 const s3 = L.createState(33);
 L.bagAdd(s3, 'longCloak', 1);
+L.bagAdd(s3, 'longCloak', 1);
+L.bagAdd(s3, 'windBoots', 2);
 L.bagAdd(s3, 'windBoots', 2);
 const r3 = L.sellBatch(s3, L.sellableUids(s3));
+ok(r3.count === 2, '两个 id 各卖掉一件（各留一件）');
 ok(r3.total === L.sellValue('longCloak', 1) + L.sellValue('windBoots', 2), '总价逐件求和');
+// 反证：若实现偷懒用「首件单价 × 件数」，总数会是 200 而不是 345
+ok(r3.total !== L.sellValue('longCloak', 1) * 2, '总价不是「单价 × 件数」');
 ```
 
 - [ ] **Step 2: 跑测试确认失败**
