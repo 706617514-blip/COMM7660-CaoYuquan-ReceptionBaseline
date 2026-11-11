@@ -493,11 +493,48 @@ git commit -m "refactor(bag): 装备函数接受可选 uid（同 id 多件时指
 - Consumes: Task 2 的 `bagAdd`/`bagCapacity`
 - Produces:
   - `C.BAG = { cols: 5, rows: 7, cellsPerPage: 35, maxPages: 6, pagePrices: [0, 200, 500, 1000, 2000, 5000] }`
+
+> **本任务必须先修三个"静默吞装备"缺陷（Task 2 复审实测，我复现确认）**：
+> `bagAdd` 满包返回 `-1`，但除 `rollEquipDrop` 外**所有调用者都忽略返回值**。
+>
+> | 路径 | 实测行为 | 危害 |
+> |---|---|---|
+> | `buyEquipment`（`logic.js:497`） | 满包时**照扣 190 铜币**、返回 `{ok:true}`、`equipOwned` 仍为 `null` | 可无限重复，纯铜币黑洞 |
+> | `unequipSlot`（`logic.js:544`） | 满包时返回 **`{ok:true}`**、部位清空、装备**消失** | **谎报成功 + 丢装备** |
+> | 最后一格覆盖（`bagFull` 路径） | 覆盖已有真实装备，且**丢失跨序列化存活** | 玩家白掉的装备找不回来 |
+>
+> 三个都违反设计 §4.7「不丢装备」。修法一致：**满包时拒绝动作，不要销毁**。
+> - `buyEquipment`：`bagAdd` 返回 `-1` → 不扣钱，返回 `{ok:false, reason:'背包已满'}`。
+> - `unequipSlot`：`bagAdd` 返回 `-1` → 不清空部位，返回 `{ok:false, reason:'背包已满'}`。
+> - `rollEquipDrop` 的 `bagFull` 覆盖路径**保留**（掉落不该阻塞战斗），但必须
+>   在 `run.equipDrops` 里带上 `overwrote` 字段，让 UI 能提示"覆盖了哪一件"，
+>   并加断言证明被覆盖的那件确实是从"最后一格"里选出来的（不是随机删一件）。
   - `buyBagPage(state) -> { ok: boolean, reason?: string, cost?: number }`
   - `pageOf(state, index) -> number`（0 基）
   - `pageSlice(state, page) -> Array<{ id, level, uid }>`（不足 35 格补 `null`）
 
 - [ ] **Step 1: 写测试（覆盖 Review Focus #1、#2）**
+
+```js
+// 满包时不许静默吞装备（Task 2 复审实测的三个缺陷）
+const full = L.createState(41);
+full.meta.bagPages = 1;
+while (full.meta.bag.length < 35) L.bagAdd(full, 'grassShoes', 1);
+full.meta.coins = 99999;
+const coinsBefore = full.meta.coins;
+const buyFull = L.buyEquipment(full, 'ironHelm');
+ok(buyFull.ok === false, '满包时买装备被拒绝，不是假成功');
+eq(full.meta.coins, coinsBefore, '满包买失败不扣钱（不能是铜币黑洞）');
+ok(L.equipOwned(full, 'ironHelm') === null, '没付钱也没拿到装备');
+
+const wearer = L.createState(42);
+wearer.meta.equipment.head = { id: 'ironHelm', level: 1 };
+while (wearer.meta.bag.length < 35) L.bagAdd(wearer, 'grassShoes', 1);
+const un = L.unequipSlot(wearer, 'head');
+ok(un.ok === false, '满包时卸下被拒绝，不是谎报 success');
+ok(wearer.meta.equipment.head && wearer.meta.equipment.head.id === 'ironHelm',
+   '卸下失败时装备还穿在身上（不能凭空消失）');
+```
 
 ```js
 // Review Focus #1：第 35 格放入后停在页 1，第 36 件必须去页 2
