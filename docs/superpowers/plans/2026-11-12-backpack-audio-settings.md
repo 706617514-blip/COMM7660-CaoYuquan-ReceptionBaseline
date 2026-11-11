@@ -168,7 +168,7 @@ git commit -m "feat(bag): 删除重复件 30% 自动退款，掉落全部进背�
 **Interfaces:**
 - Consumes: Task 1 的 `rollEquipDrop`
 - Produces:
-  - `meta.bag: Array<{ id: string, level: number }>`
+  - `meta.bag: Array<{ id: string, level: number, uid: string }>`（`uid` 见下方说明）
   - `meta.bagPages: number`（默认 1）
   - `bagAdd(state, id, level) -> number`（返回落位下标）
   - `bagRemove(state, index) -> { ok: boolean, reason?: string }`
@@ -176,6 +176,7 @@ git commit -m "feat(bag): 删除重复件 30% 自动退款，掉落全部进背�
   - `bagCount(state) -> number`
   - `bagCapacity(state) -> number`（= `bagPages × 35`）
   - `bagIndexOfUid(state, uid) -> number`
+  - `meta.settings = { volume: 0.30, muted: false }`（Task 12 的音效层要用；`createState` 今天没有这个字段）
   - **`meta.inventory` / `meta.inventoryLevels` 本任务后不再存在**
 
 > **为什么要 `uid`**：同一 id 可能有两件（重复掉落）。DOM 上用「第几格」做 key 会在排序后错位，所以每件给一个稳定 `uid`（`id + '#' + 自增数`），只存在于 `bag` 条目内、不进存档的语义层。
