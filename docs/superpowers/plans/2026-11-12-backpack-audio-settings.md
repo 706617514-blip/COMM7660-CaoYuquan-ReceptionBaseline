@@ -1052,9 +1052,12 @@ Task 9 加上 `scene.pause()` 后是同一个毛病的第二种触发方式，�
   const stI = window.EmberfieldApp.__state;
   const Lg = window.GameLogic;
   const hubI = window.__game.scene.getScene('Hub');
-  const heroLayerKeys = (slot) => hubI.hero.list
-    .filter((c) => c.texture && new RegExp('^eq-' + slot + '-').test(c.texture.key) && c.visible)
-    .map((c) => c.texture.key).join(',');
+  // 英雄装备图层挂在 container 的 layers_ 上（app.js:101-115 的 refreshHeroEquip 就改它），
+  // 不要去遍历 hero.list 猜——直接读那一层，最准。
+  const heroLayerKeys = (slot) => {
+    const img = hubI.hero && hubI.hero.layers_ && hubI.hero.layers_[slot];
+    return img && img.visible && img.texture ? img.texture.key : '';
+  };
   stI.meta.coins = 99999;
 
   // V13：面板开着时换装，英雄图层必须真的换（不是等 update）
@@ -1103,7 +1106,7 @@ Task 9 加上 `scene.pause()` 后是同一个毛病的第二种触发方式，�
 console.log('\n--- 背包交互（V3 / V12 / V13 / V26–V29）---');
 ok(r.equipResult && r.equipResult.ok === true, '穿戴成功', JSON.stringify(r.equipResult));
 ok(typeof r.heroWeaponBefore === 'string', '能读到英雄的武器图层（探针有效）');
-ok(r.heroWeaponAfter.indexOf('eq-weapon-twinBlades') >= 0,
+ok(r.heroWeaponAfter === 'eq-weapon-twinBlades',
    '面板开着换装后英雄图层真的换成新武器', r.heroWeaponAfter);
 ok(r.heroWeaponAfter !== r.heroWeaponBefore,
    '图层确实变了，不是同一张', r.heroWeaponBefore + ' -> ' + r.heroWeaponAfter);
