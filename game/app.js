@@ -122,6 +122,55 @@
     });
   }
 
+  /**
+   * 画灼烧区与冰霜区。
+   *
+   * 都是 2.5D 的贴地椭圆，套用与角色相同的投影（越靠后越小越高），
+   * 这样"站在圈里"看起来和角色处在同一片地面上，而不是浮在半空。
+   * 半径按剩余时间收缩，玩家能看出它快灭了、该重新踩一次。
+   */
+  function drawZones(g, run) {
+    const drawOne = (zn, inner, edge, pulse) => {
+      const left = Math.max(zn.timer, 0);
+      const k = zn.maxTimer > 0 ? left / zn.maxTimer : 1;
+      const s = toScreen(zn.x, zn.z, 0);
+      // 贴地椭圆：横向是真实半径，纵向压到 0.34 做出俯视角。
+      const rx = zn.radius * s.sc * (0.72 + 0.28 * k);
+      const ry = rx * 0.34;
+      g.fillStyle(inner, 0.30 + 0.22 * pulse * k);
+      g.fillEllipse(s.sx, s.sy, rx * 2, ry * 2);
+      g.lineStyle(2.2 * s.sc, edge, 0.55 + 0.35 * pulse * k);
+      g.strokeEllipse(s.sx, s.sy, rx * 2, ry * 2);
+      // 内圈再补一层亮芯，让"危险区"在深色地面上也能读出来。
+      g.fillStyle(edge, 0.16 + 0.16 * pulse * k);
+      g.fillEllipse(s.sx, s.sy, rx * 1.1, ry * 1.1);
+    };
+
+    const pulse = 0.5 + 0.5 * Math.sin((run.elapsed || 0) * 6.0);
+    (run.burnZones || []).forEach((zn) => drawOne(zn, 0xff7a3c, 0xffc266, pulse));
+    (run.frostZones || []).forEach((fz) => {
+      const left = Math.max(fz.timer, 0);
+      const k = fz.maxTimer > 0 ? left / fz.maxTimer : 1;
+      const s = toScreen(fz.x, fz.z, 0);
+      const rx = fz.radius * s.sc * (0.72 + 0.28 * k);
+      const ry = rx * 0.34;
+      g.fillStyle(0x9ad7ff, 0.26 + 0.20 * pulse * k);
+      g.fillEllipse(s.sx, s.sy, rx * 2, ry * 2);
+      g.lineStyle(2.2 * s.sc, 0xdff2ff, 0.55 + 0.35 * pulse * k);
+      g.strokeEllipse(s.sx, s.sy, rx * 2, ry * 2);
+      // 冰面撒几道短裂纹，和火区分开（只靠颜色区分对色弱玩家不友好）
+      g.lineStyle(1.6 * s.sc, 0xffffff, 0.42);
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2 + fz.x * 0.01;
+        const r0 = rx * 0.30, r1 = rx * 0.78;
+        g.beginPath();
+        g.moveTo(s.sx + Math.cos(a) * r0, s.sy + Math.sin(a) * r0 * 0.34);
+        g.lineTo(s.sx + Math.cos(a) * r1, s.sy + Math.sin(a) * r1 * 0.34);
+        g.strokePath();
+      }
+    });
+  }
+
   // ================================================================ 纹理
   function buildTextures(scene) {
     const g = scene.add.graphics();
@@ -1570,6 +1619,37 @@
       // 屏幕上会出现莫名其妙的色块和长条（真实踩过这个坑）。
       this.effectGfx.clear();
       this.bossGfx.clear();
+
+      /*
+       * 灼烧 / 冰霜地面区。
+       *
+       * 这两个数组在 logic 里是持续存在的（熔火战靴踩出火,霜缚护甲冻出冰），
+       * 和 effects 那种几百毫秒就消失的一次性特效不是一回事,所以要单独画:
+       * 一个随剩余时间脉动的椭圆贴地 + 一圈亮边。不画的话,玩法上"站进
+       * 火里会掉血、踏进冰上会减速"完全没有可见依据,玩家只会觉得血在乱掉。
+       */
+      drawZones(this.effectGfx, run);
+
+      /*
+       * 装备掉落提示。
+       *
+       * 掉落率只有 5%，一局往往一件都不掉，掉了也一闪而过很难注意到。
+       * logic 会把每件掉落追加进 run.equipDrops，这里逐帧取走并弹提示
+       * （取走即清空，所以不会每帧重复弹同一条）。重复件已经折算成铜币，
+       * 提示里要说清楚——否则玩家会以为"掉了但没进背包"。
+       */
+      if (run.equipDrops && run.equipDrops.length) {
+        run.equipDrops.forEach((d) => {
+          const def = C.equipDef(d.id);
+          const label = def ? def.name : d.id;
+          global.EmberfieldUI.toast(
+            d.duplicate
+              ? ('掉落重复件「' + label + '」· 折算 ' + d.refund + ' 铜币')
+              : ('掉落装备「' + label + '」· 已进背包'),
+            true);
+        });
+        run.equipDrops.length = 0;
+      }
 
       // 相机轻微跟随，让走位有纵深
       this.cameras.main.scrollX = (run.player.x - W / 2) * 0.04;
