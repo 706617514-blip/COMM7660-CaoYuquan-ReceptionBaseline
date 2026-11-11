@@ -1063,6 +1063,7 @@ Task 9 加上 `scene.pause()` 后是同一个毛病的第二种触发方式，�
   window.BagHud.open(stI);
   await wait(250);
   out.heroWeaponBefore = heroLayerKeys('weapon');
+  out.dmgBefore = Lg.playerStats(stI).damage;      // ← 必须在 equipItem 之前取
   const wUid = (stI.meta.bag.filter((e) => e.id === wId)[0] || {}).uid;
   out.equipResult = Lg.equipItem(stI, wId, wUid);
   window.BagHud.refresh();
@@ -1118,9 +1119,6 @@ ok(r.batchBtn === true, '有「批量出售」按钮');
 ok(r.batchConfirmDisabledWhenEmpty === true, '没勾选任何东西时确认按钮是禁用的');
 ```
 
-页面脚本里还要在读数值**之前**补一行 `out.dmgBefore = Lg.playerStats(stI).damage;`
-（在 `Lg.equipItem` 之前），否则 `dmgBefore` 是 `undefined`，差额断言会变成 `NaN === n` 恒假。
-
 - [ ] **Step 2: 跑测试确认失败**
 
 Run: `"$N" tests/browser/smoke.js`
@@ -1135,6 +1133,21 @@ Expected: FAIL —— `window.BagHud.refresh is not a function`（Task 7 只做�
 - **批量出售**：选择态 + 三个快捷勾选 + 每 id 强制留一件 + 已穿戴灰掉 + 总价确认
 - **分页**：`第 N/M 页` + `[◀][▶]` + `[+扩容]`
 - **`onChange` 里必须显式调 `refreshHeroEquip`**（暂停时 `update` 不跑）
+
+**DOM 契约（测试直接按这些选择器断言，实现必须照此命名，不得自创）**：
+
+| 选择器 | 含义 |
+|---|---|
+| `#bag .cell` | 每一格（空槽也算一格，永远 35 个） |
+| `#bag .cell img` | 该格装备的贴图（空格无 img） |
+| `#bag-tip` | 悬停信息浮层；`display:none` 表示未显示，`textContent` 是文案 |
+| `#bag [data-act="sort"]` | 「整理」按钮 |
+| `#bag [data-act="batch-sell"]` | 「批量出售」按钮 |
+| `#bag .confirm-ok` | 批量出售确认对话框的确认按钮；无勾选时 `disabled === true` |
+| `#bag [data-page="prev"]` / `[data-page="next"]` | 翻页 |
+| `#bag [data-act="expand"]` | 「+扩容」 |
+
+悬停事件绑在 `.cell` 上、监听 **`pointerover` / `pointerout`**（测试用 `new MouseEvent('pointerover', {bubbles:true})` 触发，所以必须冒泡可达，不要把监听器挂在非冒泡的自定义事件上）。
 
 - [ ] **Step 4: 跑测试确认通过**
 
