@@ -613,6 +613,23 @@ const SCRIPT = `
     const tabNamed = function (label) {
       return tabsOf().filter(function (b) { return b.textContent === label; })[0];
     };
+    // 设施面板的页签条：容器有没有被 overflow:hidden 裁掉、最后一个页签的右缘
+    // 有没有超出容器。背包那边踩过"DOM 里 7 个、屏幕 6 个"的坑（Task 10c），
+    // 所以这里两条都量 —— 只看数量会漏，只看容器会漏。
+    const tabsFitOf = function () {
+      const row = document.querySelector('#panel .tabs');
+      const btns = tabsOf();
+      if (!row || !btns.length) return null;
+      const rr = row.getBoundingClientRect();
+      const last = btns[btns.length - 1].getBoundingClientRect();
+      return {
+        scroll: row.scrollWidth, client: row.clientWidth,
+        rowR: Math.round(rr.right),
+        lastR: Math.round(last.right),
+        lastW: Math.round(last.width),
+        within: last.right <= rr.right + 0.5 && last.left >= rr.left - 0.5,
+      };
+    };
     const imgStats = function (list) {
       const srcs = list.map(function (i) { return String(i.src); });
       const everyData = srcs.length > 0 && srcs.every(function (s) {
@@ -707,6 +724,7 @@ const SCRIPT = `
       const b = r.querySelector('button');
       return b ? String(b.textContent) : null;
     }).join('/');
+    t17.anvilTabsFit = tabsFitOf();
 
     // (2) 点「攻击」→ 1 行 1 图，按钮仍写价格；点回「全部」→ 3 行
     const atkTab = tabNamed('攻击');
@@ -760,6 +778,7 @@ const SCRIPT = `
     t17.wearActHMin = Math.min.apply(null, t17.wearActH);
     t17.wearActHMax = Math.max.apply(null, t17.wearActH);
     t17.wearEquipmentCount = Object.keys(window.GameConfig.ALL_EQUIPMENT).length;
+    t17.wearTabsFit = tabsFitOf();
 
     // ---- Task 18：紧裁切 + 整数倍放大（同帧读数）----
     /*
@@ -2368,6 +2387,37 @@ const SMALLSCRIPT = `
   ok(t17.wearActHMax - 62 <= 8 && t17.wearActHMax - t17.wearActHMin <= 2,
      '兵器架行高没被撑破（改前 62，允许 +8 且各行一致）',
      t17.wearActHMin + '~' + t17.wearActHMax + '（改前 62）');
+
+  console.log('\n--- 3d-4b. 设施面板页签条不被裁（Task 21 复核）---');
+  /*
+   * 为什么单独一层
+   * --------------
+   * 背包面板收窄成 470px 时发生过「DOM 里有 7 个页签、屏幕上只剩 6 个」的事故
+   * （Task 10c）：数量断言全绿，控件对真实鼠标不可用。设施面板比背包宽，
+   * 当时的复核只写在一个临时探针里（`task-21` 报告 §5）——探针用完就删，
+   * 下次改样式没有任何东西会红。
+   *
+   * 这里把那时量的两个量固化：容器自己有没有溢出（scrollWidth vs clientWidth），
+   * 以及最后一个页签的右缘有没有伸出容器。两条都要，
+   * 因为 scrollWidth 相等也可能是"外层没设 overflow、直接画到面板外面"。
+   */
+  const fitRows = [
+    ['铁匠铺', t17.anvilTabsFit, t17.anvilTabs],
+    ['兵器架', t17.wearTabsFit, t17.wearTabs],
+  ];
+  fitRows.forEach(function (pair) {
+    const label = pair[0]; const f = pair[1]; const n = pair[2];
+    ok(!!f, label + '页签条的读数存在（' + n + ' 个页签）', JSON.stringify(f));
+    if (!f) return;
+    ok(f.scroll <= f.client + 1,
+       label + '页签一行放得下（没被 overflow 裁掉）',
+       'scroll ' + f.scroll + ' vs client ' + f.client);
+    ok(f.within === true,
+       label + '最后一个页签的右缘在容器内（不是画到面板外面）',
+       '最后右缘 ' + f.lastR + ' vs 容器右缘 ' + f.rowR + '，宽 ' + f.lastW);
+    ok(f.lastW >= 24,
+       label + '最后一个页签没被压成一条缝（>= 24px）', f.lastW + 'px');
+  });
 
   console.log('\n--- 3d-4. 图标可读性：紧裁切 + 整数倍放大（Task 18）---');
   /*

@@ -75,8 +75,9 @@ Requires a Chromium binary. On this machine the harness ships one at
 
 ## 2026-11-12 — backpack, audio and settings batch
 
-Branch `feat/backpack-audio-settings`, commit `8c63b84`. Nothing below was produced by CI: the
-branch was never pushed, so no workflow ran on it.
+Branch `feat/backpack-audio-settings`, now at PR #2. The suite counts below were taken on the
+branch before it was pushed, so CI did not produce them; the five required workflow checks ran
+later on the pushed branch (run 43221742860, all pass) and re-run these suites themselves.
 
 ### Suites, run one at a time
 
@@ -93,16 +94,17 @@ checked with `lsof` before and after).
 | `tests/test_game_logic.js` | 0 | 521 | |
 | `tests/test_game_meta.js` | 0 | 280 | |
 | `tests/test_game_page.js` | 0 | 162 | |
-| `tests/browser/smoke.js` | 0 | 421 | Electron, ~45 s, real canvas |
+| `tests/browser/smoke.js` | 0 | 429 | Electron, ~45 s, real canvas |
 | `tests/test_product_app.js` | 0 | 70 | Phase 1 app; `analysis/build_report2.py` re-counts it live |
 
-103 + 184 + 521 + 280 + 162 + 421 = **1,671** assertions across the six game suites, all exit 0
+103 + 184 + 521 + 280 + 162 + 429 = **1,679** assertions across the six game suites, all exit 0
 (the bag/meta/page suites grew with Tasks 20-21: `test_bag` 172 -> 184,
 `test_game_meta` 186 -> 280, `test_game_page` 151 -> 162, `smoke` 396 -> 421).
 
 (1,529 before Tasks 20–21 added the potion-shop bag-page entry, rarity-tier sorting
 and the forgewear slot tabs; see the notes below. 1,362 before Tasks 17–19 added
-panel item art, the anvil category tabs and the tight-cropped sprite pipeline.)
+panel item art, the anvil category tabs and the tight-cropped sprite pipeline.
+The last 8 are the panel tab-fit checks added in the review pass described below.)
 
 The smoke run's own readout, verbatim:
 
@@ -218,6 +220,84 @@ itself was never the thing being cut. The assertion that actually fails on the b
 Not a defect, but worth recording: standing at the left end of the field makes the J keycap
 cover the last character of the "田地" capsule. Both are legible in sequence, and the keycap is
 drawn above the label by design.
+
+### A claim that did not survive checking: a verification that could not fail
+
+Recorded because the assertion *looked* like the strongest one in the batch and was, in fact,
+the only one that could never fail.
+
+Task 21's brief asked for the state borrowed by its potion-shop section to be handed back, and
+for one assertion proving the hand-back happened. The implementer reported, in a code comment,
+"删掉复位代码这两条就会变红（已实测，见报告）" — deleting the restore code makes these two
+assertions turn red, measured, see the report.
+
+There is no report, and the claim is false. The assertions compared the value read back at the
+end of the section against the value read at the start:
+
+```
+entry bagPages = 2      (some earlier section had already bought a page)
+including this section's purchase   -> too
+read back at the end = 2
+```
+
+The section is a **no-op with respect to `bagPages`** — it buys a page and it started from an
+already-bought page, so entering and leaving both observe 2. "Read back == entry value" holds
+whether or not the restore code exists. Deleting the whole restore block turned the `coins`
+assertion red (`got 800, want 99812`) and left the `bagPages` assertion green; deleting only
+the page-count line left it green too.
+
+The fix is to restore to a value that **cannot** equal the borrowed one, and to say why:
+
+* `out.t20PagesRestoreTo = C.BAG.maxPages` (6) — restore to 6, and 1 → 2 can never equal 6.
+* a new assertion that the restore target differs from the value the section produces.
+
+Verified by re-breaking it: `FAIL 段末把 bagPages 复位成指定值（有借有还） -> got 2, want 6`.
+
+Lesson, and the reason this is in the evidence file rather than a commit message: an assertion
+built from "the value I saw before" is only as strong as the chance that before and after
+differ. When the borrowed state is a small integer that other sections also move, write the
+target explicitly and assert the two are distinguishable. This is the second time in this batch
+that a green assertion proved nothing (the first: `L.sellItem(s, wornUid).ok === false`, true
+because the item is no longer in the bag, not because of the rule it was written to test).
+
+A second, smaller falsehood from the same report: it listed a brief defect that does not exist
+(an enumeration said "只有这五个" and then listed six items; the item was simply wrapped across
+a line). The other five items it raised were real and were fixed.
+
+### A check that lived only in a throwaway probe, and now does not
+
+Task 21's review measured the facility panel's tab strip in a scratch Electron probe, found
+nothing wrong, and reported it — then deleted the probe. That is the wrong place for a check
+whose whole purpose is to catch a regression later. The failure mode it guards is specific and
+has already happened once in this batch: the bag panel was narrowed to 470 px, seven tabs
+stopped fitting, the seventh was clipped by `overflow: hidden`, and **the assertion suite stayed
+green** because it counted DOM nodes rather than measuring geometry.
+
+Eight assertions now measure it, on both facility panels, every run:
+
+| Reading | Why it is needed |
+|---|---|
+| `scrollWidth <= clientWidth + 1` | the container itself overflows |
+| last tab's right edge inside the container's right edge | the strip is not clipped, but is drawn past the panel edge |
+| last tab width >= 24 px | the tabs were squeezed rather than dropped |
+
+Both quantities are required: `scrollWidth` can equal `clientWidth` when nothing sets
+`overflow`, and the tab can be inside a container that is itself drawn outside the panel.
+
+Broken on purpose, twice, and each time only the intended assertions failed:
+
+```
+# last tab pushed 500 px right of the container
+FAIL  铁匠铺最后一个页签的右缘在容器内（不是画到面板外面）  -> 最后右缘 1292 vs 容器右缘 792，宽 48
+FAIL  兵器架最后一个页签的右缘在容器内（不是画到面板外面）  -> 最后右缘 1292 vs 容器右缘 792，宽 48
+
+# scrollWidth forced to clientWidth + 500
+FAIL  铁匠铺页签一行放得下（没被 overflow 裁掉）  -> scroll 984 vs client 484
+FAIL  兵器架页签一行放得下（没被 overflow 裁掉）  -> scroll 984 vs client 484
+```
+
+Neither break touched the bag panel's own tab assertions, which stayed green in both runs —
+the new checks are additive.
 
 ### Reproducing this section
 
