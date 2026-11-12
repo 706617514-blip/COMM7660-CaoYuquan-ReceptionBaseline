@@ -604,45 +604,177 @@ section('兵器架动作带 uid：同名两件各穿各的（Task 3 三参修复
   ok(L.bagIndexOfUid(s, uid1) >= 0, '1 级那件还在背包里（没被顺手穿走）');
 }
 
-section('兵器架页签：全部 / 未拥有 / 已拥有 / 已穿戴 / 特殊');
+section('兵器架页签：全部 / 头部 / 躯干 / 背部 / 武器 / 脚部 / 特殊');
 {
+  /*
+   * 这一节钉的是**部位维度**的页签（Task 21）。
+   *
+   * 改前是状态维度（全部/未拥有/已拥有/已穿戴/特殊，Task 10 按设计 §5.1 定的）。
+   * PM 2026-11-12 核对遗漏时明确选了「换成部位分类，和背包一致」——
+   * 对背包的「分类」指的就是部位（C.EQUIP_SLOTS）。
+   *
+   * 维度换了，但这一节原来那些来之不易的口径**必须留着**：
+   *   - 穿戴中的件给两条动作（升级 + 卸掉），所以"行数 ≠ 件数"；
+   *   - 页签只决定"这一屏显示哪一类"，不改变任何一行的三态；
+   *   - 未知页签退化为不过滤（宁可多显示，也别给一片空白）。
+   * 只是把过滤键从 unowned/owned/worn 换成 head/torso/back/weapon/feet。
+   */
   const s = L.createState(4326);
   H.ensureHub(s);
   s.meta.coins = 5000;
-  const total = Object.keys(C.ALL_EQUIPMENT).length;
-  const specials = Object.keys(C.ALL_EQUIPMENT).filter(function (id) {
+  const ids = Object.keys(C.ALL_EQUIPMENT);
+  const total = ids.length;
+  const specials = ids.filter(function (id) {
     return C.equipDef(id).kind === 'special';
   }).length;
-  eq(H.zoneActions(s, 'forgewear').length, total, '不带 filter 时列全部（老调用不受影响）');
-  eq(H.zoneActions(s, 'forgewear', 'all').length, total, '页签 all 也是全部');
-  eq(H.zoneActions(s, 'forgewear', 'unowned').length, total, '新档全是未拥有');
-  eq(H.zoneActions(s, 'forgewear', 'owned').length, 0, '新档没有已拥有');
-  eq(H.zoneActions(s, 'forgewear', 'worn').length, 0, '新档没有已穿戴');
-  eq(H.zoneActions(s, 'forgewear', 'special').length, specials, '特殊页签只列特效装备');
 
+  // ---- ① 七个页签的文案与顺序（逻辑层的过滤键）----
+  // 逻辑层只认 id（filter 参数），文案在 index.html 的 PANEL_TABS 里 ——
+  // 那边由 test_game_page.js 的 4c 节钉。这里钉的是"这七个 id 各自过滤出什么"。
+  const TABS = ['all', 'head', 'torso', 'back', 'weapon', 'feet', 'special'];
+  const TAB_LABELS = ['全部', '头部', '躯干', '背部', '武器', '脚部', '特殊'];
+  eq(TABS.length, 7, '七个页签（全部 + 五个部位 + 特殊）');
+  eq(TAB_LABELS.length, 7, '七个文案');
+  // 部位页签的 id 必须与 C.EQUIP_SLOTS 逐字一致 —— 否则 def.slot === filter 永远不成立。
+  eq(C.EQUIP_SLOTS.join('/'), 'head/torso/back/weapon/feet',
+     '部位页签的 id 就是 C.EQUIP_SLOTS 本身（顺序也一致）');
+  eq(TABS.slice(1, 6).join('/'), C.EQUIP_SLOTS.join('/'),
+     '中间五个页签 id 依次等于 C.EQUIP_SLOTS');
+
+  // 每个页签都能被 zoneActions 接受，且都是数组（不是 undefined / null）
+  TABS.forEach(function (t, i) {
+    const rows = H.zoneActions(s, 'forgewear', t);
+    ok(Array.isArray(rows), '页签「' + TAB_LABELS[i] + '」返回数组（filter=' + t + '）');
+  });
+
+  // ---- ② 部位页签的件数 = 逐部位统计的行数（穿戴件算 2 行）----
+  // 口径：一条"动作"= 一行。穿戴中的件给"升级 + 卸掉"两条，所以算 2 行。
+  const expectRows = function (slot) {
+    return ids.reduce(function (n, id) {
+      const def = C.equipDef(id);
+      if (def.slot !== slot) return n;
+      return n + (L.equipOwned(s, id) === 'equipped' ? 2 : 1);
+    }, 0);
+  };
+  const expectCount = function (slot) {
+    return ids.filter(function (id) { return C.equipDef(id).slot === slot; }).length;
+  };
+  // 实测分布 head 6 / torso 7 / back 6 / weapon 10 / feet 6，合计 35。
+  // 断言仍按 C.equipDef 现算，免得以后改数值时集体假红。
+  eq(expectCount('head'), 6, '头部件 6 件（实测）');
+  eq(expectCount('torso'), 7, '躯干件 7 件（实测）');
+  eq(expectCount('back'), 6, '背部件 6 件（实测）');
+  eq(expectCount('weapon'), 10, '武器件 10 件（实测）');
+  eq(expectCount('feet'), 6, '脚部件 6 件（实测）');
+  eq(expectCount('head') + expectCount('torso') + expectCount('back') +
+     expectCount('weapon') + expectCount('feet'), total,
+     '五个部位件数之和 = 全部 ' + total + ' 件（不重不漏）');
+
+  // 新档没有穿戴件，行数 = 件数
+  C.EQUIP_SLOTS.forEach(function (slot) {
+    const rows = H.zoneActions(s, 'forgewear', slot);
+    eq(rows.length, expectRows(slot),
+       '页签「' + (C.EQUIP_SLOT_NAMES[slot] || slot) + '」行数 = 逐件现算（' +
+       expectCount(slot) + ' 件，新档无穿戴）');
+    ok(rows.every(function (a) {
+      return C.equipDef(a.payload.id).slot === slot;
+    }), '页签「' + (C.EQUIP_SLOT_NAMES[slot] || slot) + '」每一条都是该部位');
+  });
+
+  // ---- ③ 全部 / 特殊 ----
+  eq(H.zoneActions(s, 'forgewear').length, total, '不带 filter 时列全部（老调用不受影响）');
+  eq(H.zoneActions(s, 'forgewear', 'all').length, total, '页签「全部」也是全部');
+  eq(H.zoneActions(s, 'forgewear', 'special').length, specials, '特殊页签只列特效装备');
+  eq(specials, 14, '特效装备共 14 件（实测）');
+  const specialRows = H.zoneActions(s, 'forgewear', 'special');
+  ok(specialRows.every(function (a) {
+    return C.equipDef(a.payload.id).kind === 'special';
+  }), '特殊页签每一条都是 kind === special');
+  ok(specialRows.every(function (a) {
+    return C.equipDef(a.payload.id).kind !== 'base';
+  }), '特殊页签不含任何 base 件');
+
+  // ---- ④ 部位页签**不排除** special（本次最容易写错的地方）----
+  /*
+   * ALL_EQUIPMENT 的 35 件里有 14 件 kind === 'special'，而它们**同时都有 slot**
+   * （stormRing 是 head、battleAxe 是 weapon……）。所以"特殊"是**稀有度**维度、
+   * 五个部位是**部位**维度，两者各自独立过滤，只有「全部」是并集。
+   * 在部位页签里再排除 special 会让 stormRing / thunderHelm 在头部页签里凭空消失。
+   */
+  const headIds = H.zoneActions(s, 'forgewear', 'head')
+    .map(function (a) { return a.payload.id; });
+  ['leatherHelm', 'ironHelm', 'guardHelm', 'hornHelm'].forEach(function (id) {
+    ok(headIds.indexOf(id) >= 0, '头部页签含 base 件 ' + id);
+  });
+  ['thunderHelm', 'stormRing'].forEach(function (id) {
+    ok(headIds.indexOf(id) >= 0,
+       '头部页签含 special 件 ' + id + '（部位页签不排除 special）');
+  });
+  eq(headIds.length, 6, '头部页签正好 6 件（4 base + 2 special）');
+  // 反向也要成立：special 件确实带着 slot，所以上面那条不是巧合
+  eq(C.equipDef('stormRing').slot, 'head', 'stormRing 的 slot 是 head（所以它在头部页签里）');
+  eq(C.equipDef('stormRing').kind, 'special', 'stormRing 的 kind 是 special');
+  eq(C.equipDef('thunderHelm').slot, 'head', 'thunderHelm 的 slot 是 head');
+  eq(C.equipDef('thunderHelm').kind, 'special', 'thunderHelm 的 kind 是 special');
+
+  // ---- ⑤ 五个部位件数之和 = 全部页签去重后的件数 ----
+  // 口径：这里用**件数**（按 id 去重）而不是行数 —— 行数求和会把穿戴件算两次。
+  const partCountSum = C.EQUIP_SLOTS.reduce(function (n, slot) {
+    return n + expectCount(slot);
+  }, 0);
+  eq(partCountSum, total, '五个部位件数之和 = 全部页签件数（' + total + '）');
+  // 再按"去重后的 id 集合"验一遍：五个部位页签合起来正好覆盖全表
+  const seen = {};
+  C.EQUIP_SLOTS.forEach(function (slot) {
+    H.zoneActions(s, 'forgewear', slot).forEach(function (a) {
+      seen[a.payload.id] = true;
+    });
+  });
+  eq(Object.keys(seen).length, total,
+     '五个部位页签合起来正好覆盖全表（' + total + ' 个 id，不重不漏）');
+
+  // ---- ⑥ 未知页签退化为不过滤 ----
+  eq(H.zoneActions(s, 'forgewear', '不存在').length,
+     H.zoneActions(s, 'forgewear').length, '未知页签退化为不过滤（不白屏）');
+  eq(H.zoneActions(s, 'forgewear', 'bogus').length,
+     H.zoneActions(s, 'forgewear').length, '未知页签 bogus 也是 ' + total + ' 行');
+  // 注：背包侧的 L.bagFilter(bag, 'bogus') 对未知 tab 返回**空数组**，
+  // 而 hub 侧是**不过滤** —— 两者语义相反但各自调用方都自洽（背包的 tab
+  // 一定来自 PANEL_TABS，hub 的 filter 可能被配错）。game/logic.js 本轮不在
+  // 允许改动清单里，这里只把不一致记下来，不顺手改。
+  eq(L.bagFilter([], 'bogus').length, 0, '背包侧未知 tab 返回空数组（与 hub 相反，已知不一致）');
+
+  // ---- ⑦ 三态不受页签影响 ----
+  // 买一件（头部）→ 在 head 页签里应变成"穿戴"；
+  // 穿上 → 同一件给"升级 + 卸掉"两行；未买的件仍必是"购买"。
   L.buyEquipment(s, 'hornHelm');
   L.buyEquipment(s, 'ironHelm');
   L.equipItem(s, 'ironHelm');
-  const unowned = H.zoneActions(s, 'forgewear', 'unowned');
-  eq(unowned.length, total - 2, '未拥有页签只剩没买的件（买过的两件都消失）');
-  eq(unowned.some(function (a) { return a.payload.id === 'hornHelm'; }), false,
-     '已买(未穿)的角盔不在"未拥有"页签里');
-  eq(unowned.some(function (a) { return a.payload.id === 'ironHelm'; }), false,
-     '"已穿戴"的铁盔也不在"未拥有"页签里');
-  ok(unowned.every(function (a) { return a.kind === 'equip-buy'; }),
-     '未拥有页签里每一条都是购买动作（页签不改变三态）');
-  // 注意口径：已拥有的件不是固定 1 行 —— 身上那件给"升级 + 卸掉"两行。
-  const ownedTab = H.zoneActions(s, 'forgewear', 'owned');
-  eq(ownedTab.length, 3, '已拥有页签=背包那件 1 行 + 身上那件 2 行');
-  eq(ownedTab.filter(function (a) { return a.payload.id === 'hornHelm'; }).length, 1,
-     '背包里的角盔只有 1 行（穿戴）');
-  eq(ownedTab.filter(function (a) { return a.payload.id === 'ironHelm'; }).length, 2,
-     '身上的铁盔有 2 行（升级 + 卸掉）');
-  const wornTab = H.zoneActions(s, 'forgewear', 'worn');
-  eq(wornTab.length, 2, '已穿戴页签只有身上那件的两条动作（升级 + 卸掉）');
-  ok(wornTab.every(function (a) { return a.payload.id === 'ironHelm'; }), '已穿戴页签只含铁盔');
-  eq(H.zoneActions(s, 'forgewear', '不存在').length,
-     H.zoneActions(s, 'forgewear').length, '未知页签退化为不过滤（不白屏）');
+  const headAfter = H.zoneActions(s, 'forgewear', 'head');
+  // 6 件里 ironHelm 穿了（2 行）、hornHelm 买了（1 行）、其余 4 件未买（各 1 行）
+  eq(headAfter.length, expectRows('head'), '穿戴后头部页签行数 = 逐件现算（穿戴件算 2 行）');
+  eq(headAfter.length, 7, '头部页签 6 件 → 7 行（铁盔穿了给两条动作）');
+  const rowsOfId = function (list, id) {
+    return list.filter(function (a) { return a.payload.id === id; });
+  };
+  eq(rowsOfId(headAfter, 'hornHelm').length, 1, '背包里的角盔只有 1 行');
+  eq(rowsOfId(headAfter, 'hornHelm')[0].kind, 'equip-wear',
+     '买了没穿的角盔在头部页签里是"穿戴"动作');
+  eq(rowsOfId(headAfter, 'ironHelm').length, 2, '身上的铁盔有 2 行（升级 + 卸掉）');
+  eq(rowsOfId(headAfter, 'ironHelm').map(function (a) { return a.kind; }).join('/'),
+     'equip-upgrade/equip-unequip', '铁盔那两行依次是升级 + 卸掉');
+  const unownedHeads = rowsOfId(headAfter, 'leatherHelm');
+  eq(unownedHeads.length, 1, '没买过的皮盔在头部页签里仍是 1 行');
+  eq(unownedHeads[0].kind, 'equip-buy', '没买过的件在部位页签里仍是"购买"（页签不改变三态）');
+  ok(headAfter.filter(function (a) {
+    return L.equipOwned(s, a.payload.id) === null;
+  }).every(function (a) { return a.kind === 'equip-buy'; }),
+     '头部页签里每一条未拥有的动作都是购买');
+
+  // 穿戴的件**只**出现在它自己的部位页签里，不会串到别的部位
+  const weaponRows = H.zoneActions(s, 'forgewear', 'weapon');
+  eq(rowsOfId(weaponRows, 'ironHelm').length, 0, '头部的铁盔不会出现在武器页签里');
+  eq(weaponRows.length, expectRows('weapon'), '武器页签行数不受头部穿戴影响');
 }
 
 section('铁匠铺分类与图标：cat / icon / 分类过滤（Task 17）');

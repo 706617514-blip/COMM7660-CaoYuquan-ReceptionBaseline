@@ -488,7 +488,7 @@ const SCRIPT = `
       await wait(300);
       hub.showPanel({ id: 'forgewear' });
       await wait(120);
-      // V14 页签：全部 / 未拥有 / 已拥有 / 已穿戴 / 特殊。
+      // V14 页签：全部 / 头部 / 躯干 / 背部 / 武器 / 脚部 / 特殊（Task 21 改部位维度）。
       const tabBtns = function () {
         return Array.prototype.slice.call(
           document.querySelectorAll('#panelBody .tabs button'));
@@ -524,17 +524,35 @@ const SCRIPT = `
           return window.GameLogic.equipOwned(hub.state, id) === 'equipped';
         }).length;
 
-      // 点「未拥有」：只剩没买的件。期望值在页面里按 equipOwned 现算，
-      // 不写死数字 —— 前一段已经买过、穿过几件，写死就变成猜。
-      const unownedTab = tabByText('未拥有');
-      if (unownedTab) unownedTab.click();
+      // 点「头部」：只剩头部件。期望值在页面里按 slot 现算，不写死数字 ——
+      // 前一段已经买过、穿过几件，写死就变成猜。
+      const headTab = tabByText('头部');
+      if (headTab) headTab.click();
       await wait(60);
-      out.tabRowsUnowned = actRows().length;
-      out.tabExpectedUnowned = Object.keys(window.GameConfig.ALL_EQUIPMENT)
+      out.tabRowsHead = actRows().length;
+      out.tabExpectedHead = Object.keys(window.GameConfig.ALL_EQUIPMENT)
+        .reduce(function (n, id) {
+          const def = window.GameConfig.equipDef(id);
+          if (!def || def.slot !== 'head') return n;
+          return n + (window.GameLogic.equipOwned(hub.state, id) === 'equipped' ? 2 : 1);
+        }, 0);
+      out.tabHeadHasHelm = rowsFor('角盔', actRows()).length > 0;
+      // 头部件里有 2 件 special（雷鸣角盔 / 雷鸣指环）—— 部位页签不排除 special。
+      out.tabHeadSpecialCount = Object.keys(window.GameConfig.ALL_EQUIPMENT)
         .filter(function (id) {
-          return window.GameLogic.equipOwned(hub.state, id) === null;
+          const def = window.GameConfig.equipDef(id);
+          return def && def.slot === 'head' && def.kind === 'special';
         }).length;
-      out.tabUnownedHasHelm = rowsFor('角盔', actRows()).length > 0;
+      // 非头部件一件都不许混进来：逐行回查它属于哪个部位。
+      out.tabHeadAllHead = actRows().every(function (r) {
+        const t = r.querySelector('.t');
+        if (!t) return false;
+        const name = t.textContent.trim();
+        const id = Object.keys(window.GameConfig.ALL_EQUIPMENT).filter(function (k) {
+          return window.GameConfig.equipDef(k).name === name;
+        })[0];
+        return !!id && window.GameConfig.equipDef(id).slot === 'head';
+      });
       const allTab = tabByText('全部');
       if (allTab) allTab.click();
       await wait(60);
@@ -1989,6 +2007,18 @@ const SCRIPT = `
     out.t20ShopZone = (window.GameHub.zoneAt(stB) || {}).id || null;
 
     // 把钱包和页数摆到确定状态：1 页、钱刚好够买第 2 页（200）
+    //
+    // Task 21 §六：这段是**借**了 state.meta 来造确定状态，后面 3e / 重开 /
+    // 远征都读同一份 state.meta —— 所以有借必须有还。进入前先记原值
+    // （不假设是 1 / 1000），段末还原并断言。
+    // 存原值，用来在段末还原。但要注意：原值可能**恰好等于**买完后的值
+    // （实测进入本节时 bagPages 已经是 2，而买完也是 2）—— 那样末尾那条
+    // "复位成进入值"在完全不复位时也成立，是恒真断言。所以还原目标
+    // 单独取一个与买完后（1 → 2）必然不同的数：maxPages（6）。
+    out.t20PagesEntry = stB.meta.bagPages;
+    out.t20CoinsEntry = stB.meta.coins;
+    out.t20PagesRestoreTo = (window.GameConfig && window.GameConfig.BAG
+      ? window.GameConfig.BAG.maxPages : 6);
     stB.meta.bagPages = 1;
     stB.meta.coins = 1000;
     const coinsBeforeBuy = stB.meta.coins;
@@ -2048,6 +2078,16 @@ const SCRIPT = `
     hubB.panelOpen = false;
     window.EmberfieldUI.closePanel();
     await wait(150);
+
+    // Task 21 §六：有借有还 —— 把 bagPages / coins 还原成进入本节前的值，
+    // 再让面板/背包刷新一次。后面 3e（进田地）、重开、远征都读同一份
+    // state.meta，不复位就是"后续段落被前面污染的副作用"。
+    stB.meta.bagPages = out.t20PagesRestoreTo;
+    stB.meta.coins = out.t20CoinsEntry;
+    await wait(80);
+    // 复位后的回读值：Node 侧断言拿它跟 entry 比。
+    out.t20PagesRestored = stB.meta.bagPages;
+    out.t20CoinsRestored = stB.meta.coins;
   }
 
   // ---- 面板开着时缩小窗口：先把大窗口下的矩形记下来（Task 10c）----
@@ -2263,16 +2303,21 @@ const SMALLSCRIPT = `
   ok(r.headVisibleWhilePanelOpen === true, '面板开着换上的头盔当场可见',
      String(r.headVisibleWhilePanelOpen));
 
-  console.log('\n--- 3d-2. 兵器架三态与页签（V14）---');
-  eq(r.tabLabels, '全部/未拥有/已拥有/已穿戴/特殊', '兵器架有五个页签');
+  console.log('\n--- 3d-2. 兵器架三态与页签（V14 / Task 21 部位维度）---');
+  eq(r.tabLabels, '全部/头部/躯干/背部/武器/脚部/特殊', '兵器架有七个部位页签');
   ok(r.tabRowsAll === r.tabExpectedRowsAll,
      '全部页签一件不少（穿戴件两条动作，行数按状态现算）',
      r.tabRowsAll + ' vs ' + r.tabExpectedRowsAll + '，穿戴中 ' + r.tabWornCount + ' 件');
-  ok(r.tabRowsUnowned === r.tabExpectedUnowned,
-     '点「未拥有」后只剩没买的件（逐件按 equipOwned 现算）',
-     r.tabRowsUnowned + ' vs ' + r.tabExpectedUnowned);
-  ok(r.tabUnownedHasHelm === true, '没买过的角盔出现在未拥有页签（否则上一条是空跑）',
-     String(r.tabUnownedHasHelm));
+  ok(r.tabRowsHead === r.tabExpectedHead,
+     '点「头部」后只剩头部件（逐件按 slot 现算，穿戴件算 2 行）',
+     r.tabRowsHead + ' vs ' + r.tabExpectedHead);
+  ok(r.tabHeadAllHead === true, '头部页签里每一行都是头部件（没有别的部位混进来）',
+     String(r.tabHeadAllHead));
+  ok(r.tabHeadSpecialCount === 2,
+     '头部件里有 2 件 special（雷鸣角盔 / 雷鸣指环）—— 部位页签不排除 special',
+     String(r.tabHeadSpecialCount));
+  ok(r.tabHeadHasHelm === true, '角盔出现在头部页签（否则上一条是空跑）',
+     String(r.tabHeadHasHelm));
   ok(typeof r.helmBtnBuy === 'string' && r.helmBtnBuy.indexOf('购买') === 0,
      '未买时按钮写"购买"（不是物品名、不是"执行"）', r.helmBtnBuy);
   ok(typeof r.helmBtnWear === 'string' && r.helmBtnWear.indexOf('穿戴') === 0,
@@ -2310,8 +2355,8 @@ const SMALLSCRIPT = `
   eq(t17.wearZone, 'forgewear', '站到了兵器架');
   eq(t17.stillWorn, 0, '测量前穿戴已清空（否则穿戴件多一行，35 这个数就对不上）');
   eq(t17.wearRows, 35, '兵器架 35 行');
-  eq(t17.wearTabs, 5, '兵器架仍是 5 个页签（没被换成铁匠铺那套）');
-  eq(t17.wearLabels, '全部/未拥有/已拥有/已穿戴/特殊', '兵器架页签文案与顺序一个字没变');
+  eq(t17.wearTabs, 7, '兵器架是 7 个部位页签（Task 21：与背包同构）');
+  eq(t17.wearLabels, '全部/头部/躯干/背部/武器/脚部/特殊', '兵器架页签文案与顺序（部位维度）');
   eq(t17.wearImg && t17.wearImg.n, 35, '兵器架 35 行各一张装备贴图（改前 0 张）');
   eq(t17.wearImg && t17.wearImg.uniq, 35, '35 张贴图两两不同（PM「要贴图片」的实质）');
   ok(t17.wearImg && t17.wearImg.dataUrl === true, '兵器架贴图都是 data URL');
@@ -2483,6 +2528,26 @@ const SMALLSCRIPT = `
      '买完按钮价格跳到 500（跟着页数走）', r.t20BtnTextAfter);
   ok(typeof r.t20SubAfter === 'string' && r.t20SubAfter.indexOf('当前 2/6 页') >= 0,
      '买完说明行的当前页数变成 2', r.t20SubAfter);
+  // Task 21 §六：这一段借了 state.meta 造确定状态，必须还回去。
+  // 删掉复位代码这两条就会变红（已实测，见报告）。
+  //
+  // 注意 bagPages 的坑：进入本节时它可能**已经是** 2（前面某段买过一页），
+  // 而本节买完也是 2 —— 这时"读回值 == 进入值"在没复位时也成立，断言就成了
+  // 恒真。所以先钉一条"本节真的把它从 1 推到了 2"（证明这段确实动了它），
+  // 复位断言才有承重。
+  eq(r.t20PagesBefore, 1, '本节开始前 bagPages 被摆成 1（下面 +1 才有意义）');
+  eq(r.t20PagesAfter, 2, '本节买完 bagPages 变成 2（这段确实动了这个字段）');
+  // 承重条件：还原目标必须 != 买完值，否则"复位成还原目标"在没复位时也成立，
+  // 就是一条恒真断言。拆掉复位代码这条必红（已实测）。
+  ok(r.t20PagesRestoreTo !== r.t20PagesAfter,
+     '还原目标 != 买完值（否则下面那条复位断言恒真）',
+     'restoreTo=' + r.t20PagesRestoreTo + ' after=' + r.t20PagesAfter);
+  eq(r.t20PagesRestored, r.t20PagesRestoreTo,
+     '段末把 bagPages 复位成指定值（有借有还）',
+     r.t20PagesRestored + ' vs ' + r.t20PagesRestoreTo);
+  eq(r.t20CoinsRestored, r.t20CoinsEntry,
+     '段末把 coins 复位成进入前的值（有借有还）',
+     r.t20CoinsRestored + ' vs ' + r.t20CoinsEntry);
 
   console.log('\n--- 3e. 按 J 进田地：不能卡在黑屏 ---');
   eq(r.fieldZoneId, 'field', '站在田地区域上（不然按 J 进不去）');

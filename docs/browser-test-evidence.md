@@ -25,7 +25,7 @@ layer would be overstating what it tests.
 
 Playwright's browser download is not available in this environment, and pulling a ~150 MB
 browser into CI to test a static page whose rules are already covered by the Node suites
-(1,362 assertions as of 2026-11-12) is a poor trade. The honest position is to record the browser evidence here, run it locally before a
+(1,671 assertions as of 2026-11-12) is a poor trade. The honest position is to record the browser evidence here, run it locally before a
 release, and say plainly that CI does not cover it — rather than adding a `continue-on-error`
 green tick that proves nothing.
 
@@ -89,17 +89,20 @@ checked with `lsof` before and after).
 |---|---|---|---|
 | `tests/check_textures.js` | 0 | _(prints counts, not assertions)_ | 62 textures generated, all 35 equipment sprites present, "全部纹理都已生成 ✓" |
 | `tests/test_audio.js` | 0 | 103 | |
-| `tests/test_bag.js` | 0 | 172 | |
+| `tests/test_bag.js` | 0 | 184 | |
 | `tests/test_game_logic.js` | 0 | 521 | |
-| `tests/test_game_meta.js` | 0 | 186 | |
-| `tests/test_game_page.js` | 0 | 151 | |
-| `tests/browser/smoke.js` | 0 | 396 | Electron, ~45 s, real canvas |
+| `tests/test_game_meta.js` | 0 | 280 | |
+| `tests/test_game_page.js` | 0 | 162 | |
+| `tests/browser/smoke.js` | 0 | 421 | Electron, ~45 s, real canvas |
 | `tests/test_product_app.js` | 0 | 70 | Phase 1 app; `analysis/build_report2.py` re-counts it live |
 
-103 + 172 + 521 + 186 + 151 + 396 = **1,529** assertions across the six game suites, all exit 0.
+103 + 184 + 521 + 280 + 162 + 421 = **1,671** assertions across the six game suites, all exit 0
+(the bag/meta/page suites grew with Tasks 20-21: `test_bag` 172 -> 184,
+`test_game_meta` 186 -> 280, `test_game_page` 151 -> 162, `smoke` 396 -> 421).
 
-(1,362 before Tasks 17–19 added panel item art, the anvil category tabs and the
-tight-cropped sprite pipeline — 97 + 35 + 35 assertions; see the panel-art note below.)
+(1,529 before Tasks 20–21 added the potion-shop bag-page entry, rarity-tier sorting
+and the forgewear slot tabs; see the notes below. 1,362 before Tasks 17–19 added
+panel item art, the anvil category tabs and the tight-cropped sprite pipeline.)
 
 The smoke run's own readout, verbatim:
 
@@ -128,7 +131,7 @@ moment, not inferred from the image.
 
 ### A defect this pass found: the shop panels had no item art at all
 
-Recorded because it is the same failure shape as the batch-bar bug — 1,362 green
+Recorded because it is the same failure shape as the batch-bar bug — 1,529 green
 assertions, and the feature was simply not there.
 
 The design (§5.1) requires every weapon-rack row to show that item's sprite. Measured

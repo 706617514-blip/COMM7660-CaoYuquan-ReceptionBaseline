@@ -278,8 +278,11 @@ section('4b. 兵器架：按钮写动作 + 页签只筛行');
    * 这一节钉两件玩家一眼就能看见的事：
    *   1. 按钮文案来自动作本身（购买 / 穿戴 / 升级 / 卸掉），
    *      而不是物品名，也不是旧的 "cost 为 0 就写执行" 阶梯；
-   *   2. 页签（全部/未拥有/已拥有/已穿戴/特殊）只决定"这一屏显示哪一类"，
-   *      不改变每一行给的是哪个动作 —— 否则"未拥有"页签里的件会丢掉购买动作。
+   *   2. 页签（全部/头部/躯干/背部/武器/脚部/特殊）只决定"这一屏显示哪一类"，
+   *      不改变每一行给的是哪个动作 —— 否则部位页签里的未买件会丢掉购买动作。
+   *
+   * Task 21 把页签从**状态**维度（全部/未拥有/已拥有/已穿戴/特殊）换成
+   * **部位**维度（全部/头部/躯干/背部/武器/脚部/特殊），与背包一致。
    */
   const forgewear = sandbox.GameHub.ZONES.find(z => z.id === 'forgewear');
   const smith = L.createState(777);
@@ -312,9 +315,10 @@ section('4b. 兵器架：按钮写动作 + 页签只筛行');
   const total = Object.keys(C.ALL_EQUIPMENT).length;
   const tabs0 = tabsEl() || { children: [] };
   ok(!!tabsEl(), '兵器架有页签条');
-  eq(tabs0.children.length, 5, '五个页签');
-  eq(tabs0.children.map(b => b.textContent).join('/'), '全部/未拥有/已拥有/已穿戴/特殊',
-     '页签文案与顺序（全部 / 未拥有 / 已拥有 / 已穿戴 / 特殊）');
+  eq(tabs0.children.length, 7, '七个部位页签');
+  eq(tabs0.children.map(b => b.textContent).join('/'),
+     '全部/头部/躯干/背部/武器/脚部/特殊',
+     '页签文案与顺序（全部 / 头部 / 躯干 / 背部 / 武器 / 脚部 / 特殊）');
   eq(tabs0.children[0] && tabs0.children[0].className, 'tab on', '默认停在"全部"页签');
   eq(panelRows().length, total, '全部页签列出 ' + total + ' 行');
   ok(panelRows().every(r => textOf(r).length > 0),
@@ -350,30 +354,60 @@ section('4b. 兵器架：按钮写动作 + 页签只筛行');
   eq(rowsWithLabel('角盔').length, 1, '卸掉后又只剩一行');
   eq(String(btnOf(rowsWithLabel('角盔')[0]).textContent), '穿戴', '卸掉后按钮回到"穿戴"');
 
-  // ⑤ 页签：未拥有只剩没买的件
-  mustTab('未拥有').click();
+  // ⑤ 页签：头部页签只剩头部件（含 special 的头部件）
+  // 口径：这一屏的行数按部位现算，不写死 —— 穿戴中的件给两条动作。
+  const expectRowsFor = (slot) => Object.keys(C.ALL_EQUIPMENT).reduce((n, id) => {
+    const def = C.equipDef(id);
+    if (def.slot !== slot) return n;
+    return n + (L.equipOwned(smith, id) === 'equipped' ? 2 : 1);
+  }, 0);
+  const idOfLabel = (label) => Object.keys(C.ALL_EQUIPMENT)
+    .filter(k => C.equipDef(k).name === label)[0];
+  mustTab('头部').click();
   eq((tabsEl() ? tabsEl().children : []).filter(b => b.className.indexOf('on') >= 0).length, 1,
      '同时只有一个页签选中');
-  eq(mustTab('未拥有').className, 'tab on', '点中的页签变成选中态');
-  eq(panelRows().length, total - 1, '未拥有页签少掉已买的角盔');
-  ok(!panelRows().some(r => labelOf(r) === '角盔'),
-     '已买的角盔不在"未拥有"页签里');
-  ok(panelRows().every(r => textOf(r).indexOf('购买') === 0),
-     '未拥有页签里每行都是"购买"动作');
+  eq(mustTab('头部').className, 'tab on', '点中的页签变成选中态');
+  eq(panelRows().length, expectRowsFor('head'),
+     '头部页签行数 = 头部件现算（穿戴件算 2 行）');
+  ok(panelRows().every(r => {
+    const id = idOfLabel(labelOf(r));
+    return !!id && C.equipDef(id).slot === 'head';
+  }), '头部页签里每一行都是头部件');
+  // 非头部件一件都不许出现
+  ok(!panelRows().some(r => C.equipDef(idOfLabel(labelOf(r)) || '').slot === 'torso'),
+     '躯干件不在头部页签里');
+  ok(!panelRows().some(r => C.equipDef(idOfLabel(labelOf(r)) || '').slot === 'weapon'),
+     '武器件不在头部页签里');
+  // 三态不受页签影响：每行按钮仍写动作（购买 / 穿戴 / 升级 / 卸掉 / 已满级）
+  ok(panelRows().every(r => /^(购买|穿戴|升级|卸掉|已满级)/.test(textOf(r))),
+     '头部页签里每行按钮仍写动作（页签不改三态）');
+  // special 的头部件必须还在（部位页签不排除 special）
+  const headSpecial = Object.keys(C.ALL_EQUIPMENT).filter(id =>
+    C.equipDef(id).slot === 'head' && C.equipDef(id).kind === 'special');
+  eq(headSpecial.length, 2, '头部件里有 2 件 special（雷鸣角盔 / 雷鸣指环）');
+  headSpecial.forEach(id => {
+    ok(panelRows().some(r => labelOf(r) === C.equipDef(id).name),
+       '头部页签含 special 件「' + C.equipDef(id).name + '」（部位页签不排除 special）');
+  });
 
-  // ⑥ 已穿戴页签只有身上那件的两条动作
-  mustTab('全部').click();
-  btnOf(rowsWithLabel('角盔')[0]).click();      // 再穿上（上一步卸掉了）
-  mustTab('已穿戴').click();
-  eq(panelRows().length, 2, '已穿戴页签只有角盔那两条动作');
-  eq(String(btnOf(panelRows()[0]).textContent).indexOf('升级'), 0, '已穿戴页签第一条是升级');
-  eq(String(btnOf(panelRows()[1]).textContent), '卸掉', '已穿戴页签第二条是卸掉');
+  // ⑥ 武器页签：行数 = 武器件现算值，且不含其它部位
+  mustTab('武器').click();
+  eq(panelRows().length, expectRowsFor('weapon'), '武器页签行数 = 武器件现算');
+  ok(panelRows().every(r => {
+    const id = idOfLabel(labelOf(r));
+    return !!id && C.equipDef(id).slot === 'weapon';
+  }), '武器页签里每一行都是武器件');
+  ok(!panelRows().some(r => labelOf(r) === '角盔'), '头部件不在武器页签里');
 
-  // ⑦ 特殊页签只列特效装备
+  // ⑦ 特殊页签只列特效装备（跨部位：与部位页签是两套独立维度）
   const specials = Object.keys(C.ALL_EQUIPMENT).filter(id => C.equipDef(id).kind === 'special');
   mustTab('特殊').click();
   eq(panelRows().length, specials.length, '特殊页签只列特效装备');
   ok(panelRows().every(r => r.className.indexOf('ult') >= 0), '特殊页签每行都是特效样式');
+  const specialSlots = {};
+  specials.forEach(id => { specialSlots[C.equipDef(id).slot] = true; });
+  eq(Object.keys(specialSlots).length, 5,
+     '特殊件覆盖全部五个部位（所以「特殊」是稀有度维度，不能与部位页签叠罗汉）');
 
   mustTab('全部').click();
   // 注意：此刻角盔穿在身上，"全部"是 35 件 + 身上那件多出的 1 行（升级+卸掉）＝ 36 行。
@@ -414,10 +448,29 @@ section('4c. 设施面板：按区域的页签 + 行内图标（Task 17）');
   eq(anvilTabs.map(t => t.label).join('/'), '全部/攻击/生存/机动', '铁匠铺页签文案与顺序');
   eq(anvilTabs.map(t => t.id).join('/'), 'all/attack/defense/move', '铁匠铺页签 id');
   const wearTabs = tabsFor('forgewear');
-  eq(wearTabs.length, 5, '兵器架仍是五个页签');
-  eq(wearTabs.map(t => t.label).join('/'), '全部/未拥有/已拥有/已穿戴/特殊',
-     '兵器架页签文案与顺序一个字没变');
-  eq(wearTabs.map(t => t.id).join('/'), 'all/unowned/owned/worn/special', '兵器架页签 id 不变');
+  eq(wearTabs.length, 7, '兵器架换成七个部位页签');
+  eq(wearTabs.map(t => t.label).join('/'), '全部/头部/躯干/背部/武器/脚部/特殊',
+     '兵器架页签文案与顺序（部位维度，与背包一致）');
+  eq(wearTabs.map(t => t.id).join('/'), 'all/head/torso/back/weapon/feet/special',
+     '兵器架页签 id = all + C.EQUIP_SLOTS + special');
+  // 顺序必须与 C.EQUIP_SLOTS 逐字一致：`全部` + 五个部位 + `特殊`
+  eq(wearTabs.slice(1, 6).map(t => t.id).join('/'),
+     sandbox.GameConfig.EQUIP_SLOTS.join('/'),
+     '中间五个页签 id 依次等于 C.EQUIP_SLOTS（顺序一致）');
+  // 文案必须与**背包面板**那套逐字一致（PM 要的是"和背包一致"）。
+  // 注意不能拿 C.EQUIP_SLOT_NAMES 来比：那里 feet 是「鞋」，而背包页签写的是
+  // 「脚部」（baghud.js 的 TABS 自己硬编码了七个文案）。权威是背包的文案表。
+  const BAG_TAB_LABELS = ['全部', '头部', '躯干', '背部', '武器', '脚部', '特殊'];
+  eq(wearTabs.map(t => t.label).join('/'), BAG_TAB_LABELS.join('/'),
+     '兵器架七个文案与背包面板逐字一致');
+  eq(wearTabs.map(t => t.id).join('/'),
+     ['all'].concat(sandbox.GameConfig.EQUIP_SLOTS).concat(['special']).join('/'),
+     '兵器架页签 id = 全部 + C.EQUIP_SLOTS + 特殊（与背包同构）');
+  // 旧的三个状态页签 id 必须彻底消失（不给兼容分支，靠 currentTab 自动退回 'all'）
+  ['unowned', 'owned', 'worn'].forEach(oldId => {
+    ok(!wearTabs.some(t => t.id === oldId),
+       '旧状态页签 id「' + oldId + '」已从配置里删掉');
+  });
   eq(tabsFor('altar').length, 0, '祭坛没有页签配置（返回空数组，不渲染页签条）');
   eq(tabsFor('shop').length, 0, '药水铺没有页签配置');
   eq(tabsFor('field').length, 0, '田地没有页签配置');
@@ -532,7 +585,7 @@ section('4c. 设施面板：按区域的页签 + 行内图标（Task 17）');
   ui.openPanel(wearZone, st, () => {}, () => {});
   const wearKids = getEl('panelBody').children;
   eq(wearKids[1] && wearKids[1].className, 'tabs', '兵器架页签条仍在资源行之后');
-  eq(wearKids[1] ? wearKids[1].children.length : -1, 5, '兵器架仍是 5 个页签');
+  eq(wearKids[1] ? wearKids[1].children.length : -1, 7, '兵器架换成 7 个部位页签');
   eq(wearKids.filter(c => c.className.indexOf('act') >= 0).length,
      sandbox.GameHub.zoneActions(st, 'forgewear').length, '兵器架行数与不过滤时一致');
 

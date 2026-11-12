@@ -351,19 +351,23 @@
         });
       });
     }
-    // 兵器架页签：全部 / 未拥有 / 已拥有 / 已穿戴 / 特殊。
+    // 兵器架页签：全部 / 头部 / 躯干 / 背部 / 武器 / 脚部 / 特殊（Task 21）。
+    // 维度从"状态"（未拥有 / 已拥有 / 已穿戴）换成"部位"：部位是稳定维度，
+    // 状态随存档漂移 —— 站在兵器架前的问题是"这个部位还能换什么"。
     // 过滤放在动作生成**之后**：三态（购买 / 穿戴 / 升级+卸掉）由装备状态决定，
-    // 页签只决定"这一屏显示哪一类"，两者互不影响 ——
-    // 反过来做就会让"未拥有"页签里的件丢掉购买动作。
+    // 页签只决定"这一屏显示哪个部位"，两者互不影响 ——
+    // 反过来做就会让部位页签里的未买件丢掉购买动作。
+    //
+    // 「特殊」是**稀有度**维度（kind === 'special'），不是第六个部位：14 件
+    // special 覆盖全部五个部位（config.js 实测），所以它与部位页签是两套独立
+    // 分类，各自完整，不叠罗汉。
     if (zoneId === 'forgewear' && filter && filter !== 'all') {
       out = out.filter(function (a) {
         const def = a.payload && C.equipDef(a.payload.id);
         if (!def) return false;
         if (filter === 'special') return def.kind === 'special';
-        const held = L.equipOwned(state, a.payload.id);
-        if (filter === 'unowned') return !held;
-        if (filter === 'owned') return !!held;
-        if (filter === 'worn') return held === 'equipped';
+        // 部位页签：不排除 special（头部的雷鸣角盔仍是头部页签的件）。
+        if (C.EQUIP_SLOTS.indexOf(filter) >= 0) return def.slot === filter;
         return true;   // 未知页签退化为不过滤：宁可多显示，也别给一片空白
       });
     }
