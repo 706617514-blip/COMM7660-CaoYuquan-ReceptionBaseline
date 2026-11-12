@@ -800,6 +800,27 @@ const again2 = findByIdIn(getEl('panelBody'), 'btn-again');
 ok(!!again2, '再来一局按钮存在');
 if (again2) { again2.click(); ok(againCalled, '点再来一局触发了场景的重开实现'); }
 
+// 种子腐烂量必须写在结算卡上（V12）：种子变少如果没解释，玩家会以为存档坏了。
+{
+  const spoilState = L.createState(9);
+  spoilState.meta.seeds = 30;
+  L.startRun(spoilState, 'wood');
+  L.endRun(spoilState, true);
+  const spoils = spoilState.lastResult.seedSpoiled;
+  // 承重条件：没有真的腐烂，"显示腐烂"和"不显示"就区分不开。
+  ok(spoils > 0, '构造出真的腐烂（否则下面几条是恒真）', spoils);
+  sandbox.EmberfieldUI.showResult(spoilState, () => {});
+  const htmlSpoil = getEl('panelBody').innerHTML;
+  ok(htmlSpoil.indexOf('腐烂') >= 0, '结算卡写明了腐烂', htmlSpoil);
+  ok(htmlSpoil.indexOf('腐烂 ' + spoils) >= 0,
+     '腐烂数量与 lastResult.seedSpoiled 一致', htmlSpoil);
+
+  // 没腐烂时不能出现 —— 那句"（腐烂 0）"是纯噪音，还会让人以为机制出了问题。
+  sandbox.EmberfieldUI.showResult(bootedState, () => {});
+  ok(getEl('panelBody').innerHTML.indexOf('腐烂') < 0,
+     '没有腐烂时不显示腐烂文案', getEl('panelBody').innerHTML);
+}
+
 // ---------------------------------------------------------------- 存档码
 section('6. 存档码导入');
 const code = sandbox.GameProfile.exportCode('老档', L.serialize(bootedState));

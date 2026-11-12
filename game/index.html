@@ -942,11 +942,18 @@
     $('panelSub').textContent = '难度 ' + d.name + ' · ' + r.wavesCleared + ' / ' +
       d.waves + ' 波 · ' + r.elapsed + ' 秒';
     const keepPct = Math.round((typeof r.keep === 'number' ? r.keep : 0.5) * 100);
+    /*
+     * 种子失效（设计 §3.5）：超过自家播种量的部分每局腐烂 25%。
+     * 必须写出来，否则玩家看到种子变少只会以为存档坏了。
+     * 只在真的腐烂时出现 —— 没腐烂也挂一句"（腐烂 0）"是噪音。
+     */
+    const spoil = (r.seedSpoiled > 0)
+      ? '<span style="color:#8fa3b8">（腐烂 ' + r.seedSpoiled + '）</span>' : '';
     const body = $('panelBody');
     body.innerHTML =
       '<div style="font-size:13px;line-height:2;color:#cfdae6">' +
       '带回铜币 <b style="color:#e8b04b">' + r.coins + '</b>　' +
-      '种子 <b style="color:#e8b04b">' + r.seeds + '</b>' +
+      '种子 <b style="color:#e8b04b">' + r.seeds + '</b>' + spoil +
       (exited
         ? '<span style="color:#e8b04b">（主动退出，按剩余血量保留 ' + keepPct + '%）</span>'
         : (lost ? '<span style="color:#e8574a">（倒下只保留一半）</span>' : '')) + '<br>' +

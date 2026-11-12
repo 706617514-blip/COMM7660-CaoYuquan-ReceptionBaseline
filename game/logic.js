@@ -1970,6 +1970,25 @@
     state.meta.runsCompleted += 1;
     if (won) state.meta.runsWon += 1;
 
+    /*
+     * 种子失效（设计 §3.5）：超过「自家播种量」的那部分每局腐烂 seedSpoilRate。
+     *
+     * grace 取当前田地数：田地是种子的唯一去处，所以"够种满自家所有田"
+     * 永远不该被吃掉 —— 满田玩家不会断种，只有真正的超额囤积才衰减。
+     * 用按比例腐烂而不是"每颗种子有寿命"：meta.seeds 是单一整数，
+     * 带年龄的列表要动存档结构、迁移链和所有读取点，收益与风险不成比例。
+     *
+     * 三层结算路径（战败 / 通关 / 主动退出）都走这里，所以只写一处。
+     * 改的是 meta.seeds，不动 farm.plots 的任何字段。
+     */
+    const seedGrace = state.farm.plots.length;
+    const seedsBeforeSpoil = state.meta.seeds;
+    if (seedsBeforeSpoil > seedGrace) {
+      state.meta.seeds = seedGrace +
+        Math.ceil((seedsBeforeSpoil - seedGrace) * (1 - C.FARM.seedSpoilRate));
+    }
+    const seedSpoiled = seedsBeforeSpoil - state.meta.seeds;
+
     // 药水同步：本局喝掉多少，meta 就扣掉多少。
     // 用"剩余量回写"而不是"扣减量"，中途重开也不会重复扣。
     if (run.potions && state.meta.potions) {
@@ -1998,6 +2017,9 @@
       difficultyId: run.difficultyId,
       wavesCleared: won ? run.diff.waves : run.waveIndex,
       coins: coins, seeds: seeds,
+      // 腐烂量要显示在结算卡上（设计 §3.5）：种子变少了必须有交代，
+      // 否则玩家会认为存档坏了。没腐烂就是 0，界面按 0 决定显不显示。
+      seedSpoiled: seedSpoiled,
       passive: passive, matured: matured,
       elapsed: Math.round(run.elapsed),
     };

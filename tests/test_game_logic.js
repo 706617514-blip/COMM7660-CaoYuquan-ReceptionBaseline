@@ -254,10 +254,13 @@ section('7. 胜利全额、失败减半');
 {
   const s1 = L.createState(1);
   L.startRun(s1, 'wood');
-  s1.run.loot.coins = 100; s1.run.loot.seeds = 10;
+  // 种子只捡 4 颗：3 + 4 = 7 <= 9 块田，不触发 V10 的腐烂。
+  // 这一节只回答"胜利是否全额 / 失败是否减半"；超额腐烂单独在 V10 里测，
+  // 否则两个规则搅在一起，失败时分不清是哪条坏了。
+  s1.run.loot.coins = 100; s1.run.loot.seeds = 4;
   L.endRun(s1, true);
   eq(s1.meta.coins, 100, '胜利保留全部铜币');
-  eq(s1.meta.seeds, 3 + 10, '胜利保留全部种子');
+  eq(s1.meta.seeds, 3 + 4, '胜利保留全部种子（未超田地数）');
 
   const s2 = L.createState(1);
   L.startRun(s2, 'wood');
@@ -2192,6 +2195,85 @@ section('V18. 攻击连段与判定范围整体加长 5%');
     ok(e.hp < hp0 || e.state === 'dead',
        `第 1 段真的能打到 ${gap.toFixed(1)}px 外的敌人（旧射程 ${base[0]}）`,
        e.hp);
+  }
+}
+
+// ---------------------------------------------------------------- V10/V11 种子失效
+section('V10/V11. 超出自家播种量的种子每局腐烂 25%');
+{
+  /*
+   * 设计 §3.5：防"无限囤种子没地方用"。结算时
+   *   grace = 当前田地数
+   *   seeds > grace ? seeds = grace + ceil((seeds - grace) * (1 - seedSpoilRate))
+   * 为什么不是"每颗种子有寿命"：meta.seeds 是单一整数，改成带年龄的列表要动
+   * 存档结构、迁移链和所有读取点（种植/结算/HUD/导出码），收益与风险不成比例。
+   *
+   * 本节的数字都按"9 块田"算：9 + ceil(91*0.75)=78、9 + ceil(81*0.75)=70。
+   * 78 与 70 不同，是为了证明真的按比例算，而不是"固定减掉 22 颗"。
+   */
+  eq(C.FARM.seedSpoilRate, 0.25, '腐烂比例写进 config（0.25，不在逻辑里内联）');
+
+  // 结算助手：造一局 → 定 loot → endRun。返回同一个 state。
+  // 默认 9 块田（createState 的形状）；plots 不同时按 createState 里 plot 的
+  // 形状重造数组，别自创字段。
+  function settle(before, plots) {
+    const s = L.createState(1);
+    s.meta.seeds = before;
+    if (plots !== C.FARM.cols * C.FARM.rows) {
+      s.farm.plots = new Array(plots).fill(null).map(function () {
+        return { state: 'empty', growth: 0 };
+      });
+    }
+    L.startRun(s, 'wood');
+    s.run.loot.seeds = 0;
+    L.endRun(s, true);
+    return s;
+  }
+
+  const a = settle(100, 9);
+  eq(a.meta.seeds, 78, '100 颗、9 块田 → 78（9 + ceil(91*0.75) = 9 + 69）');
+  eq(a.lastResult.seedSpoiled, 22, '同一次结算记下烂掉 22 颗');
+  // 口径不变：lastResult.seeds 仍是"这一局捡到的种子"。
+  // 结算卡上那个数字原本就是 loot 口径，改成总库存会同时骗到"这局收获多少"。
+  eq(a.lastResult.seeds, 0, 'lastResult.seeds 仍是这一局的收获口径');
+
+  const b = settle(9, 9);
+  eq(b.meta.seeds, 9, '正好等于田地数（9）时一颗都不烂');
+  eq(b.lastResult.seedSpoiled, 0, '没腐烂时 seedSpoiled 是 0，不是 undefined');
+
+  const c = settle(0, 9);
+  eq(c.meta.seeds, 0, '0 颗仍是 0');
+  eq(c.lastResult.seedSpoiled, 0, '0 颗不会算出负数或 NaN');
+
+  const d = settle(90, 9);
+  eq(d.meta.seeds, 70, '90 颗 → 70（9 + ceil(81*0.75) = 9 + 61），不是固定减 22');
+  eq(d.lastResult.seedSpoiled, 20, '90 颗烂 20 颗');
+
+  const e = settle(30, 18);
+  eq(e.meta.seeds, 27, 'grace 跟着田地数走：18 块田、30 颗 → 18 + ceil(12*0.75) = 27');
+  eq(e.lastResult.seedSpoiled, 3, '18 块田时只烂 3 颗');
+
+  // V11 保底不变量：任意输入下都不能把"够种一页"的量也吃掉。
+  // 用固定种子的小 LCG 取 5 组而不是 Math.random —— 随机数会让失败变成偶发，
+  // 红/绿就没有证据价值了。
+  let rnd = 20261113;
+  const next = function () {
+    rnd = (rnd * 1103515245 + 12345) % 2147483648;
+    return rnd / 2147483648;
+  };
+  for (let i = 0; i < 5; i++) {
+    const before = Math.floor(next() * 500);
+    const plots = 1 + Math.floor(next() * 24);
+    const s = settle(before, plots);
+    ok(s.meta.seeds >= Math.min(before, plots),
+       `保底：${before} 颗 / ${plots} 块田 → ${s.meta.seeds} >= min(${before}, ${plots})`,
+       s.meta.seeds);
+    ok(s.meta.seeds <= before, `腐烂只减少不增加（${before} -> ${s.meta.seeds}）`,
+       s.meta.seeds);
+    ok(Number.isInteger(s.meta.seeds), '结算是整数（存档里不能出现小数）',
+       s.meta.seeds);
+    eq(s.lastResult.seedSpoiled, before - s.meta.seeds,
+       'seedSpoiled 与结算前后的差一致（不会和 meta.seeds 对不上）');
   }
 }
 

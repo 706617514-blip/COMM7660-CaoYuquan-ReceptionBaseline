@@ -2109,6 +2109,126 @@ const SCRIPT = `
     out.t20CoinsRestored = stB.meta.coins;
   }
 
+  // ---- V8/V9：进关卡要渐黑，且渐黑期间连点不会进两局 ----
+  /*
+   * 为什么在真浏览器里验：渐黑是 Phaser 相机的行为。桩测试只能证明
+   * "调了 fadeOut"，证明不了画面真的黑了 340ms 才切场景。
+   *
+   * 两个容易写成恒真的坑，这里刻意绕开：
+   *  1. 点完立刻读 isActive('Run') 不能当"不是硬切"的证据 ——
+   *     scene.start 是排队执行，硬切在同一 tick 里也不会 active。
+   *     真正能区分的是 fadeEffect.isRunning，和"120ms（<340ms）时还没切"。
+   *  2. 反证不能写"没抛错"。这里直接包住 hub.scene.start 数真实调用次数。
+   */
+  try {
+    const scV = globalThis.__game.scene;
+    const stV = window.EmberfieldApp.__state;
+    out.v8DiagStart = {
+      hubActive: scV.isActive('Hub'),
+      hubPaused: scV.isPaused('Hub'),
+      hubSleeping: scV.isSleeping('Hub'),
+      hubStatus: scV.getScene('Hub') ? scV.getScene('Hub').sys.settings.status : null,
+      hasCameras: !!(scV.getScene('Hub') && scV.getScene('Hub').cameras),
+      hasMain: !!(scV.getScene('Hub') && scV.getScene('Hub').cameras &&
+        scV.getScene('Hub').cameras.main),
+      activeKeys: scV.getScenes(true).map(function (x) { return x.scene.key; }).join(','),
+    };
+    if (!scV.isActive('Hub')) {
+      if (scV.isActive('Farm')) scV.stop('Farm');
+      if (scV.isActive('Run')) scV.stop('Run');
+      scV.start('Hub');
+      await wait(400);
+    }
+    const hubV = scV.getScene('Hub');
+    // 相机引用必须提前抓住：硬切一旦发生，Hub 被 shutdown，hubV.cameras.main
+    // 就没了 —— 在 120ms 后再去取会抛 "Cannot read properties of undefined"，
+    // 把"渐黑没开始"这个真正的症状淹没成一片 undefined。
+    const camV = hubV.cameras.main;
+    out.v9PhaseBefore = stV.phase;
+    hubV.panelOpen = false;
+    window.EmberfieldUI.closePanel();
+
+    // 站到远征之门（zone id 'gate'）。按 J 在这里只打开面板，不会直接进关 ——
+    // 所以"按 J 进第一个关卡"必须再加一步点面板里的按钮，这才是玩家的真实路径。
+    stV.hub.x = 880; stV.hub.z = 105;
+    await wait(250);
+    out.v8ZoneId = (window.GameHub.zoneAt(stV) || {}).id || null;
+
+    // keydown/keyup 之间必须隔一帧：justPressed 读的是"这一帧 down 为真"，
+    // 同一 tick 里按下又抬起，update 跑到时已经是 false，键等于没按（实测）。
+    key('keydown', 'KeyJ', 74);
+    await wait(80);
+    key('keyup', 'KeyJ', 74);
+    await wait(160);
+    const gateRows = document.querySelectorAll('#panelBody .act');
+    out.v8PanelOpen = !!hubV.panelOpen;
+    out.v8Rows = gateRows.length;
+    const runBtn = gateRows.length ? gateRows[0].querySelector('button') : null;
+    out.v8HasRunBtn = !!runBtn;
+    out.v8RunBtnText = runBtn ? String(runBtn.textContent) : null;
+    out.v8FadeBefore = camV.fadeEffect.isRunning;
+    out.v8RunBefore = scV.isActive('Run');
+
+    if (runBtn) runBtn.click();
+
+    // 同一个 tick 里读：渐黑必须已经开始
+    out.v8FadeAt0 = camV.fadeEffect.isRunning;
+    out.v8RunAt0 = scV.isActive('Run');
+    out.v8HubAt0 = scV.isActive('Hub');
+    out.v8PanelAt0 = !!hubV.panelOpen;
+
+    // 120ms（< 340ms）：硬切此刻早切完了；渐黑必须还没切
+    await wait(120);
+    out.v8FadeAt120 = camV.fadeEffect.isRunning;
+    out.v8RunAt120 = scV.isActive('Run');
+    out.v8HubAt120 = scV.isActive('Hub');
+
+    // 连点反证：数 hub.scene.start('Run') 的真实调用次数。
+    // 只在本段内生效，finally 里删掉自己加的那层。
+    let runStartsV = 0;
+    const origStartV = hubV.scene.start;
+    hubV.scene.start = function (k, d) {
+      if (k === 'Run') runStartsV++;
+      return origStartV.call(this, k, d);
+    };
+    try {
+      // 渐黑期间再按一次 J（玩家第二次点）：不能打开面板
+      key('keydown', 'KeyJ', 74);
+      await wait(80);
+      key('keyup', 'KeyJ', 74);
+      await wait(40);
+      out.v9PanelDuringFade = !!hubV.panelOpen;
+      // 再直接调一次入口（面板按钮最终都走这里）：必须被挡
+      hubV.startRun('wood');
+      await wait(600);
+      out.v9RunStarts = runStartsV;
+      out.v8RunAfter = scV.isActive('Run');
+      out.v8HubAfter = scV.isActive('Hub');
+      out.v9PhaseAfter = stV.phase;
+      out.v9Difficulty = stV.run ? stV.run.difficultyId : null;
+    } finally {
+      delete hubV.scene.start;
+    }
+
+    // 回基地一次：确认渐黑没有留下"永久黑屏"（相机会不会被场景重启复位）。
+    scV.stop('Run');
+    scV.start('Hub');
+    await wait(500);
+    const hubW = scV.getScene('Hub');
+    out.v8HubBack = scV.isActive('Hub');
+    out.v8HubFadeAfter = hubW.cameras.main.fadeEffect.isRunning;
+    out.v8HubAlpha = hubW.cameras.main.alpha;
+    // 本段是"故意进去又出来"，别把世界状态留给后面的段落。
+    stV.run = null;
+    stV.phase = out.v9PhaseBefore;
+    window.EmberfieldUI.showHud(false);
+    hubW.panelOpen = false;
+    window.EmberfieldUI.closePanel();
+  } catch (e) {
+    // 本段任何一处接线错误都记下来，让 Node 侧报根因而不是 20 条 undefined。
+    out.v8Err = String((e && e.message) || e);
+  }
+
   // ---- 面板开着时缩小窗口：先把大窗口下的矩形记下来（Task 10c）----
   // 主段结束时必须保持面板打开，driver 会在 RESULT 之后把窗口缩到 520x420，
   // 再由 RESIZESCRIPT 量一次。这里记的是反证素材：如果"缩小前有一截在 520
@@ -2598,6 +2718,35 @@ const SMALLSCRIPT = `
   eq(r.t20CoinsRestored, r.t20CoinsEntry,
      '段末把 coins 复位成进入前的值（有借有还）',
      r.t20CoinsRestored + ' vs ' + r.t20CoinsEntry);
+
+  console.log('\n--- V8/V9. 进关卡渐黑 + 防连点 ---');
+  eq(r.v8Err, undefined, 'V8/V9 段落没有接线异常（先看这条，避免症状稀释根因）', r.v8Err);
+  ok(r.v8DiagStart && r.v8DiagStart.hasMain === true, '进入本段时 Hub 相机 main 存在',
+     JSON.stringify(r.v8DiagStart));
+  eq(r.v8ZoneId, 'gate', '站在远征之门上（不然按 J 打不开远征面板）');
+  ok(r.v8PanelOpen === true, '基地里按 J 先打开远征面板（不直接进关）',
+     String(r.v8PanelOpen));
+  ok(r.v8Rows >= 4, '面板列出全部难度行', r.v8Rows);
+  ok(r.v8HasRunBtn === true, '第一行有可点的按钮', String(r.v8HasRunBtn));
+  // 承重条件：点之前相机没有在渐黑，否则"点完开始渐黑"什么也证明不了。
+  eq(r.v8FadeBefore, false, '点之前相机没有在渐黑');
+  eq(r.v8RunBefore, false, '点之前不在 Run 场景里');
+  eq(r.v8FadeAt0, true, '点完同一 tick 渐黑已经开始（不是硬切）');
+  eq(r.v8PanelAt0, false, '点完面板立刻关掉（不盖在渐黑上）');
+  eq(r.v8FadeAt120, true, '120ms 时仍在渐黑（总 340ms）');
+  // 硬切会在下一个主循环就切完；渐黑在 120ms 时必须还停在 Hub。
+  eq(r.v8RunAt120, false, '120ms 时还没切到 Run（硬切会在此前就切完）');
+  eq(r.v8HubAt120, true, '120ms 时 Hub 还活着（过渡期间不立刻丢场景）');
+  eq(r.v9PanelDuringFade, false, '渐黑期间再按 J 不会重新打开面板');
+  eq(r.v9RunStarts, 1, '整段只发生一次 scene.start(Run)（连点不会进两局）', r.v9RunStarts);
+  eq(r.v8RunAfter, true, '渐黑结束后 Run 已 active');
+  eq(r.v8HubAfter, false, '渐黑结束后 Hub 已停');
+  eq(r.v9PhaseAfter, 'run', '进入战斗后 phase 是 run');
+  eq(r.v9Difficulty, 'grass', '点第一行进的就是第一档（草丛）');
+  eq(r.v8HubBack, true, '能从战斗回到基地');
+  // 渐黑是把相机 alpha 拉到 0 的；如果场景重启不复位 FX，基地会永久黑屏。
+  eq(r.v8HubFadeAfter, false, '回基地后没有残留渐黑效果（不会永久黑屏）');
+  ok(r.v8HubAlpha > 0.99, '回基地后相机 alpha 是 1（画面真的亮着）', r.v8HubAlpha);
 
   console.log('\n--- 3e. 按 J 进田地：不能卡在黑屏 ---');
   eq(r.fieldZoneId, 'field', '站在田地区域上（不然按 J 进不去）');

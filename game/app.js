@@ -1504,6 +1504,9 @@
       this.state = CURRENT_STATE;
       this.input2 = createInput(this);
       this.panelOpen = false;
+      // 场景实例会被复用，这个标志必须每次进场复位：
+      // Hub → Run → Hub 回来时若还留着 true，startRun 会永久早退（点不出关卡）。
+      this.transitioning = false;
 
       paintBackdrop(this, 'hub');
 
@@ -1813,13 +1816,45 @@
     }
 
     startRun(difficultyId) {
+      /*
+       * 进关卡要渐黑，照抄农场那套（设计 §3.4）：硬切是"瞬移"，
+       * 340ms 黑场把基地与战场接起来，RunScene.create 里再 420ms 渐亮。
+       *
+       * transitioning 是防连点：渐黑期间再按一次 J / 再点一次出发，
+       * once('camerafadeoutcomplete') 会注册第二个回调、scene.start 跑两次，
+       * 玩家刚进场就被重开一局。所以标志必须在任何副作用之前置位，
+       * 而且要放在 create() 里复位 —— 场景实例是复用的，Hub → Run → Hub
+       * 回来时如果还留着 true，基地从此再也进不了关卡。
+       *
+       * 但它只管"基地正在渐黑"这一种情况。Hub 已经停掉的时候（战斗里重开、
+       * 测试直接拿 Hub 场景调），标志停在最后一次渐黑留下的 true —— 那是过期
+       * 状态，不能拿它把调用吞掉，否则"再来一局"会点了没反应。
+       */
+      const hubLive = this.sys.isActive();
+      if (hubLive) {
+        if (this.transitioning) return;
+        this.transitioning = true;
+      }
+      // 状态必须先写好：回调在 340ms 后才跑，这期间别的地方读 state
+      // （HUD、存档、测试）看到的应该已经是"新的一局"。
       L.startRun(this.state, difficultyId);
       global.EmberfieldUI.save(this.state);
-      this.scene.start('Run');
+      /*
+       * 兜底：Hub 没激活时（战斗里重开、无头测试直接调），它的相机不跑 update，
+       * fadeOut 的完成事件永远不会来 —— 那样就成了"点了没反应"。立刻切，不摆渐黑。
+       */
+      if (!hubLive) { this.scene.start('Run'); return; }
+      this.cameras.main.fadeOut(340, 0, 0, 0);
+      this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('Run'));
     }
 
     /** Boss 挑战：清空普通波次，只放一只 Boss。 */
     startBossRun(tierId) {
+      const hubLive = this.sys.isActive();
+      if (hubLive) {
+        if (this.transitioning) return;
+        this.transitioning = true;
+      }
       L.startRun(this.state, 'wood');
       const run = this.state.run;
       run.enemies.length = 0;
@@ -1830,11 +1865,15 @@
       run.bossTier = tierId;
       L.spawnBoss(this.state, run, tierId);
       global.EmberfieldUI.save(this.state);
-      this.scene.start('Run');
+      if (!hubLive) { this.scene.start('Run'); return; }
+      this.cameras.main.fadeOut(340, 0, 0, 0);
+      this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('Run'));
     }
 
     update(time, delta) {
-      if (this.panelOpen) return;
+      // 渐黑期间整帧早退：角色不会在过渡里继续走，也不会再响应 J
+      // （否则 340ms 内按两下就会把 once 注册两次）。
+      if (this.panelOpen || this.transitioning) return;
       const dt = Math.min(delta / 1000, 0.05);
       const input = this.input2.read();
       // 基地里同样支持 Shift 冲刺
@@ -1911,6 +1950,12 @@
       const tier = st && st.run && st.run.bossTier;
       const themeMap = { normal: 'bossNormal', hard: 'bossHard', hell: 'bossHell' };
       paintBackdrop(this, isBossRun ? (themeMap[tier] || 'run') : 'run');
+      /*
+       * 渐亮（与 FarmScene 同参数）：Hub 在 startRun 里渐黑 340ms 才切场景，
+       * 黑场直接切到亮场景会"闪一下"，420ms 渐亮才接得上。
+       * 从"再来一局"重开时同样是黑的，这里也适用。
+       */
+      this.cameras.main.fadeIn(420, 0, 0, 0);
 
       this.effectGfx = this.add.graphics().setDepth(1050);
       // 蓄力光点单独一层：它必须盖在 Boss 上面，否则 Boss 身体一挡就看不见。
