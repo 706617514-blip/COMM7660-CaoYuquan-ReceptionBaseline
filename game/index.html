@@ -946,9 +946,13 @@
      * 种子失效（设计 §3.5）：超过自家播种量的部分每局腐烂 25%。
      * 必须写出来，否则玩家看到种子变少只会以为存档坏了。
      * 只在真的腐烂时出现 —— 没腐烂也挂一句"（腐烂 0）"是噪音。
+     *
+     * 措辞必须写明"库存"：紧挨着的「种子 N」是**这一局带回来的**（loot 口径），
+     * 而腐烂量作用在**总库存**上。两个数不同口径，只写"（腐烂 M）"会读成
+     * "这批种子里烂了 M 颗"，于是「种子 0（腐烂 22）」看着像自相矛盾。
      */
     const spoil = (r.seedSpoiled > 0)
-      ? '<span style="color:#8fa3b8">（腐烂 ' + r.seedSpoiled + '）</span>' : '';
+      ? '<span style="color:#8fa3b8">（库存腐烂 ' + r.seedSpoiled + '）</span>' : '';
     const body = $('panelBody');
     body.innerHTML =
       '<div style="font-size:13px;line-height:2;color:#cfdae6">' +
