@@ -226,7 +226,29 @@
 | 用途 | 链接 |
 |---|---|
 | 合并代码（第 1 步） | <https://github.com/706617514-blip/COMM7660-CaoYuquan-ReceptionBaseline/pull/2> |
-| 上线后的游戏 | <https://706617514-blip.github.io/COMM7660-CaoYuquan-ReceptionBaseline/> |
+| **发给参与者的（第 3 步用这个）** | <https://706617514-blip.github.io/COMM7660-CaoYuquan-ReceptionBaseline/phase1/> |
+| 上线后的游戏（**不是**给参与者的） | <https://706617514-blip.github.io/COMM7660-CaoYuquan-ReceptionBaseline/> |
 | 本地预览（不用等上线） | <http://127.0.0.1:8788/> |
 | 代码仓库 | <https://github.com/706617514-blip/COMM7660-CaoYuquan-ReceptionBaseline> |
 | CI 测试记录 | <https://github.com/706617514-blip/COMM7660-CaoYuquan-ReceptionBaseline/actions/runs/43223967796> |
+
+**两个网址千万别搞混**：
+
+| 地址 | 打开的是什么 |
+|---|---|
+| `.../phase1/` | 评测工具（输入好评率 → 给你百分位）。**第 3 步测试要发的是这个。** |
+| `.../`（只有域名） | 游戏 熔野耕作。跟这次用户测试**没关系**。 |
+
+地址栏里根地址更短、更容易顺手复制，**这里特别容易发错**——发错的话参与者会打开一个打怪
+游戏，完全不知道你要他干嘛。
+
+---
+
+## 中文版材料（另存的中文版，英文原件一个字没动）
+
+| 用途 | 中文版（直接复制就能用） | 英文原版 |
+|---|---|---|
+| 招募消息 | `evaluation/recruitment-message.zh.md` | `evaluation/recruitment-message.md` |
+| 主持人脚本 | `evaluation/facilitator-script.zh.md` | `evaluation/facilitator-script.md` |
+
+两版内容一致。中文版里方括号填掉即可发送。
