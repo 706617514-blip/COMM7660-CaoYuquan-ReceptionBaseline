@@ -420,6 +420,41 @@ section('4c. 设施面板：按区域的页签 + 行内图标（Task 17）');
   eq(sandbox.SpriteLib.equipUrl('head', 'leatherHelm'), null, 'equipUrl 走同一入口');
   eq(typeof sandbox.SpriteLib.clear, 'function', 'SpriteLib.clear 存在（测试可重置缓存）');
 
+  // ---- Task 18：fitUrl（按内容紧裁切 + 整数倍放大）----
+  /*
+   * 为什么这一层要单独测
+   * ------------------
+   * url() 交出去的是 40×60 的整身画布，头部装备只占其中一条横带；塞进
+   * object-fit:contain 的小盒子后按 0.7 倍缩小，画面上就是一条色带
+   * （Task 17 报告 §4 自己记下的问题）。fitUrl 负责"先裁到内容、再整数倍放大"，
+   * 真像素由 smoke 量。这里钉三件事：函数存在、所有退化路径返回 null 不抛、
+   * 以及 panelRowModel/refreshPanel 真的在用它。
+   *
+   * 取不到就退化成空实现：桩里连 canvas 都没有，一条 TypeError 会把这一节
+   * 后面几十条断言一起吞掉（Task 17 的教训）。
+   */
+  const fitUrl = typeof sandbox.SpriteLib.fitUrl === 'function'
+    ? sandbox.SpriteLib.fitUrl : () => null;
+  ok(typeof sandbox.SpriteLib.fitUrl === 'function',
+     '导出 fitUrl（紧裁切 + 整数倍放大，面板行图标靠它变可读）');
+  eq(fitUrl('hero', 32, 44), null, '没有引擎时 fitUrl 返回 null（不抛，面板不会空白）');
+  eq(fitUrl(null, 32, 44), null, 'key 为空时 fitUrl 返回 null');
+  eq(fitUrl('hero', 0, 0), null, '盒子尺寸非法时 fitUrl 返回 null');
+
+  // 桩里的 document.createElement('canvas') 没有 getContext —— 这正是
+  // "取不到离屏 2D context" 那条分支，必须优雅退回 null 而不是抛。
+  sandbox.__game = {
+    textures: { get: () => ({ source: [{ image: { width: 40, height: 60 } }] }) },
+  };
+  let fitErr = null;
+  let fitOut;
+  try { fitOut = fitUrl('eq-head-leatherHelm', 32, 44); } catch (e) { fitErr = e; }
+  eq(fitErr, null, '取不到离屏 canvas 的 2D context 时不抛（优雅退回）');
+  eq(fitOut, null, '取不到 2D context 时 fitUrl 返回 null（调用方退回 url()）');
+  eq(fitUrl('eq-head-leatherHelm', 32, 44), null,
+     '失败结果不进缓存（等真纹理/真 canvas 就绪时还能成功）');
+  delete sandbox.__game;
+
   const st = L.createState(778);
   sandbox.GameHub.ensureHub(st);
   st.meta.coins = 3000;
@@ -492,6 +527,56 @@ section('4c. 设施面板：按区域的页签 + 行内图标（Task 17）');
   eq(wearKids[1] ? wearKids[1].children.length : -1, 5, '兵器架仍是 5 个页签');
   eq(wearKids.filter(c => c.className.indexOf('act') >= 0).length,
      sandbox.GameHub.zoneActions(st, 'forgewear').length, '兵器架行数与不过滤时一致');
+
+  // ---- Task 18：行首图必须走 fitUrl，盒子尺寸就是 CSS 的 32×44 ----
+  /*
+   * 改前 refreshPanel 只调 url()：fitUrl 一次都不会被调到，交出去的是整身
+   * 40×60 画布，头部装备被压成色带。这条用 spy 钉"真的调了、参数对、有结果
+   * 就用它、没结果退回整图"—— 具体像素由 smoke 量。
+   */
+  const fitCalls = [];
+  const realFit = sandbox.SpriteLib.fitUrl;
+  const realUrl = sandbox.SpriteLib.url;
+  sandbox.SpriteLib.fitUrl = function (k, w, h) {
+    fitCalls.push(String(k) + '@' + w + 'x' + h);
+    return null;
+  };
+  sandbox.SpriteLib.url = function (k) { return 'data:image/png;base64,STUB-' + k; };
+  ui.openPanel(anvilZone, st, () => {}, () => {});
+  eq(fitCalls.join('/'), 'ic-damage@32x44/ic-maxHp@32x44/ic-speed@32x44',
+     '三行图标都先问 fitUrl(32, 44)（盒子跟着 CSS 走，不是贴图原尺寸 40×60）');
+  const fitRowsA = getEl('panelBody').children.filter(c => c.className.indexOf('act') >= 0);
+  ok(fitRowsA[0] && fitRowsA[0].children[0] && fitRowsA[0].children[0].src
+     === 'data:image/png;base64,STUB-ic-damage',
+     'fitUrl 取不到时退回整图 url()（不让这一行没图）',
+     fitRowsA[0] && fitRowsA[0].children[0] && fitRowsA[0].children[0].src);
+  sandbox.SpriteLib.fitUrl = function (k) {
+    fitCalls.push(String(k));
+    return 'data:image/png;base64,FIT-' + k;
+  };
+  ui.openPanel(anvilZone, st, () => {}, () => {});
+  const fitRowsB = getEl('panelBody').children.filter(c => c.className.indexOf('act') >= 0);
+  ok(fitRowsB[0] && fitRowsB[0].children[0] && fitRowsB[0].children[0].src
+     === 'data:image/png;base64,FIT-ic-damage',
+     'fitUrl 有结果时优先用它（紧裁切过的图，不是整身画布）',
+     fitRowsB[0] && fitRowsB[0].children[0] && fitRowsB[0].children[0].src);
+  sandbox.SpriteLib.fitUrl = realFit;
+  sandbox.SpriteLib.url = realUrl;
+
+  // ---- Task 18：图标盒子的 CSS 决定"内容占多大" ----
+  /*
+   * 为什么在这里断言 CSS：url()/fitUrl 交出的是位图，"盒子多宽"完全由 CSS 决定。
+   * 改前 width:28px;height:42px 是硬盒，宽扁的头部装备只能 contain 到 0.7 倍，
+   * 内容被压成横条。改成 max-width/max-height 后图片按自身比例落进盒子，
+   * 配合 fitUrl 的整数倍放大，内容才是 1:1 像素、放大而不是缩小。
+   */
+  const icoRule = /\.act\s+\.ico\s*\{[^}]*\}/.exec(html);
+  ok(!!icoRule, 'index.html 里有 .act .ico 规则');
+  const icoCss = icoRule ? icoRule[0] : '';
+  ok(/max-width:\s*32px/.test(icoCss) && /max-height:\s*44px/.test(icoCss),
+     '图标盒子改成按图片自身比例（max 32×44），不再被硬盒掰成色带', icoCss);
+  ok(!/width:\s*28px/.test(icoCss), '不再把宽度写死 28px（色带的直接来源）', icoCss);
+  ok(!/margin-right/.test(icoCss), '不加 margin-right（.act 已有 gap:12px）', icoCss);
 }
 
 // ---------------------------------------------------------------- 结算

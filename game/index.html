@@ -100,15 +100,23 @@
   .x:hover{background:#2c3a4a}
   .card-b{padding:14px 18px 18px}
 
-  .act{display:flex;align-items:center;gap:12px;padding:11px 12px;
+  /* 行高钉在 66：图标列现在跟着内容走（最高 44，见下面 .act .ico），文字两行
+     只有 38 —— 不钉的话同一屏里会同时出现 62 和 68 两种行高，整列参差。
+     66 让"只有文字"的行（38+24）和"图标顶到 44"的行（44+24）落在同一高度上
+     （±2 来自行高取整）。 */
+  .act{display:flex;align-items:center;gap:12px;padding:11px 12px;min-height:66px;
     border-radius:10px;background:#141b24;border:1px solid #232f3c;margin-bottom:8px}
   .act.ult{border-color:#4b3a24;background:#1b1610}
   .act .txt{flex:1;min-width:0}
-  /* 行首贴图（Task 17）。图标是 28×28 烘出来的像素图，放大时用 pixelated 保住
-     边缘；靠 .act 的 gap 与右侧文字隔开，不再额外加 margin（否则两处相加变 22px）。
-     固定宽高是为了"有图/没图"两行左缘对齐 —— 尺寸随内容变会让整列参差。 */
-  .act .ico{width:28px;height:42px;object-fit:contain;image-rendering:pixelated;
-    flex:0 0 auto}
+  /* 行首贴图（Task 17，Task 18 改成"跟着图走"的盒子）。
+     宽度不再写死 28px：装备贴图按内容紧裁切 + 整数倍放大后，每一件的宽高比
+     都不一样（头部是横带、剑是竖条）。硬盒 + object-fit:contain 会把横带压回
+     0.7 倍以下，那正是"缩成一条色带"的来源。改成 max-* 之后图片按自身比例
+     落进 32×44 这一列，有图/没图两行不会参差。
+     pixelated：画的是整数倍放大过的位图，边缘要保住，别让浏览器再插一层模糊。
+     靠 .act 的 gap 与右侧文字隔开，不额外加 margin（否则两处相加变 22px）。 */
+  .act .ico{width:auto;height:auto;max-width:32px;max-height:44px;
+    object-fit:contain;image-rendering:pixelated;flex:0 0 auto}
   .act .t{font-size:13.5px;color:#e6eef6}
   .act .s{font-size:11px;color:var(--dim);margin-top:3px;line-height:1.45}
   .act .why{font-size:11px;color:var(--red);margin-top:3px}
@@ -857,10 +865,18 @@
       const row = document.createElement('div');
       row.className = 'act' + (a.ultimate ? ' ult' : '');
 
-      // 行首贴图（Task 17）。取不到 dataURL 就**不插节点**：
+      // 行首贴图（Task 17，Task 18 换成紧裁切版）。取不到就不插节点：
       // 插一个 src 为空的 <img> 在浏览器里会画出一个破图框，
       // 比"这一行只有文字"难看得多。
-      const iconUrl = m.iconKey ? window.SpriteLib.url(m.iconKey) : null;
+      //
+      // 为什么先问 fitUrl：贴图是 40×60 的整身画布，头部装备只占其中一条横带，
+      // 直接塞进这一列就是一条色带（Task 17 报告 §4）。fitUrl 按内容裁切再整数倍
+      // 放大；它失败（没有引擎、取不到 2D context、像素全透明）时退回整图，
+      // 至少这一行还有图。32×44 就是 CSS 里 .act .ico 的那一列。
+      const iconKey = m.iconKey;
+      const iconUrl = iconKey
+        ? (window.SpriteLib.fitUrl(iconKey, 32, 44) || window.SpriteLib.url(iconKey))
+        : null;
       if (iconUrl) {
         const ico = document.createElement('img');
         ico.className = 'ico';

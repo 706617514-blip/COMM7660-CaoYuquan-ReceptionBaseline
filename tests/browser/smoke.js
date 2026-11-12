@@ -576,6 +576,7 @@ const SCRIPT = `
    */
   {
     const t17 = {};
+    const t18 = {};
     const hubP = globalThis.__game.scene.getScene('Hub');
     const stP = window.EmberfieldApp.__state;
     stP.meta.coins = 5000;
@@ -623,6 +624,52 @@ const SCRIPT = `
       return rowsOf().map(function (r) { return Math.round(r.getBoundingClientRect().height); });
     };
 
+    // ---- Task 18：这张图里到底有多少是真内容 ----
+    /*
+     * 为什么要数像素
+     * --------------
+     * 改前每行贴图都是 40x60 的整身画布，头部装备只占其中一条横带；塞进
+     * 28x42 的 object-fit:contain 硬盒后按 0.7 倍缩小，内容只剩十几个 CSS
+     * 像素宽 —— 画面上就是一条色带（Task 17 报告 §4 自己记下的问题）。
+     * "内容占多少"只能从位图的 alpha 通道量：这就是同帧读数。
+     */
+    const bboxOfImg = function (im) {
+      const nw = im.naturalWidth, nh = im.naturalHeight;
+      if (!nw || !nh) return null;
+      const cv = document.createElement('canvas');
+      cv.width = nw; cv.height = nh;
+      const c2 = cv.getContext('2d', { willReadFrequently: true });
+      if (!c2) return null;
+      c2.clearRect(0, 0, nw, nh);
+      c2.drawImage(im, 0, 0);
+      const d = c2.getImageData(0, 0, nw, nh).data;
+      let x0 = nw, y0 = nh, x1 = -1, y1 = -1;
+      for (let y = 0; y < nh; y++) {
+        for (let x = 0; x < nw; x++) {
+          if (d[(y * nw + x) * 4 + 3] > 8) {
+            if (x < x0) x0 = x;
+            if (x > x1) x1 = x;
+            if (y < y0) y0 = y;
+            if (y > y1) y1 = y;
+          }
+        }
+      }
+      if (x1 < 0) return { ratio: 0, w: 0, h: 0 };
+      return {
+        ratio: Math.round(((x1 - x0 + 1) * (y1 - y0 + 1)) / (nw * nh) * 1000) / 1000,
+        w: x1 - x0 + 1, h: y1 - y0 + 1
+      };
+    };
+    const readImgs = function (list) {
+      return list.map(function (im) {
+        const bb = bboxOfImg(im);
+        const rc = im.getBoundingClientRect();
+        return { nw: im.naturalWidth, nh: im.naturalHeight,
+          ratio: bb ? bb.ratio : -1, bw: bb ? bb.w : -1, bh: bb ? bb.h : -1,
+          cssW: Math.round(rc.width), cssH: Math.round(rc.height) };
+      });
+    };
+
     // (1) 铁匠铺：4 个页签 + 3 行 + 3 张两两不同的图
     hubP.state.hub.x = 265; hubP.state.hub.z = 122;
     await wait(300);
@@ -635,6 +682,8 @@ const SCRIPT = `
     t17.anvilRows = rowsOf().length;
     t17.anvilImg = imgStats(imgsOf());
     t17.anvilGeom = geomOf();
+    t18.anvilRead = readImgs(imgsOf());
+    t18.anvilGeom = t17.anvilGeom;
     t17.anvilActH = heightsOf();
     t17.anvilBtnTexts = rowsOf().map(function (r) {
       const b = r.querySelector('button');
@@ -693,6 +742,76 @@ const SCRIPT = `
     t17.wearActHMin = Math.min.apply(null, t17.wearActH);
     t17.wearActHMax = Math.max.apply(null, t17.wearActH);
     t17.wearEquipmentCount = Object.keys(window.GameConfig.ALL_EQUIPMENT).length;
+
+    // ---- Task 18：紧裁切 + 整数倍放大（同帧读数）----
+    /*
+     * 读数都取在面板还开着、图还是这一帧的情况下：
+     *   (a) 每张图的 naturalWidth x naturalHeight + 内容包围盒占比（alpha > 8）
+     *   (b) 头部装备的高/宽比 —— 改前它和整身画布一样是 1.5（40x60），
+     *       内容只占一成多；裁切放大后应接近那条横带自身的比例
+     *   (c) fitUrl 的退化与缓存行为（缺 key 返 null、同参同串、与 url() 不同）
+     * 缺函数时兜成 null 实现：一条 TypeError 会把这一节后面的断言全吞掉
+     * （Task 17 踩过）。
+     */
+    const fitFn = window.SpriteLib && typeof window.SpriteLib.fitUrl === 'function'
+      ? window.SpriteLib.fitUrl : function () { return null; };
+    t18.fitExists = !!(window.SpriteLib && typeof window.SpriteLib.fitUrl === 'function');
+    const actsW = window.GameHub.zoneActions(stP, 'forgewear');
+    const imgKeyOf = {};
+    rowsOf().forEach(function (row, i) {
+      const a = actsW[i] || {};
+      const im = row.querySelector('img');
+      if (im && a.icon) imgKeyOf[a.icon] = im;
+    });
+    const keysW = Object.keys(imgKeyOf);
+    t18.wearKeys = keysW.length;
+    t18.wearRead = keysW.map(function (k) {
+      const r = readImgs([imgKeyOf[k]])[0];
+      return { key: k, nw: r.nw, nh: r.nh, ratio: r.ratio,
+        cssW: r.cssW, cssH: r.cssH };
+    });
+    const headRead = t18.wearRead.filter(function (r) {
+      return r.key.indexOf('eq-head-') === 0;
+    });
+    t18.headKeys = headRead.map(function (r) { return r.key; });
+    t18.headRead = headRead;
+    t18.headMaxAspect = headRead.length
+      ? Math.max.apply(null, headRead.map(function (r) {
+        return Math.round(r.nh / r.nw * 1000) / 1000;
+      })) : -1;
+    t18.headMinNatW = headRead.length
+      ? Math.min.apply(null, headRead.map(function (r) { return r.nw; })) : -1;
+    t18.minRatio = t18.wearRead.length
+      ? Math.min.apply(null, t18.wearRead.map(function (r) { return r.ratio; })) : -1;
+    t18.notUpscaled = t18.wearRead.length > 0 && t18.wearRead.every(function (r) {
+      return r.nw >= r.cssW && r.nh >= r.cssH;
+    });
+    t18.maxCssW = t18.wearRead.length
+      ? Math.max.apply(null, t18.wearRead.map(function (r) { return r.cssW; })) : -1;
+    t18.maxCssH = t18.wearRead.length
+      ? Math.max.apply(null, t18.wearRead.map(function (r) { return r.cssH; })) : -1;
+    t18.wearGeom = t17.wearGeom;
+
+    const cKey = 'eq-head-hornHelm';
+    const f1 = fitFn(cKey, 32, 44);
+    const f2 = fitFn(cKey, 32, 44);
+    t18.cacheIsDataUrl = typeof f1 === 'string' && f1.indexOf('data:image/png;base64,') === 0;
+    t18.cacheSame = !!f1 && f1 === f2;
+    // 空串/ null 与 url() 当然"不同" —— 那不是"真的裁过了"，是没结果。
+    // 所以这条先要求 f1 是一张真图，再要求它与整图不同。
+    t18.differsFromUrl = t18.cacheIsDataUrl && f1 !== window.SpriteLib.url(cKey);
+    t18.differsByBox = fitFn(cKey, 64, 88) !== f1;
+    let missOut, missErr = null;
+    try { missOut = fitFn('no-such-texture-key', 32, 44); }
+    catch (e) { missErr = String((e && e.message) || e); }
+    // 注意：Phaser 的 textures.get() 对不存在的键返回 __MISSING 那张占位图，
+    // 不会返回 undefined（本任务实测）。所以"键找不到"不等于返回 null ——
+    // 这里只钉"不抛"，并且要么交得出图、要么老实返回 null。
+    t18.missGraceful = missErr === null
+      && (missOut === null || typeof missOut === 'string');
+    t18.missErr = missErr;
+    t18.nullKeyNull = fitFn(null, 32, 44) === null;
+    t18.zeroBoxNull = fitFn(cKey, 0, 0) === null;
     // 还原（见上面 snapEquipment/snapBag 的注释）
     stP.meta.equipment = snapEquipment;
     stP.meta.bag = snapBag;
@@ -702,6 +821,7 @@ const SCRIPT = `
     }).length;
     t17.restoredBag = stP.meta.bag.length;
     out.t17 = t17;
+    out.t18 = t18;
 
     hubP.panelOpen = false;
     window.EmberfieldUI.closePanel();
@@ -1942,6 +2062,67 @@ const SMALLSCRIPT = `
   ok(t17.wearActHMax - 62 <= 8 && t17.wearActHMax - t17.wearActHMin <= 2,
      '兵器架行高没被撑破（改前 62，允许 +8 且各行一致）',
      t17.wearActHMin + '~' + t17.wearActHMax + '（改前 62）');
+
+  console.log('\n--- 3d-4. 图标可读性：紧裁切 + 整数倍放大（Task 18）---');
+  /*
+   * 病：装备贴图是 40x60 的整身画布，头部装备只占其中一条横带；塞进 28x42 的
+   * object-fit:contain 硬盒后按 0.7 倍缩小，画面上就是一条色带（Task 17 报告 §4）。
+   * 药：先按 alpha 通道裁到内容，再整数倍放大（像素不插值），盒子改成 max 32x44。
+   *
+   * 读数全部来自同一帧（面板开着、图在 DOM 里），明细见 smoke 的 RESULT 里的 t18：
+   * 每张图的 nw x nh、内容包围盒占比 ratio、CSS 落点 cssW x cssH。
+   */
+  const t18 = r.t18 || {};
+  ok(t18.fitExists === true, 'SpriteLib.fitUrl 存在（裁切放大的入口）');
+  // (a) 铁匠铺三张图标：改前是 28x28 的原图，content 只有 ~25x25 → 缩到 28px 宽
+  ok(Array.isArray(t18.anvilRead) && t18.anvilRead.length === 3,
+     '铁匠铺三张图标都取到了读数', JSON.stringify(t18.anvilRead && t18.anvilRead.length));
+  ok((t18.anvilRead || []).every((x) => x.nw >= 28 && x.nh >= 28),
+     '铁匠铺图标 naturalWidth 均 >= 28（没有被缩成小图）',
+     JSON.stringify((t18.anvilRead || []).map((x) => x.nw + 'x' + x.nh)));
+  ok((t18.anvilRead || []).every((x) => x.ratio >= 0.55),
+     '铁匠铺图标里内容真的占满画面（包围盒占比 >= 0.55）',
+     JSON.stringify((t18.anvilRead || []).map((x) => x.ratio)));
+  ok(t18.anvilGeom && t18.anvilGeom.within === true && t18.anvilGeom.imgH >= 24,
+     '铁匠铺图标在行内且高度没被压成一条线（>= 24px）',
+     JSON.stringify(t18.anvilGeom));
+  // (b) 兵器架 35 张：内容占比、不放大失真、盒子不越界
+  eq(t18.wearKeys, 35, '兵器架 35 行的贴图都能对上装备键（否则下面的读数是在量空气）');
+  ok(Array.isArray(t18.wearRead) && t18.wearRead.length === 35,
+     '35 张图都有同帧读数', JSON.stringify(t18.wearRead && t18.wearRead.length));
+  ok(t18.minRatio >= 0.55,
+     '每张装备贴图里内容占比 >= 0.55（改前 40x60 整身画布，头部只有 0.1 上下）',
+     'min ratio ' + t18.minRatio);
+  ok(t18.notUpscaled === true,
+     '没有一张图被浏览器拉伸放大（naturalWidth >= CSS 宽、naturalHeight >= CSS 高）');
+  ok(t18.maxCssW <= 32 && t18.maxCssH <= 44,
+     '图标落点不超过 CSS 盒子（max 32x44）',
+     t18.maxCssW + 'x' + t18.maxCssH);
+  ok(t18.wearGeom && t18.wearGeom.within === true && t18.wearGeom.imgW >= 12,
+     '兵器架图标在行内且宽度不是一条色带（>= 12px）', JSON.stringify(t18.wearGeom));
+  // (c) 头部装备：改前 40x60 → 高/宽 = 1.5，内容只占 0.1；裁切后接近横带比例
+  eq((t18.headKeys || []).length, 6, '头部 6 件都取到了读数',
+     JSON.stringify(t18.headKeys));
+  ok(t18.headMaxAspect > 0 && t18.headMaxAspect < 1.5,
+     '头部贴图不再顶着整身画布的 3:2 比例（高/宽 < 1.5）', String(t18.headMaxAspect));
+  ok(t18.headMinNatW >= 36,
+     '头部贴图放大到至少 36px 宽（改前 40x60 整图里那片内容只有 ~20px 宽）',
+     String(t18.headMinNatW));
+  const headRatios = (t18.headRead || []).map((x) => x.ratio);
+  ok(headRatios.length === 6 && headRatios.every((x) => x >= 0.55),
+     '头部贴图的内容占满画面（改前那一片内容只占整张 40x60 的一成多）',
+     JSON.stringify(headRatios));
+  // (d) 退化与缓存
+  ok(t18.cacheIsDataUrl === true, 'fitUrl 交出 data:image/png（不引入图片文件）');
+  ok(t18.cacheSame === true, '同一个 key 连调两次返回同一字符串（缓存生效）');
+  ok(t18.differsFromUrl === true, 'fitUrl 的结果与 url() 不是同一张图（真的裁过了）');
+  ok(t18.differsByBox === true, '盒子尺寸不同结果也不同（缓存键带盒子尺寸）');
+  ok(t18.missGraceful === true,
+     '纹理键不存在时不抛（要么交图、要么返回 null —— Phaser 给的是 __MISSING 占位图）',
+     JSON.stringify([t18.missGraceful, t18.missErr]));
+  ok(t18.nullKeyNull === true && t18.zeroBoxNull === true,
+     'key 为空 / 盒子尺寸为 0 时返回 null（调用方退回整图）',
+     JSON.stringify([t18.nullKeyNull, t18.zeroBoxNull]));
   // 量完必须还原：后面"点格子换装"的用例依赖 3d 段穿上的那件还在身上。
   // 这条断言守的是"测试不污染后续用例"，不是产品行为。
   // 不写死 id：改前是多少就还原成多少，测试不该赌"3d 段穿的是哪件"。
