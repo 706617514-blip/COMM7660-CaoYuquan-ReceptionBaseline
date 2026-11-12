@@ -3312,13 +3312,29 @@
       this.arrowRight = mk(W - 34, 1);
     }
 
-    /** 按当前页的重心决定两个箭头谁在：首页只有右，末页只有左。 */
+    /**
+     * 翻页箭头的显隐与"到边"状态（设计 §3.7 / §3.7.1 补记）。
+     *
+     * 用户的原话是「非第一页的农场页面需要同时存在左箭头和右箭头」，
+     * 所以末页**也要有右箭头**，只是半透明表示这一侧没有下一页了 ——
+     * 而不是让它凭空消失。原实现写的是"末页只有左箭头"，9 块田时
+     * 第 2 页就是末页，玩家一翻页就看见右箭头没了；而农场自己的提示
+     * 文案还写着「两侧箭头翻页」，等于界面在承诺一件它没做的事。
+     *
+     * 左箭头仍然只在第 2 页起出现：第一页左边本来就没有页，
+     * 画出来纯属噪音（也会让"我在第几页"变得更难读）。
+     *
+     * 灰箭头照样可以被 hitArrow 命中：命中就 return，不会落到田地命中上，
+     * 所以它挡的那一小块不会误播种；点了什么都不发生（turnPage 越界返回
+     * false），这正是"到头了"该有的反馈。
+     */
     refreshArrows() {
       if (!this.arrowLeft || !this.arrowRight) return;
       const page = this.curPage();
       const pages = L.farmPageCount(this.state);
-      this.arrowLeft.setVisible(page > 0);
-      this.arrowRight.setVisible(page < pages - 1);
+      const canRight = page < pages - 1;
+      this.arrowLeft.setVisible(page > 0).setAlpha(1);
+      this.arrowRight.setVisible(true).setAlpha(canRight ? 1 : 0.32);
     }
 
     /** 命中哪个箭头：-1 左、+1 右、0 没命中。只认看得见的箭头。 */

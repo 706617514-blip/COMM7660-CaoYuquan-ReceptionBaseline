@@ -1071,7 +1071,7 @@ const SCRIPT = `
   // ---- 3f. 农场分页：第 2 页与翻页箭头（Task 24）----
   /*
    * 分页的验收（设计 V17/V18）：
-   *  - 10 块地 = 2 页；第 1 页只有右箭头，第 2 页只有左箭头
+   *  - 10 块地 = 2 页；第 1 页只有右箭头，第 2 页两个都有（右侧半透明，见 §3.7.1）
    *  - 第 2 页第 1 块 = 绝对索引 9（点它种的是第 10 块地）
    *  - 箭头 44x44 贴左右缘、不压田块；点箭头只翻页，绝不播种
    *
@@ -1103,6 +1103,7 @@ const SCRIPT = `
     out.pgFirstIdx = farm && farm.plotGeo && farm.plotGeo[0] ? farm.plotGeo[0].idx : null;
     out.pgLeftVisible = !!(farm && farm.arrowLeft && farm.arrowLeft.visible);
     out.pgRightVisible = !!(farm && farm.arrowRight && farm.arrowRight.visible);
+    out.pgRight1Alpha = farm && farm.arrowRight ? farm.arrowRight.alpha : null;
     out.pgHud = farm && farm.hudText ? String(farm.hudText.text) : '';
 
     // 用 canvas 上的真实 mousedown 点击（Phaser 的输入管理器监听它），
@@ -1161,6 +1162,9 @@ const SCRIPT = `
     out.pgIdx2 = farm && farm.plotGeo && farm.plotGeo[0] ? farm.plotGeo[0].idx : null;
     out.pgLeft2 = !!(farm && farm.arrowLeft && farm.arrowLeft.visible);
     out.pgRight2 = !!(farm && farm.arrowRight && farm.arrowRight.visible);
+    // 设计 §3.7.1：末页的右箭头还在，但半透明（点了不翻）。
+    out.pgRight2Alpha = farm && farm.arrowRight ? farm.arrowRight.alpha : null;
+    out.pgLeft2Alpha = farm && farm.arrowLeft ? farm.arrowLeft.alpha : null;
     out.pgHud2 = farm && farm.hudText ? String(farm.hudText.text) : '';
 
     // 末页再点右箭头：不该翻出第 3 页
@@ -1241,10 +1245,12 @@ const SCRIPT = `
       out.pgMidPages = window.GameLogic.farmPageCount(st);
       out.pgMidLeft = farm2.arrowLeft.visible;
       out.pgMidRight = farm2.arrowRight.visible;
+      out.pgMidRightAlpha = farm2.arrowRight.alpha;
       farm2.turnPage(1);
       await wait(250);
       out.pgMidPageAfterNext = st.farm.page;
       out.pgMidRightAfterNext = farm2.arrowRight.visible;
+      out.pgMidRightAlphaAfterNext = farm2.arrowRight.alpha;
       out.pgMidLeftAfterNext = farm2.arrowLeft.visible;
       farm2.turnPage(-1);
       await wait(250);
@@ -3241,6 +3247,7 @@ const SMALLSCRIPT = `
   eq(r.pgFirstIdx, 0, '第 1 页第 1 块的绝对索引是 0');
   eq(r.pgLeftVisible, false, '第 1 页没有左箭头（左边没得翻）');
   eq(r.pgRightVisible, true, '第 1 页有右箭头');
+  eq(r.pgRight1Alpha, 1, '第 1 页右箭头不透明（真的能翻，不是灰的）');
   ok(String(r.pgHud).indexOf('第 1/2 页') >= 0, 'HUD 写「第 1/2 页」', r.pgHud);
   ok(String(r.pgHud).indexOf('/ 10') >= 0,
      'HUD 的成熟田分母跟着块数走（不是写死 /9）', r.pgHud);
@@ -3263,7 +3270,18 @@ const SMALLSCRIPT = `
   eq(r.pgPageAfterClick, 1, '点右箭头翻到第 2 页');
   eq(r.pgIdx2, 9, 'V18 第 2 页第 1 块 = 绝对索引 9');
   eq(r.pgLeft2, true, '第 2 页出现左箭头');
-  eq(r.pgRight2, false, '末页没有右箭头');
+  /*
+   * 设计 §3.7.1 补记：末页的右箭头**还在**，只是半透明。
+   * 原实现是 setVisible(false)，与用户原话「非第一页的农场页面需要同时
+   * 存在左箭头和右箭头」不符 —— 9 块田时第 2 页就是末页，一翻页右箭头
+   * 就没了；农场自己的提示文案还写着「两侧箭头翻页」。
+   * 只断言 visible 不够：还要钉住它确实是"灰着"的，否则"永远不透明"
+   * 这个错误实现也会过。
+   */
+  eq(r.pgRight2, true, '末页右箭头仍在（用户要求非第一页两侧都有）');
+  ok(typeof r.pgRight2Alpha === 'number' && r.pgRight2Alpha < 0.9,
+     '末页右箭头是灰的（到边了，点不动）', r.pgRight2Alpha);
+  eq(r.pgLeft2Alpha, 1, '末页左箭头是不透明的（真的能往回翻）');
   ok(String(r.pgHud2).indexOf('第 2/2 页') >= 0, 'HUD 跟着翻到「第 2/2 页」', r.pgHud2);
   eq(r.pgPageAfterExtraRight, 1, '末页再点右箭头不会翻出第 3 页');
 
@@ -3290,7 +3308,11 @@ const SMALLSCRIPT = `
   eq(r.pgMidLeft, true, '中间页有左箭头');
   eq(r.pgMidRight, true, '中间页也有右箭头（首页/末页的用例盖不住这一条）');
   eq(r.pgMidPageAfterNext, 2, '中间页点右箭头翻到第 3 页');
-  eq(r.pgMidRightAfterNext, false, '第 3 页（末页）右箭头消失');
+  // 末页右箭头改成"灰着"（§3.7.1），所以这里断的是"还在但半透明"。
+  eq(r.pgMidRightAfterNext, true, '第 3 页（末页）右箭头仍在');
+  ok(typeof r.pgMidRightAlphaAfterNext === 'number' && r.pgMidRightAlphaAfterNext < 0.9,
+     '末页右箭头已灰掉（到边了）', r.pgMidRightAlphaAfterNext);
+  eq(r.pgMidRightAlpha, 1, '中间页右箭头是不透明的（真的能翻）');
   eq(r.pgMidLeftAfterNext, true, '第 3 页左箭头在');
   eq(r.pgMidPageBack, 1, '末页点左箭头翻回第 2 页');
   eq(r.pgMidBothBack, true, '翻回中间页后左右箭头又都在');
