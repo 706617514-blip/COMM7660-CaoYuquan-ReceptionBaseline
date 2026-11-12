@@ -630,6 +630,53 @@ group('stopAmbient 真的停', function () {
   eq(nodeCount(), n, '重复停止不建节点');
 });
 
+// ---------------------------------------------------------------- 环境音淡入淡出
+/*
+ * 8 秒循环缓冲在任何相位被硬起/硬停都是一声爆音，营地 ↔ 关卡来回切时尤其明显。
+ * 这三条钉的是「有没有走自动化」：stub 会把 setValueAtTime / linearRamp /
+ * stop(t) 全部记下来，硬起硬停的实现一条都过不了。
+ */
+group('环境音起停是渐入渐出（不是硬切）', function () {
+  eq(typeof C.AUDIO.ambient.fade, 'number', 'AUDIO.ambient.fade 写在 config（不是散在代码里）');
+  eq(C.AUDIO.ambient.fade, 0.25, '默认淡入淡出 0.25 秒');
+
+  const audioPath = require.resolve(path.join(__dirname, '..', 'game', 'audio.js'));
+  delete require.cache[audioPath];
+  const A3 = require(audioPath);
+  A3.ensureStarted();
+  const beforeCtx = (A3.context && A3.context.created) ? A3.context.created.length : 0;
+  eq(A3.startAmbient('cricket'), true, '起播虫鸣');
+  const g3 = A3.ambientGain;
+  ok(!!g3, '有环境音增益节点');
+  if (!g3) { A3.stopAmbient(); return; }
+
+  // 起播必须从 0 开始：先 set 0，再 ramp 到目标音量。
+  const ev = g3.gain.events || [];
+  const setZero = ev.filter((e) => e[0] === 'set' && e[1] === 0)[0];
+  ok(!!setZero, '起播时先把增益压到 0（不硬起）');
+  const rampUp = ev.filter((e) => e[0] === 'lin' && e[1] > 0)[0];
+  ok(!!rampUp, '再用 linearRamp 升上去');
+  if (rampUp) {
+    ok(Math.abs(rampUp[2] - (0 + C.AUDIO.ambient.fade)) < 1e-6,
+      '升到目标用的时间就是 fade（不是随便一个数）', rampUp[2]);
+  }
+  ok(beforeCtx < (A3.context.created.length + 1), '起播过程中建了节点');
+
+  // 停止必须是「按点时停」，不是立刻 stop()。
+  const src3 = (A3.context.created || []).filter((n) => n.__kind === 'src' && n.loop)[0];
+  ok(!!src3, '找得到 loop 音源');
+  if (src3) {
+    A3.stopAmbient();
+    ok(src3.stopped === true, '音源确实被 stop');
+    ok(typeof src3.stopAt === 'number',
+      'stop 带了时间点（硬切实现会是不带参数的 stop()）', src3.stopAt);
+    if (typeof src3.stopAt === 'number') {
+      ok(Math.abs(src3.stopAt - (0 + C.AUDIO.ambient.fade)) < 1e-6,
+        '停的时间点 = 现在 + fade', src3.stopAt);
+    }
+  }
+});
+
 // ---------------------------------------------------------------- 汇总
 console.log('\n' + '='.repeat(56));
 if (fail === 0) {

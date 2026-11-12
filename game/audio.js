@@ -507,6 +507,23 @@
     src.loop = true;
     src.connect(g);
     const now = typeof ctx.currentTime === 'number' ? ctx.currentTime : 0;
+    /*
+     * 起播从 0 渐入（默认 0.25s）。原因：营地 ↔ 关卡来回切时环境音是硬起，
+     * 8 秒循环缓冲从第一个非零样本开始，直接全胜率起播会"啪"一下。
+     * 渐入时长放 config 里（AUDIO.ambientFade），调手感不用改代码；
+     * 配 0 就退回硬起。
+     */
+    const fade = ambientFade();
+    try {
+      if (fade > 0) {
+        g.gain.setValueAtTime(0, now);
+        g.gain.linearRampToValueAtTime(ambientVolume, now + fade);
+      } else {
+        g.gain.setValueAtTime(ambientVolume, now);
+      }
+    } catch (e) {
+      g.gain.value = ambientVolume;
+    }
     try {
       src.start(now);
     } catch (e) {
@@ -541,10 +558,38 @@
     const src = ambientSrc;
     ambientSrc = null;
     ambientPlaying = null;
-    if (src && typeof src.stop === 'function') {
-      try { src.stop(); } catch (e) { /* 已经停过就算了 */ }
+    if (!src || typeof src.stop !== 'function') return true;
+    /*
+     * 先淡出再停（默认 0.25s），不硬切：8 秒循环缓冲在任何相位被突然
+     * stop() 都是一声爆音。用 stop(now + fade) 让 WebAudio 自己按点时停，
+     * 不用 setTimeout —— 定时器会和场景 shutdown 竞争，还会让 node 进程
+     * 在测试里挂住不退（这个项目踩过）。
+     */
+    const fade = ambientFade();
+    const now = (ctx && typeof ctx.currentTime === 'number') ? ctx.currentTime : 0;
+    try {
+      if (fade > 0 && ambientGainNode) {
+        const g = ambientGainNode.gain;
+        g.cancelScheduledValues(now);
+        g.setValueAtTime(g.value, now);
+        g.linearRampToValueAtTime(0, now + fade);
+      }
+      src.stop(fade > 0 ? now + fade : undefined);
+    } catch (e) {
+      try { src.stop(); } catch (e2) { /* 已经停过就算了 */ }
     }
     return true;
+  }
+
+  /**
+   * 环境音淡入淡出秒数（AUDIO.ambient.fade）。
+   * 只认 config；缺失/非法当 0（硬起停），上限 2 秒免得配错数字导致听着像没声音。
+   */
+  function ambientFade() {
+    const amb = CFG.ambient;
+    const f = amb && amb.fade;
+    if (typeof f !== 'number' || !(f >= 0)) return 0;
+    return f > 2 ? 2 : f;
   }
 
   function setAmbientVolume(v) {
