@@ -84,8 +84,13 @@
     font-size:10px;color:#9fe8b0;font-variant-numeric:tabular-nums;display:none}
   .po.active .t{display:block}
 
+  /* 下边留 64px：底部的提示条（#toast）就停在那块空白里。
+     原来是 20px 四周等距 + toast 在 bottom:96px，于是提示条正好压在卡片
+     最后一行上 —— 在商店买完田地，刚变的「当前 10/27 块」被自己那声
+     「已购买」盖住，玩家得等两秒才能看见结果。 */
   .overlay{position:absolute;inset:0;display:none;align-items:center;
-    justify-content:center;background:#060a0ec2;backdrop-filter:blur(4px);padding:20px}
+    justify-content:center;background:#060a0ec2;backdrop-filter:blur(4px);
+    padding:20px 20px 64px}
   .overlay.on{display:flex}
   .card{width:100%;max-width:520px;max-height:100%;overflow:auto;
     background:linear-gradient(180deg,#18202b,#121820);
@@ -177,6 +182,12 @@
      context，所以两者的 z-index 直接比较）。#bag 是 40，toast 原先没有 z-index，
      于是右键出售的反馈被面板整个盖住 —— 玩家以为卖出去了却什么都没发生（F1）。
      70 同时高于 #bag 40 与 #bag-tip 60：提示条永远画在最上层。 */
+  /* 96px 是给跑图时让开底部技能条（#skills 在 bottom:14px、高 60px）。
+     但面板打开时这个位置正好压在卡片最后一行上 —— 在商店买完田地，
+     刚变的「当前 10/27 块」被自己那声「已购买」盖住，要等两秒才看得见。
+     所以面板（.overlay）打开期间改成贴着画框底边：那条缝是 .overlay
+     的 padding-bottom:64px 空出来的，卡片不会伸到那里。 */
+  #panel.on ~ #toast{bottom:14px}
   #toast{position:absolute;left:50%;bottom:96px;transform:translateX(-50%) translateY(8px);
     background:#0b1117e6;border:1px solid #3a4a5c;color:#e2ecf5;padding:8px 16px;
     border-radius:20px;font-size:12.5px;opacity:0;transition:opacity .2s,transform .2s;

@@ -2366,6 +2366,29 @@ const SCRIPT = `
 
     // 真的点一下 —— 这是 A5 第 4 条：从 UI 能买到，不是只有 logic 层通
     if (btnB) { btnB.click(); await wait(320); }
+    /*
+     * 提示条不能压在卡片上。
+     *
+     * 实测到过一次：在商店买完田地，「已购买」那声提示正好落在卡片最后一行，
+     * 刚变成「当前 10/27 块」的那行被自己盖住，要等两秒才看得见结果 ——
+     * 买了东西看不见结果，等于没有反馈。原因是 #toast 的 bottom:96px 是
+     * 为了跑图时让开底部技能条（#skills 高 60px、也在 bottom:14px），
+     * 而面板打开时那个位置正好在卡片内部。
+     *
+     * 只量位置不够：提示条如果是隐藏的，位置照样成立。所以同时记下它是不是
+     * 真的亮着、写着什么 —— 两条一起才说明"买完立刻看得见结果"。
+     */
+    const cardEl = document.querySelector('#panel .card');
+    const toastEl = document.getElementById('toast');
+    if (cardEl && toastEl) {
+      const rc = cardEl.getBoundingClientRect();
+      const rt = toastEl.getBoundingClientRect();
+      out.t20CardBottom = Math.round(rc.bottom);
+      out.t20ToastTop = Math.round(rt.top);
+      out.t20ToastOn = String(toastEl.className).indexOf('on') >= 0;
+      out.t20ToastText = String(toastEl.textContent);
+      out.t20ToastClear = rt.top >= rc.bottom - 0.5;
+    }
     out.t20CoinsAfter = stB.meta.coins;
     out.t20CoinsBefore = coinsBeforeBuy;
     out.t20PagesAfter = stB.meta.bagPages;
@@ -2997,6 +3020,22 @@ const SMALLSCRIPT = `
   eq(r.t20CoinsBefore, 1000, '点之前的铜币是这个数（下面 -200 才是可核对的）');
   eq(r.t20CoinsAfter, 800, '铜币正好少 200（不多不少）');
   eq(r.t20CoinsDelta, 200, '扣款额 = pagePrices[1]');
+
+  /*
+   * 买完立刻看得见结果：提示条不能压在卡片上。
+   *
+   * 光量"位置对不对"不够 —— 提示条被藏起来时位置照样成立。所以先钉它
+   * 真的亮着、写着动作名，再钉几何。两条一起才等于"买完能看见结果"。
+   * 拆掉 #panel.on ~ #toast 那条 CSS 这条会红（实测：卡片底边 587 /
+   * 提示条顶边 553，提示条钻进卡片 34px）。
+   */
+  eq(r.t20ToastOn, true, '买完有提示条亮着（否则下面那条是空转）');
+  eq(r.t20ToastText, '已购买', '提示条写的是这次动作');
+  ok(r.t20ToastClear === true,
+     '提示条整个在卡片下面（不压住刚变化的那一行）',
+     '卡片底边 ' + r.t20CardBottom + ' / 提示条顶边 ' + r.t20ToastTop);
+  ok(typeof r.t20ToastTop === 'number' && r.t20ToastTop > 0,
+     '提示条有真实位置（隐藏元素量出来是 0，上面那条就没意义）', r.t20ToastTop);
 
   // 点完面板同步刷新：价格跳到 500，说明读的是买完后的新状态
   // Task 24 被迫改值：4 → 5（商店多了田地那一行）。
