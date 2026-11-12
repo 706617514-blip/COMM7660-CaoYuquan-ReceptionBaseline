@@ -106,13 +106,20 @@ ELECTRON_RUN_AS_NODE='' node tests/browser/smoke.js
 
 ## 7. 进度（做到哪了）
 
-已完成并逐条独立验收：**Task 1–21**（背包系统、装备收集、音效 17 个、ESC 菜单、
-基地错落、攻击 +5%、兵器架/铁匠铺贴图、商店卖背包页、排序加稀有度）。
+已完成并逐条独立验收：**Task 1–25**。
 
-上一批断言数：**1,679**（audio 103 / bag 184 / logic 521 / meta 280 / page 162 / smoke 429）。
+- 第一批（Task 1–21，设计 `2026-11-12-backpack-audio-settings-design.md`）：
+  背包系统（5×7 格、6 页、整理、右键出售、批量出售）、装备收集（35 件全收不删）、
+  21 个音效、ESC 菜单与滑块、基地错落与键帽、攻击 +5%、
+  兵器架/铁匠铺贴图与部位页签、药水改名（治疗/力量/护盾）、商店卖背包页、排序加稀有度。
+- 第二批（Task 22–25，设计 `2026-11-13-boss-anim-audio-farm-design.md`）：
+  进关卡渐黑 + 防连点、种子超额腐烂、脚步/胜负/虫鸣音效与环境音滑块、
+  商店买田地（3000/块、最多 27 块）+ 农场翻页箭头、Boss 程序化藤蔓动作（idle/walk/windup/strike）。
 
-**当前进行中**：PM 于 2026-11-13 提出的 8 条新需求，
-设计文档 `docs/superpowers/specs/2026-11-13-boss-anim-audio-farm-design.md`。
+当前断言数：**2,162**
+（audio **225** / bag **184** / logic **611** / meta **313** / page **195** /
+bosspose **96** / smoke **538**；`check_textures` 无计数框架）。
+CI 已接线全部套件（`.github/workflows/ci.yml`，含 `test_bag`、`test_audio`、`test_bosspose`）。
 
 ## 8. 只有用户本人能做的事（AI 绝对不许代做）
 
@@ -132,6 +139,15 @@ ELECTRON_RUN_AS_NODE='' node tests/browser/smoke.js
   「加强熔炉倍率」是错杠杆（中间档 36.5% → 3.0% 的悬崖），正确杠杆是
   「只对终局生效的缩放」，属设计变更、需 PM 批准。**没有擅自改。**
 - 平衡：半满 × 熔炉 +8.3pp（越过 8pp 判据），已如实记录在 PR 描述与证据文档里。
+- **Boss 蓄力光效盖住手臂中段**：蓄力粒子在 `bossGfx`（depth 1400），手臂层是
+  `1000 - z + 1`（约 896），所以 windup 时手臂中段被光晕冲淡，只剩头尾露在外面。
+  要修就得把手臂抬到 1401+，那会破坏"和躯干同层次、按 z 排序"的规则（Boss 在后面时
+  手臂会盖住挡在它前面的怪）。**没有擅自改**，属需要权衡的取舍。
+- **Boss 手臂在 1x 下偏细**：已从任务书原定的 7→2.5 加粗到 10→4（落屏 5.2→2.1 CSS px）。
+  再粗会开始像"两根香肠"。旋钮是 `C.BOSS.armWidthRoot/armWidthTip`。
+- **Boss 只有 idle/walk/windup/strike 四个姿态**，没有受击硬直、没有死亡动画
+  （用户原话是"包括但不限于走路、抬手"，这两条已满足）。要加受击后仰，
+  在 `game/bosspose.js` 的 `compute` 里加一个 `hit` 分支即可，纯函数层好加。
 
 ## 10. 会话中断/换供应商后怎么接
 
