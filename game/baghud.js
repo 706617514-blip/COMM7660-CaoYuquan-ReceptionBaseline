@@ -74,8 +74,14 @@
     { key: 'hurtMul', label: '受伤' },
   ];
 
-  /** 贴图 dataURL 缓存。成功才写：失败留空，下次 refresh 还能重试。 */
-  const spriteCache = new Map();
+  /*
+   * 贴图 dataURL 的转换与缓存在 sprites.js（SpriteLib）。
+   *
+   * 这里原本有一份自己的 Map。Task 17 让设施面板也要贴图之后，两份缓存就变成
+   * 真的开销：背包里转过的那件装备，兵器架还得再 toDataURL 一次，而这个转换是
+   * 同步的 PNG 编码 —— 一屏 35 行、每次切页签都重来一遍会把主线程按在那里。
+   * 现在只有一处缓存，两个面板共享。
+   */
 
   let ui = null;            // 懒建的 DOM 引用集合
   let opened = false;
@@ -120,27 +126,21 @@
    * 是一张**离屏 canvas**，它没有 src 属性，直接塞给 <img> 是空的。
    * 转换结果必须缓存 —— 这个调用是同步的，35 件 × 每帧级别的刷新会把主线程钉住。
    */
+  function spriteLib() {
+    // 单独加载 baghud.js（某些测试只加载这一个文件）时 SpriteLib 可能不存在。
+    // 退回空实现而不是抛：一格没图，比整个背包打不开轻得多。
+    return global.SpriteLib || { url: function () { return null; },
+      equipUrl: function () { return null; } };
+  }
+
   function textureUrl(key) {
     if (!key) return null;
-    if (spriteCache.has(key)) return spriteCache.get(key);
-    let url = null;
-    try {
-      const game = global.__game;
-      const tex = game && game.textures && game.textures.get(key);
-      const img = tex && tex.source && tex.source[0] && tex.source[0].image;
-      if (img && typeof img.toDataURL === 'function') {
-        url = img.toDataURL('image/png');
-      }
-    } catch (e) {
-      url = null;   // 贴图还没烘好 / 键不存在：这一格退化成占位，不抛
-    }
-    if (url) spriteCache.set(key, url);
-    return url;
+    return spriteLib().url(key);
   }
 
   function spriteUrl(slot, id) {
     if (!slot || !id) return null;
-    return textureUrl('eq-' + slot + '-' + id);
+    return spriteLib().equipUrl(slot, id);
   }
 
   // ---------------------------------------------------------------- 数据

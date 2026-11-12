@@ -112,13 +112,16 @@ section('1. 脚本按序加载且不抛异常');
 const html = fs.readFileSync(HTML, 'utf-8');
 const srcs = [...html.matchAll(/<script src="([^"]+)"/g)].map(m => m[1]);
 eq(JSON.stringify(srcs), JSON.stringify([
-  'vendor/phaser.min.js', 'config.js', 'audio.js', 'logic.js', 'profile.js', 'hub.js',
-  'baghud.js', 'app.js',
-]), '脚本加载顺序正确（Phaser 先于 app.js）');
+  'vendor/phaser.min.js', 'config.js', 'sprites.js', 'audio.js', 'logic.js', 'profile.js',
+  'hub.js', 'baghud.js', 'app.js',
+]), '脚本加载顺序正确（Phaser 先于 app.js；sprites.js 早于 baghud.js/app.js，它们要用）');
 
 let bootErr = null;
 try {
   loadModule('game/config.js');
+  // sprites.js 只依赖"调用时"存在的 global.__game，求值时不需要引擎，
+  // 但必须在 baghud.js / index.html 用到它之前加载（否则取贴图会退化成 null）。
+  loadModule('game/sprites.js');
   // audio.js 只依赖 config.js，且必须早于 baghud.js / app.js ——
   // 那两者在模块求值时就抓了 global.GameAudio（拿不到会退回空实现）。
   loadModule('game/audio.js');
@@ -131,6 +134,7 @@ try {
 ok(!bootErr, '模块加载不抛异常', bootErr && bootErr.message);
 
 ok(typeof sandbox.GameHub === 'object', 'GameHub 已挂在全局');
+ok(typeof sandbox.SpriteLib === 'object', 'SpriteLib 已挂在全局（贴图键 → dataURL，铁匠铺与兵器架共用）');
 ok(typeof sandbox.EmberfieldApp === 'object', 'EmberfieldApp 已挂在全局');
 ok(typeof sandbox.EmberfieldApp.FarmScene === 'function', '农场场景已定义并注册');
 ok(['BootScene', 'HubScene', 'RunScene', 'FarmScene'].every(
@@ -373,6 +377,121 @@ section('4b. 兵器架：按钮写动作 + 页签只筛行');
   const names = {};
   allRows.forEach(r => { names[labelOf(r)] = true; });
   eq(Object.keys(names).length, total, '切回"全部"件数仍为 ' + total + '（一件不少）');
+}
+
+// ---------------------------------------------------------------- 设施面板的页签与图标（Task 17）
+section('4c. 设施面板：按区域的页签 + 行内图标（Task 17）');
+{
+  /*
+   * 为什么要有这一节
+   * ----------------
+   * PM 的抱怨是"铁匠铺没有分类、没有图"。数据层（cat / icon 字段）在
+   * test_game_meta.js 里钉过了，但**页签配置写在 index.html 里** ——
+   * 页签文案、顺序、以及"哪个区域才有页签"都只活在这一层，逻辑测试看不到它。
+   * DOM 桩的 innerHTML 只是字符串、数不到图，所以这里断言的是"UI 交给渲染器的
+   * 模型"，真要看见像素由 smoke 负责。
+   */
+  const ui = sandbox.EmberfieldUI;
+  ok(typeof ui.panelTabsFor === 'function', '导出 panelTabsFor（页签配置的唯一来源）');
+  ok(typeof ui.panelRowModel === 'function', '导出 panelRowModel（行渲染的唯一来源）');
+  // 取不到就退化成空实现：崩掉整个文件会把后面三十多条断言一起藏起来，
+  // 只剩一行 TypeError，看不出到底缺什么（同 4b 的 mustTab 做法）。
+  const tabsFor = typeof ui.panelTabsFor === 'function'
+    ? ui.panelTabsFor : () => [];
+  const rowModel = typeof ui.panelRowModel === 'function'
+    ? ui.panelRowModel : () => ({});
+
+  const anvilTabs = tabsFor('anvil');
+  eq(anvilTabs.length, 4, '铁匠铺有四个页签');
+  eq(anvilTabs.map(t => t.label).join('/'), '全部/攻击/生存/机动', '铁匠铺页签文案与顺序');
+  eq(anvilTabs.map(t => t.id).join('/'), 'all/attack/defense/move', '铁匠铺页签 id');
+  const wearTabs = tabsFor('forgewear');
+  eq(wearTabs.length, 5, '兵器架仍是五个页签');
+  eq(wearTabs.map(t => t.label).join('/'), '全部/未拥有/已拥有/已穿戴/特殊',
+     '兵器架页签文案与顺序一个字没变');
+  eq(wearTabs.map(t => t.id).join('/'), 'all/unowned/owned/worn/special', '兵器架页签 id 不变');
+  eq(tabsFor('altar').length, 0, '祭坛没有页签配置（返回空数组，不渲染页签条）');
+  eq(tabsFor('shop').length, 0, '药水铺没有页签配置');
+  eq(tabsFor('field').length, 0, '田地没有页签配置');
+
+  // SpriteLib：没有引擎（Node 桩 / 纹理没烘好）时必须返回 null 而不是抛，
+  // 否则 refreshPanel 会在渲染中途炸掉整个面板。
+  eq(sandbox.SpriteLib.url('hero'), null, '取不到纹理时 url() 返回 null（不抛）');
+  eq(sandbox.SpriteLib.equipUrl('head', 'leatherHelm'), null, 'equipUrl 走同一入口');
+  eq(typeof sandbox.SpriteLib.clear, 'function', 'SpriteLib.clear 存在（测试可重置缓存）');
+
+  const st = L.createState(778);
+  sandbox.GameHub.ensureHub(st);
+  st.meta.coins = 3000;
+
+  // 每个页签 id 都必须能筛出东西 —— 配了页签却过滤不生效，界面上就是一片空白
+  anvilTabs.forEach((t) => {
+    const rows = sandbox.GameHub.zoneActions(st, 'anvil', t.id);
+    ok(rows.length > 0, '铁匠铺页签「' + t.label + '」筛出至少一行', rows.length);
+  });
+
+  // 行模型：UI 拿到的就是它要渲染的东西
+  const acts = sandbox.GameHub.zoneActions(st, 'anvil');
+  const m0 = rowModel(acts[0]);
+  eq(m0.iconKey, 'ic-damage', '第一行模型带图标键 ic-damage');
+  eq(m0.label, '锋刃', '行模型的 label 来自动作');
+  ok(typeof m0.sub === 'string' && m0.sub.indexOf('Lv.') === 0, '行模型带说明行', m0.sub);
+  eq(m0.buttonText, '25', '按钮文字仍是价格字符串（加图标没动按钮语义）');
+  eq(m0.enabled, true, '钱够时行模型 enabled');
+  eq(m0.disabledReason, '', '可用时没有禁用原因');
+  const poor = L.createState(779);
+  sandbox.GameHub.ensureHub(poor);
+  poor.meta.coins = 0;
+  const pm = rowModel(sandbox.GameHub.zoneActions(poor, 'anvil')[0]);
+  eq(pm.enabled, false, '钱不够时行模型 enabled=false');
+  eq(pm.disabledReason, '铜币不够', '行模型带禁用原因');
+  // 兵器架的行模型也要能给出贴图键（35 行靠它取图）
+  const wearActs = sandbox.GameHub.zoneActions(st, 'forgewear');
+  const helmAct = wearActs.filter(a => a.payload.id === 'leatherHelm')[0];
+  eq(rowModel(helmAct).iconKey, 'eq-head-leatherHelm', '兵器架行模型带装备贴图键');
+
+  // 真面板结构：资源行 + 页签条 + 3 行
+  const anvilZone = sandbox.GameHub.ZONES.find(z => z.id === 'anvil');
+  ui.openPanel(anvilZone, st, () => {}, () => {});
+  const kids = getEl('panelBody').children;
+  eq(kids.length, 5, '铁匠铺面板 = 资源行 1 + 页签条 1 + 强化 3 行', kids.length);
+  eq(kids[1] && kids[1].className, 'tabs', '第二个节点是页签条（资源行之后）');
+  eq(kids[1] ? kids[1].children.length : -1, 4, '页签条上有 4 个页签');
+  eq(kids[1] ? kids[1].children.map(b => b.textContent).join('/') : '',
+     '全部/攻击/生存/机动', '页签挂在真面板上文案正确');
+  eq(kids[1] && kids[1].children[0].className, 'tab on', '默认停在「全部」');
+  const anvilRows = kids.slice(2).filter(c => c.className.indexOf('act') >= 0);
+  eq(anvilRows.length, 3, '页签之后是 3 行强化');
+  eq(anvilRows.map(r => String(r.children[1].textContent)).join('/'), '25/30/28',
+     '三行按钮写的是各自的价格');
+  ok(anvilRows.every(r => r.children.length === 2),
+     '桩里取不到 dataURL 时不留空 img 节点（渲染器不插、不抛）',
+     anvilRows.map(r => r.children.length).join(','));
+
+  // 点「攻击」：只剩一行；点回「全部」：三行回来
+  const tabsBar0 = kids.filter(c => c.className === 'tabs')[0];
+  const attackBtn = tabsBar0
+    ? tabsBar0.children.filter(b => b.textContent === '攻击')[0] : null;
+  ok(!!attackBtn, '页签「攻击」存在');
+  if (attackBtn) attackBtn.click();
+  const rowsAttack = getEl('panelBody').children.filter(c => c.className.indexOf('act') >= 0);
+  eq(rowsAttack.length, 1, '点「攻击」后只剩 1 行');
+  ok(rowsAttack[0] && /锋刃/.test(rowsAttack[0].children[0].innerHTML), '剩下的是锋刃');
+  const tabsBar1 = getEl('panelBody').children.filter(c => c.className === 'tabs')[0];
+  const allBtn = tabsBar1
+    ? tabsBar1.children.filter(b => b.textContent === '全部')[0] : null;
+  if (allBtn) allBtn.click();
+  eq(getEl('panelBody').children.filter(c => c.className.indexOf('act') >= 0).length, 3,
+     '点回「全部」恢复 3 行');
+
+  // 兵器架面板：页签位置不变、行数不变
+  const wearZone = sandbox.GameHub.ZONES.find(z => z.id === 'forgewear');
+  ui.openPanel(wearZone, st, () => {}, () => {});
+  const wearKids = getEl('panelBody').children;
+  eq(wearKids[1] && wearKids[1].className, 'tabs', '兵器架页签条仍在资源行之后');
+  eq(wearKids[1] ? wearKids[1].children.length : -1, 5, '兵器架仍是 5 个页签');
+  eq(wearKids.filter(c => c.className.indexOf('act') >= 0).length,
+     sandbox.GameHub.zoneActions(st, 'forgewear').length, '兵器架行数与不过滤时一致');
 }
 
 // ---------------------------------------------------------------- 结算

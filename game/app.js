@@ -480,6 +480,106 @@
       d.fillStyle(0xc9a6ff, 1); d.fillRoundedRect(10, 49, 21, 3, 2);
     });
 
+    /*
+     * ---- 面板图标（Task 17 / 设计 §5.7）----
+     *
+     * 铁匠铺三个强化项要在面板行首各贴一张小图：锋刃=斜置的剑、耐力=红心、
+     * 轻步=靴子加速度线。它们和装备贴图一样**预烘成静态纹理**，然后由
+     * SpriteLib 转成 dataURL 塞进 <img> —— 不在 DOM 里画矢量：那要另写一套
+     * 坐标系，而且每次 refreshPanel 重画 3~35 个图标会在切页签时卡一下。
+     *
+     * 为什么不复用 equipLayer：那个助手写死 40×60，还假设"底边是脚、有朝向"；
+     * 图标是方形、没有朝向概念，两者放一起会让任何一个改尺寸都互相绊住。
+     */
+    const upgradeIcon = (key, draw) => {
+      g.clear();
+      draw(g);
+      g.generateTexture(key, 28, 28);
+    };
+
+    /*
+     * 斜置的剑（45°指向右上）。
+     *
+     * 一个 28px 的图标只能靠剪影取胜，所以三件东西必须都画出来：
+     *   剑身 = 三角形（尖端到两个底角，天然带收窄的尖）
+     *   护手 = 横跨剑身的一道，**比剑身宽一倍** —— 这一道是"剑"与"刀/笔"
+     *          的分界，画短了整张图看起来像支笔
+     *   柄   = 从护手往左下伸的一小段 + 一颗圆头
+     * 坐标都是按 45° 轴算的：剑身轴方向 u=(-0.707,0.707)，横向 p=(0.707,0.707)。
+     */
+    upgradeIcon('ic-damage', (d) => {
+      const px = 0.7071;
+      const tipX = 25, tipY = 3;          // 剑尖（右上）
+      const baseX = 9, baseY = 19;        // 剑身根部中心
+      const halfW = 4.2;                  // 剑身半宽：28px 里要够粗才看得出是"剑"
+      // 剑身：尖端 + 两个底角（三角形，天然收窄成锋）
+      d.fillStyle(0xb8c6d4, 1);
+      d.beginPath();
+      d.moveTo(tipX, tipY);
+      d.lineTo(baseX + halfW * px, baseY + halfW * px);
+      d.lineTo(baseX - halfW * px, baseY - halfW * px);
+      d.closePath(); d.fillPath();
+      // 剑脊：沿轴线的一道高光（一条描边，不会被斜边锯齿吃掉）
+      d.lineStyle(1.8, 0xe8f2fa, 1);
+      d.beginPath();
+      d.moveTo(tipX - 2.4, tipY + 2.4); d.lineTo(baseX + 0.6, baseY - 0.6);
+      d.strokePath();
+      d.lineStyle(0, 0x000000, 0);        // 复位描边，别带进下一个图标
+      // 护手：横跨剑身、向两侧各伸出半个剑身宽的一道。
+      // 这一道是"剑"与"笔 / 凿子"的唯一分界，画短了整张图就认不出来。
+      d.fillStyle(0x2b2016, 1);
+      d.beginPath();
+      d.moveTo(baseX + 6.9, baseY + 3.3);
+      d.lineTo(baseX - 2.3, baseY - 7.9);
+      d.lineTo(baseX - 4.8, baseY - 5.4);
+      d.lineTo(baseX + 4.4, baseY + 5.8);
+      d.closePath(); d.fillPath();
+      // 柄：从护手继续往左下，末端一颗圆头
+      d.fillStyle(0x6b5138, 1);
+      d.beginPath();
+      d.moveTo(baseX + 1.0, baseY + 1.0);
+      d.lineTo(baseX - 3.6, baseY + 5.6);
+      d.lineTo(baseX - 5.9, baseY + 3.3);
+      d.lineTo(baseX - 1.7, baseY - 0.9);
+      d.closePath(); d.fillPath();
+      d.fillStyle(0x2b2016, 1);
+      d.fillCircle(baseX - 5.2, baseY + 6.4, 2.1);
+    });
+
+    // 红心：两个圆 + 一个三角，深色描边把它从米色面板上拉出来
+    upgradeIcon('ic-maxHp', (d) => {
+      d.fillStyle(0x2b2016, 1);
+      d.fillCircle(9, 11, 7.5); d.fillCircle(19, 11, 7.5);
+      d.fillTriangle(2, 13, 26, 13, 14, 27);
+      d.fillStyle(0xc94f4f, 1);
+      d.fillCircle(9, 11, 5.6); d.fillCircle(19, 11, 5.6);
+      d.fillTriangle(4, 13, 24, 13, 14, 24);
+      // 高光：左上那一点，让心看起来是立体的而不是一个红块
+      d.fillStyle(0xe8f2fa, 1);
+      d.fillCircle(7, 9, 2.2);
+    });
+
+    /*
+     * 靴子 + 速度线。
+     *
+     * 剪影靠三块：靴筒（竖）、脚面（横，指向右）、鞋底（深色一条）。
+     * 只画"竖块+横块"会看成一个 L 形积木，所以鞋底用最深的颜色压在最下面，
+     * 靴口再加一道亮边 —— 这两笔把"这是只鞋"定住。左边三道横线是"快"的
+     * 唯一线索，少了它这张图就只是只靴子，和"移速"没有关系。
+     */
+    upgradeIcon('ic-speed', (d) => {
+      d.fillStyle(0xb8c6d4, 1);
+      d.fillRect(1, 9, 6, 2); d.fillRect(0, 14, 8, 2); d.fillRect(2, 19, 5, 2);
+      d.fillStyle(0x6b5138, 1);
+      d.fillRoundedRect(12, 6, 8, 13, 3);          // 靴筒
+      d.fillRoundedRect(9, 16, 17, 8, 3);          // 脚面（向右伸出）
+      d.fillStyle(0xb8c6d4, 1);
+      d.fillRoundedRect(11.5, 5.4, 9, 2.6, 1.2);   // 靴口亮边
+      d.fillStyle(0x2b2016, 1);
+      d.fillRect(9, 22.6, 17, 2.6);                // 鞋底
+      d.fillRect(9, 19, 4, 4);                     // 鞋跟
+    });
+
 
     // ---- 爬虫：六足 + 甲壳分层 ----
     g.clear();

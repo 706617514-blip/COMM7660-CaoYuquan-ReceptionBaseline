@@ -563,6 +563,151 @@ const SCRIPT = `
     }
   }
 
+  // ---- 3d-3. 设施面板的贴图 + 铁匠铺分类页签（Task 17 / V31 V32）----
+  /*
+   * 为什么必须在真浏览器里量
+   * ----------------------
+   * DOM 桩里 createElement('img') 得到的是假节点：src 设成什么都不会真的解码，
+   * 于是"贴图烘好了"和"贴图键打错了"看起来一模一样。真浏览器才能数
+   * naturalWidth —— 那是"这张图真的解出来了"的唯一证据。
+   *
+   * 改动前的实测（本任务红阶段，真 Electron）：铁匠铺 rows 3 / tabs 0 / imgs 0；
+   * 兵器架 rows 35 / tabs 5 / imgs 0。所以这里每一条都能被破坏。
+   */
+  {
+    const t17 = {};
+    const hubP = globalThis.__game.scene.getScene('Hub');
+    const stP = window.EmberfieldApp.__state;
+    stP.meta.coins = 5000;
+    hubP.panelOpen = false;
+    window.EmberfieldUI.closePanel();
+    const bodyOf = function () { return document.getElementById('panelBody'); };
+    const tabsOf = function () {
+      return Array.prototype.slice.call(document.querySelectorAll('#panel .tabs button'));
+    };
+    const imgsOf = function () {
+      return Array.prototype.slice.call(bodyOf().querySelectorAll('img'));
+    };
+    const rowsOf = function () {
+      return Array.prototype.slice.call(bodyOf().querySelectorAll('.act'));
+    };
+    const tabNamed = function (label) {
+      return tabsOf().filter(function (b) { return b.textContent === label; })[0];
+    };
+    const imgStats = function (list) {
+      const srcs = list.map(function (i) { return String(i.src); });
+      const everyData = srcs.length > 0 && srcs.every(function (s) {
+        return s.indexOf('data:image/png;base64,') === 0;
+      });
+      const everyNat = list.length > 0 && list.every(function (i) { return i.naturalWidth > 0; });
+      let uniq = 0;
+      for (let i = 0; i < srcs.length; i++) if (srcs.indexOf(srcs[i]) === i) uniq++;
+      return { n: list.length, dataUrl: everyData, natural: everyNat, uniq: uniq,
+        nat: list.slice(0, 2).map(function (i) { return i.naturalWidth + 'x' + i.naturalHeight; }) };
+    };
+    // 第一行（有图的那行）的行框 / 图框 / 文字框，用来证明图没有压到字
+    const geomOf = function () {
+      const withImg = rowsOf().filter(function (r) { return !!r.querySelector('img'); });
+      if (!withImg.length) return null;
+      const r = withImg[0].getBoundingClientRect();
+      const im = withImg[0].querySelector('img').getBoundingClientRect();
+      const tx = withImg[0].querySelector('.txt').getBoundingClientRect();
+      return { rowL: Math.round(r.left), rowR: Math.round(r.right),
+        rowH: Math.round(r.height),
+        imgL: Math.round(im.left), imgR: Math.round(im.right),
+        imgW: Math.round(im.width), imgH: Math.round(im.height),
+        txtL: Math.round(tx.left),
+        within: im.left >= r.left && im.right <= tx.left && im.width > 0 };
+    };
+    const heightsOf = function () {
+      return rowsOf().map(function (r) { return Math.round(r.getBoundingClientRect().height); });
+    };
+
+    // (1) 铁匠铺：4 个页签 + 3 行 + 3 张两两不同的图
+    hubP.state.hub.x = 265; hubP.state.hub.z = 122;
+    await wait(300);
+    t17.anvilZone = (window.GameHub.zoneAt(stP) || {}).id;
+    hubP.showPanel(window.GameHub.zoneById('anvil'));
+    await wait(220);
+    t17.anvilTitle = document.getElementById('panelTitle').textContent;
+    t17.anvilTabs = tabsOf().length;
+    t17.anvilLabels = tabsOf().map(function (b) { return b.textContent; }).join('/');
+    t17.anvilRows = rowsOf().length;
+    t17.anvilImg = imgStats(imgsOf());
+    t17.anvilGeom = geomOf();
+    t17.anvilActH = heightsOf();
+    t17.anvilBtnTexts = rowsOf().map(function (r) {
+      const b = r.querySelector('button');
+      return b ? String(b.textContent) : null;
+    }).join('/');
+
+    // (2) 点「攻击」→ 1 行 1 图，按钮仍写价格；点回「全部」→ 3 行
+    const atkTab = tabNamed('攻击');
+    if (atkTab) atkTab.click();
+    await wait(180);
+    t17.atkRows = rowsOf().length;
+    t17.atkImgs = imgsOf().length;
+    t17.atkBtn = rowsOf().length && rowsOf()[0].querySelector('button')
+      ? String(rowsOf()[0].querySelector('button').textContent) : null;
+    t17.atkRowName = rowsOf().length && rowsOf()[0].querySelector('.t')
+      ? String(rowsOf()[0].querySelector('.t').textContent) : null;
+    t17.atkOn = tabsOf().filter(function (b) { return b.className.indexOf('on') >= 0; })
+      .map(function (b) { return b.textContent; }).join('/');
+    const allTab0 = tabNamed('全部');
+    if (allTab0) allTab0.click();
+    await wait(180);
+    t17.backRows = rowsOf().length;
+
+    // (3) 兵器架：35 行、35 张两两不同的图、仍是 5 个页签。
+    // 先把身上穿的卸下来：一件穿戴中的装备会给"升级 + 卸掉"两行，
+    // 行数就不是 35 了。卸载是为了让读数能对着 V31 的 35 逐条比，
+    // 不是为了把测试调绿 —— 断言里同时钉了"卸载真的生效"。
+    // 量完必须把状态还原：这一段只是"临时脱光"，后面背包用例依赖
+    // "3d 段穿上的那件还在身上"（替换场景），留在脱掉的状态会把它们弄红。
+    const snapEquipment = JSON.parse(JSON.stringify(stP.meta.equipment));
+    const snapBag = JSON.parse(JSON.stringify(stP.meta.bag));
+    t17.bagBefore = snapBag.length;
+    t17.headBefore = (snapEquipment.head || {}).id || null;
+    t17.wornBefore = window.GameConfig.EQUIP_SLOTS.filter(function (slot) {
+      return !!snapEquipment[slot];
+    }).length;
+    window.GameConfig.EQUIP_SLOTS.forEach(function (slot) {
+      window.GameLogic.unequipSlot(stP, slot);
+    });
+    t17.stillWorn = window.GameConfig.EQUIP_SLOTS.filter(function (slot) {
+      return !!stP.meta.equipment[slot];
+    }).length;
+    hubP.panelOpen = false;
+    window.EmberfieldUI.closePanel();
+    hubP.state.hub.x = 415; hubP.state.hub.z = 105;
+    await wait(320);
+    t17.wearZone = (window.GameHub.zoneAt(stP) || {}).id;
+    hubP.showPanel(window.GameHub.zoneById('forgewear'));
+    await wait(260);
+    t17.wearTabs = tabsOf().length;
+    t17.wearLabels = tabsOf().map(function (b) { return b.textContent; }).join('/');
+    t17.wearRows = rowsOf().length;
+    t17.wearImg = imgStats(imgsOf());
+    t17.wearGeom = geomOf();
+    t17.wearActH = heightsOf();
+    t17.wearActHMin = Math.min.apply(null, t17.wearActH);
+    t17.wearActHMax = Math.max.apply(null, t17.wearActH);
+    t17.wearEquipmentCount = Object.keys(window.GameConfig.ALL_EQUIPMENT).length;
+    // 还原（见上面 snapEquipment/snapBag 的注释）
+    stP.meta.equipment = snapEquipment;
+    stP.meta.bag = snapBag;
+    t17.restoredHead = (stP.meta.equipment.head || {}).id || null;
+    t17.restoredWorn = window.GameConfig.EQUIP_SLOTS.filter(function (slot) {
+      return !!stP.meta.equipment[slot];
+    }).length;
+    t17.restoredBag = stP.meta.bag.length;
+    out.t17 = t17;
+
+    hubP.panelOpen = false;
+    window.EmberfieldUI.closePanel();
+    await wait(120);
+  }
+
   // ---- 3e. 走到田地按 J：必须真的进得去农场，不能卡在黑屏 ----
   /*
    * 这条来自真实反馈："按 J 进入田地渐黑之后就卡死了，什么都做不了"。
@@ -1754,6 +1899,55 @@ const SMALLSCRIPT = `
   ok(typeof r.helmWornBtns === 'string' && r.helmWornBtns.split('|').length === 2 &&
      r.helmWornBtns.indexOf('升级') === 0 && r.helmWornBtns.indexOf('|卸掉') > 0,
      '穿上后同一件出现两个按钮：升级 + 卸掉', r.helmWornBtns);
+
+  console.log('\n--- 3d-3. 设施面板的贴图与铁匠铺分类页签（Task 17 / V31 V32）---');
+  const t17 = r.t17 || {};
+  eq(t17.anvilZone, 'anvil', '站到了铁匠铺（站错地方下面全是在量别处）');
+  eq(t17.anvilTitle, '铁匠铺', '打开的是铁匠铺面板');
+  eq(t17.anvilTabs, 4, '铁匠铺有 4 个页签（改前 0 个）');
+  eq(t17.anvilLabels, '全部/攻击/生存/机动', '铁匠铺页签文案与顺序');
+  eq(t17.anvilRows, 3, '「全部」页签仍是三条强化');
+  eq(t17.anvilImg && t17.anvilImg.n, 3, '铁匠铺三行各一张图标（改前 0 张）');
+  ok(t17.anvilImg && t17.anvilImg.dataUrl === true,
+     '三张图标都是 data URL（不引入图片文件）');
+  ok(t17.anvilImg && t17.anvilImg.natural === true,
+     '三张图标真的解码成功（naturalWidth > 0，不是坏图）',
+     JSON.stringify(t17.anvilImg && t17.anvilImg.nat));
+  eq(t17.anvilImg && t17.anvilImg.uniq, 3, '三个强化项的图标两两不同（不是一张图贴三次）');
+  ok(t17.anvilGeom && t17.anvilGeom.within === true,
+     '图在行内：左缘不越行、右缘不压到文字', JSON.stringify(t17.anvilGeom));
+  ok(t17.anvilActH && t17.anvilActH.every((h) => h >= 62 && h <= 74),
+     '铁匠铺行高没被图撑破（改前 62）', JSON.stringify(t17.anvilActH));
+  eq(t17.anvilBtnTexts, '25/30/28', '按钮仍写价格（加图标没动按钮语义）');
+  eq(t17.atkRows, 1, '点「攻击」后只剩 1 行');
+  eq(t17.atkImgs, 1, '点「攻击」后仍有 1 张图（不是连图一起消失）');
+  eq(t17.atkRowName, '锋刃', '「攻击」页签剩下的那一行就是锋刃');
+  eq(t17.atkBtn, '25', '「攻击」页签那行的按钮仍写价格');
+  eq(t17.atkOn, '攻击', '点中的页签变成选中态，且只有一个');
+  eq(t17.backRows, 3, '点回「全部」恢复 3 行');
+
+  eq(t17.wearZone, 'forgewear', '站到了兵器架');
+  eq(t17.stillWorn, 0, '测量前穿戴已清空（否则穿戴件多一行，35 这个数就对不上）');
+  eq(t17.wearRows, 35, '兵器架 35 行');
+  eq(t17.wearTabs, 5, '兵器架仍是 5 个页签（没被换成铁匠铺那套）');
+  eq(t17.wearLabels, '全部/未拥有/已拥有/已穿戴/特殊', '兵器架页签文案与顺序一个字没变');
+  eq(t17.wearImg && t17.wearImg.n, 35, '兵器架 35 行各一张装备贴图（改前 0 张）');
+  eq(t17.wearImg && t17.wearImg.uniq, 35, '35 张贴图两两不同（PM「要贴图片」的实质）');
+  ok(t17.wearImg && t17.wearImg.dataUrl === true, '兵器架贴图都是 data URL');
+  ok(t17.wearImg && t17.wearImg.natural === true,
+     '兵器架贴图全部解码成功（naturalWidth > 0）',
+     JSON.stringify(t17.wearImg && t17.wearImg.nat));
+  ok(t17.wearGeom && t17.wearGeom.within === true,
+     '兵器架的图在行内：左缘不越行、右缘不压到文字', JSON.stringify(t17.wearGeom));
+  ok(t17.wearActHMax - 62 <= 8 && t17.wearActHMax - t17.wearActHMin <= 2,
+     '兵器架行高没被撑破（改前 62，允许 +8 且各行一致）',
+     t17.wearActHMin + '~' + t17.wearActHMax + '（改前 62）');
+  // 量完必须还原：后面"点格子换装"的用例依赖 3d 段穿上的那件还在身上。
+  // 这条断言守的是"测试不污染后续用例"，不是产品行为。
+  // 不写死 id：改前是多少就还原成多少，测试不该赌"3d 段穿的是哪件"。
+  eq(t17.restoredHead, t17.headBefore, '量完把身上那件穿回去（否则后面的替换用例全红）');
+  eq(t17.restoredWorn, t17.wornBefore, '还原后身上件数与测量前一致（不多不少）');
+  eq(t17.restoredBag, t17.bagBefore, '还原后背包件数与测量前一致（没有凭空多/少）');
 
   console.log('\n--- 3e. 按 J 进田地：不能卡在黑屏 ---');
   eq(r.fieldZoneId, 'field', '站在田地区域上（不然按 J 进不去）');

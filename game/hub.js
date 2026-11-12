@@ -24,6 +24,16 @@
   const HUB_W = 960;
   const HUB_D = C.FIELD_D;
 
+  /*
+   * 强化项 → 铁匠铺分类（设计 §5.7）。
+   *
+   * 这里只给 id（attack / defense / move），中文标签与页签顺序在 index.html 的
+   * PANEL_TABS 里 —— 数据层不该知道"攻击"这两个字怎么写，UI 层也不该知道
+   * 哪个强化项算生存。两边只共享这一组 id。
+   */
+  const UPGRADE_CAT = { damage: 'attack', maxHp: 'defense', speed: 'move' };
+  const UPGRADE_CATS = Object.keys(UPGRADE_CAT).map(function (k) { return UPGRADE_CAT[k]; });
+
   /**
    * 区域沿 x 轴排布（从左到右就是玩家的动线）：
    *   田地 → 铁匠 → 兵器架 → 药水铺 → 技能祭坛 → 远征之门
@@ -143,6 +153,10 @@
           cost: cost === null ? null : cost,
           enabled: cost !== null && state.meta.coins >= cost,
           disabledReason: cost === null ? '已满级' : (state.meta.coins < cost ? '铜币不够' : ''),
+          // cat 供页签过滤、icon 供行首贴图：UI 不再自己按 key 猜这两件事
+          // （猜错的表现是"分类点了没反应"、"图贴到别人身上"，都不报错）。
+          cat: UPGRADE_CAT[key],
+          icon: 'ic-' + key,
           payload: { key: key },
         });
       });
@@ -203,6 +217,9 @@
       //   cost  = 这条动作要花的铜币（0 = 不花钱）。
       // 早先这三件事挤在 label 与 cost 里，UI 只能靠硬编码阶梯去猜按钮写什么，
       // 于是"穿上"被写成"执行"、满级条目也是"执行"。
+      // 另加 icon（Task 17）：四种动作说的是同一件东西，统一指向
+      // 'eq-<部位>-<id>' —— 也就是它穿在英雄身上的那张贴图。按动作类型
+      // 分别配色/换图会让玩家以为"升级"和"卸掉"是两件不同的装备。
       C.EQUIP_SLOTS.forEach(function (slot) {
         const ids = Object.keys(C.ALL_EQUIPMENT).filter(function (id) {
           return C.equipDef(id).slot === slot;
@@ -233,6 +250,7 @@
               enabled: up !== null && !poor,
               disabledReason: up === null ? '已满级 Lv.' + lv : (poor ? '铜币不够' : ''),
               ultimate: ult,
+              icon: 'eq-' + slot + '-' + id,
               payload: { id: id, slot: slot },
             });
             out.push({
@@ -245,6 +263,7 @@
               enabled: true,
               disabledReason: '',
               ultimate: ult,
+              icon: 'eq-' + slot + '-' + id,
               payload: { id: id, slot: slot },
             });
           } else if (owned === 'owned') {
@@ -262,6 +281,7 @@
               enabled: true,
               disabledReason: '',
               ultimate: ult,
+              icon: 'eq-' + slot + '-' + id,
               payload: { id: id, slot: slot, uid: entry ? entry.uid : undefined },
             });
           } else {
@@ -277,6 +297,7 @@
               enabled: !poor,
               disabledReason: poor ? '铜币不够' : '',
               ultimate: ult,
+              icon: 'eq-' + slot + '-' + id,
               payload: { id: id, slot: slot },
             });
           }
@@ -319,6 +340,13 @@
         if (filter === 'worn') return held === 'equipped';
         return true;   // 未知页签退化为不过滤：宁可多显示，也别给一片空白
       });
+    }
+    // 铁匠铺页签：全部 / 攻击 / 生存 / 机动（Task 17）。
+    // 和兵器架同一套口径：filter 缺省或 'all' 不过滤、未知分类退化为不过滤。
+    // 只是这一屏只有三行，"多显示几条"的代价远小于"配错 id 就整页空白"。
+    if (zoneId === 'anvil' && filter && filter !== 'all'
+        && UPGRADE_CATS.indexOf(filter) >= 0) {
+      out = out.filter(function (a) { return a.cat === filter; });
     }
     return out;
   }

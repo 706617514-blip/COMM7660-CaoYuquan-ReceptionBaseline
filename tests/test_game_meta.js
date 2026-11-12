@@ -516,6 +516,80 @@ section('兵器架页签：全部 / 未拥有 / 已拥有 / 已穿戴 / 特殊')
      H.zoneActions(s, 'forgewear').length, '未知页签退化为不过滤（不白屏）');
 }
 
+section('铁匠铺分类与图标：cat / icon / 分类过滤（Task 17）');
+{
+  const s = L.createState(4331);
+  H.ensureHub(s);
+  s.meta.coins = 5000;
+
+  const anvil = H.zoneActions(s, 'anvil');
+  eq(anvil.length, 3, '铁匠铺仍是三条强化');
+  eq(anvil.map(function (a) { return a.payload.key; }).join(','), 'damage,maxHp,speed',
+     '强化顺序不变（分类与图标按这个顺序对齐）');
+  // 没有分类字段的话，页签无从过滤；没有图标键的话，UI 不知道该贴哪张图。
+  eq(anvil.map(function (a) { return a.cat; }).join(','), 'attack,defense,move',
+     '三条各自带分类（damage→attack / maxHp→defense / speed→move）');
+  eq(anvil.map(function (a) { return a.icon; }).join(','), 'ic-damage,ic-maxHp,ic-speed',
+     '三条各自带图标键（UI 靠它取贴图）');
+
+  // 页签必须真的过滤，而不是挂个 cat 字段让 UI 自己去猜
+  const keysOf = function (filter) {
+    return H.zoneActions(s, 'anvil', filter).map(function (a) { return a.payload.key; }).join(',');
+  };
+  eq(keysOf('attack'), 'damage', '页签「攻击」只剩锋刃');
+  eq(keysOf('defense'), 'maxHp', '页签「生存」只剩耐力');
+  eq(keysOf('move'), 'speed', '页签「机动」只剩轻步');
+  eq(keysOf('all'), 'damage,maxHp,speed', '页签「全部」不过滤');
+  eq(keysOf(undefined), 'damage,maxHp,speed', 'filter 缺省不过滤（老调用不受影响）');
+  eq(H.zoneActions(s, 'anvil', '不存在').length, anvil.length,
+     '未知分类退化为不过滤（与兵器架同一口径：宁可多显示，也别给一片空白）');
+
+  // 过滤只影响"显示哪几条"，不能顺手改掉动作本身
+  const rich = L.createState(4332);
+  H.ensureHub(rich);
+  rich.meta.coins = 5000;
+  const dmg = H.zoneActions(rich, 'anvil', 'attack')[0];
+  ok(dmg.enabled, '分类过滤出来的动作仍然可用（过滤不改 enabled）');
+  ok(H.perform(rich, dmg).ok, '分类过滤出来的动作能真的执行');
+  eq(rich.meta.upgrades.damage, 1, '执行后锋刃等级 +1');
+}
+
+section('兵器架每行带装备贴图键（Task 17 / 设计 §5.1 欠账）');
+{
+  const s = L.createState(4333);
+  H.ensureHub(s);
+  s.meta.coins = 5000;
+  const all = H.zoneActions(s, 'forgewear');
+  const total = Object.keys(C.ALL_EQUIPMENT).length;
+  eq(all.length, total, '兵器架仍列全部 ' + total + ' 件（加图标不改行数）');
+
+  const wrong = all.filter(function (a) {
+    return a.icon !== 'eq-' + a.payload.slot + '-' + a.payload.id;
+  });
+  eq(wrong.length, 0, '每行 icon 都是 eq-<slot>-<id>（' + total + ' 行全中）',
+     wrong.slice(0, 3).map(function (a) { return a.label + '→' + a.icon; }).join(' '));
+  // 抽查三个不同部位：全部拿同一个部位的 key 也能让上面那条瞎绿
+  const iconOf = function (id) {
+    const hit = all.filter(function (a) { return a.payload.id === id; })[0];
+    return hit ? hit.icon : null;
+  };
+  eq(iconOf('leatherHelm'), 'eq-head-leatherHelm', '头部：皮盔的图标键带 head');
+  eq(iconOf('crystalStaff'), 'eq-weapon-crystalStaff', '武器：棱晶杖的图标键带 weapon');
+  eq(iconOf('strawShoes'), 'eq-feet-strawShoes', '脚部：草鞋的图标键带 feet');
+  const uniq = new Set(all.map(function (a) { return a.icon; }));
+  eq(uniq.size, total, '35 个图标键两两不同（不是全贴同一张图）', uniq.size + ' 个唯一键');
+
+  // 加 icon 不能顺手改了动作语义。下面三条是**改图标前实测**的快照
+  // （commit acd36bc，state=createState(4327)、coins 5000），原样钉住。
+  const snap = function (id) {
+    const hit = all.filter(function (a) { return a.payload.id === id; })[0] || {};
+    return [hit.kind, hit.label, hit.cost, hit.enabled, hit.verb].join('|');
+  };
+  eq(snap('leatherHelm'), 'equip-buy|皮盔|80|true|购买', '皮盔动作字段与加图标前一致');
+  eq(snap('crystalStaff'), 'equip-buy|棱晶杖|900|true|购买', '棱晶杖动作字段与加图标前一致');
+  eq(snap('strawShoes'), 'equip-buy|草鞋|80|true|购买', '草鞋动作字段与加图标前一致');
+}
+
 // ---------------------------------------------------------------- 汇总
 console.log('\n' + '='.repeat(56));
 if (fail === 0) {

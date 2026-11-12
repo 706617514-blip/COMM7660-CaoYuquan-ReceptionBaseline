@@ -104,6 +104,11 @@
     border-radius:10px;background:#141b24;border:1px solid #232f3c;margin-bottom:8px}
   .act.ult{border-color:#4b3a24;background:#1b1610}
   .act .txt{flex:1;min-width:0}
+  /* 行首贴图（Task 17）。图标是 28×28 烘出来的像素图，放大时用 pixelated 保住
+     边缘；靠 .act 的 gap 与右侧文字隔开，不再额外加 margin（否则两处相加变 22px）。
+     固定宽高是为了"有图/没图"两行左缘对齐 —— 尺寸随内容变会让整列参差。 */
+  .act .ico{width:28px;height:42px;object-fit:contain;image-rendering:pixelated;
+    flex:0 0 auto}
   .act .t{font-size:13.5px;color:#e6eef6}
   .act .s{font-size:11px;color:var(--dim);margin-top:3px;line-height:1.45}
   .act .why{font-size:11px;color:var(--red);margin-top:3px}
@@ -566,6 +571,7 @@
 
 <script src="vendor/phaser.min.js"></script>
 <script src="config.js"></script>
+<script src="sprites.js"></script>
 <script src="audio.js"></script>
 <script src="logic.js"></script>
 <script src="profile.js"></script>
@@ -731,30 +737,56 @@
   }
 
   // ---------------------------------------------------------------
-  // 兵器架页签（V14）：全部 / 未拥有 / 已拥有 / 已穿戴 / 特殊
+  // 面板页签：按区域配
   //
   // 为什么要有：改造前"买过的"和"没买的"、"穿着的"和"躺背包的"全混在
   // 一屏 35 行里，玩家想找"我还能买什么"得从头滑到尾。页签只影响显示，
   // 不改变下面每一行的动作（三态仍由装备状态决定）。
+  //
+  // 铁匠铺是同一类问题（Task 17）：三项强化里"加伤害"和"加移速"是两种完全
+  // 不同的需求，混在一屏只能靠读说明分辨 —— 按加成方向分三页。
+  // 键是**区域 id**：没配置的区域不渲染页签条（祭坛 / 药水铺 / 门 / 田地）。
   // ---------------------------------------------------------------
-  const PANEL_TABS = [
-    { id: 'all', label: '全部' },
-    { id: 'unowned', label: '未拥有' },
-    { id: 'owned', label: '已拥有' },
-    { id: 'worn', label: '已穿戴' },
-    { id: 'special', label: '特殊' },
-  ];
+  const PANEL_TABS = {
+    forgewear: [
+      { id: 'all', label: '全部' },
+      { id: 'unowned', label: '未拥有' },
+      { id: 'owned', label: '已拥有' },
+      { id: 'worn', label: '已穿戴' },
+      { id: 'special', label: '特殊' },
+    ],
+    anvil: [
+      { id: 'all', label: '全部' },
+      { id: 'attack', label: '攻击' },
+      { id: 'defense', label: '生存' },
+      { id: 'move', label: '机动' },
+    ],
+  };
   const panelTab = {};          // zoneId -> 当前页签 id
 
+  /**
+   * 某个区域的页签配置（拷贝一份：外部改返回值不会污染配置本身）。
+   * 没有配置的区域返回空数组 —— 渲染端据此决定"不画页签条"。
+   */
+  function panelTabsFor(zoneId) {
+    const list = PANEL_TABS[zoneId];
+    if (!list) return [];
+    return list.map(function (t) { return { id: t.id, label: t.label }; });
+  }
+
   function currentTab(zoneId) {
-    return panelTab[zoneId] || 'all';
+    const list = PANEL_TABS[zoneId] || [];
+    const cur = panelTab[zoneId] || 'all';
+    // 配置里没有这个 id（改过配置、或存档里留着旧页签）就退回第一页：
+    // 否则会停在一个"选不中任何按钮、却仍被当 filter 传下去"的状态。
+    return list.some(function (t) { return t.id === cur; }) ? cur : 'all';
   }
 
   function makeTabs(zone, s) {
     const bar = document.createElement('div');
     bar.className = 'tabs';
     const cur = currentTab(zone.id);
-    PANEL_TABS.forEach(function (t) {
+    panelTabsFor(zone.id).forEach(function (t) {
       const b = document.createElement('button');
       b.className = 'tab' + (t.id === cur ? ' on' : '');
       b.textContent = t.label;
@@ -782,6 +814,24 @@
     return (a.cost === null || a.cost === undefined || a.cost === 0) ? '执行' : String(a.cost);
   }
 
+  /**
+   * 一行动作要渲染成什么（Task 17）。
+   *
+   * 抽出来是为了让"渲染规则"能被单测钉住：DOM 桩里数不到像素，但能读到
+   * "这一行会不会带图、按钮写什么、为什么不能点"。渲染与判定共用这一份，
+   * 免得 refreshPanel 里再长出一套并行逻辑、两边慢慢漂开。
+   */
+  function panelRowModel(a) {
+    return {
+      iconKey: (a && a.icon) || null,
+      label: (a && a.label) || '',
+      sub: (a && a.sub) || '',
+      buttonText: panelButtonText(a || {}),
+      enabled: !!(a && a.enabled),
+      disabledReason: (a && !a.enabled && a.disabledReason) || '',
+    };
+  }
+
   function refreshPanel(zone, s) {
     if (!panelCallback) return;
     const body = $('panelBody');
@@ -797,17 +847,34 @@
       '　被动 <b style="color:#e8b04b">+' + L.passiveIncome(s) + '</b>/局';
     body.appendChild(res);
 
-    // 兵器架才有"拥有 / 穿戴"这个维度，别的区域挂页签只会多一层噪音
-    if (zone.id === 'forgewear') body.appendChild(makeTabs(zone, s));
+    // 页签只出现在配了页签的区域（兵器架 / 铁匠铺）。
+    // 兵器架是"拥有 / 穿戴"这个维度，铁匠铺是"加成方向"，
+    // 别的区域挂页签只会多一层噪音。
+    if (panelTabsFor(zone.id).length) body.appendChild(makeTabs(zone, s));
 
     actions.forEach(function (a) {
+      const m = panelRowModel(a);
       const row = document.createElement('div');
       row.className = 'act' + (a.ultimate ? ' ult' : '');
+
+      // 行首贴图（Task 17）。取不到 dataURL 就**不插节点**：
+      // 插一个 src 为空的 <img> 在浏览器里会画出一个破图框，
+      // 比"这一行只有文字"难看得多。
+      const iconUrl = m.iconKey ? window.SpriteLib.url(m.iconKey) : null;
+      if (iconUrl) {
+        const ico = document.createElement('img');
+        ico.className = 'ico';
+        ico.src = iconUrl;
+        ico.alt = '';            // 纯装饰：名字就在右边文字里，读屏不该读两遍
+        ico.draggable = false;   // 拖拽会顺带把整个面板选中
+        row.appendChild(ico);
+      }
+
       const txt = document.createElement('div');
       txt.className = 'txt';
-      let html = '<div class="t">' + a.label + '</div>';
-      if (a.sub) html += '<div class="s">' + a.sub + '</div>';
-      if (!a.enabled && a.disabledReason) html += '<div class="why">' + a.disabledReason + '</div>';
+      let html = '<div class="t">' + m.label + '</div>';
+      if (m.sub) html += '<div class="s">' + m.sub + '</div>';
+      if (m.disabledReason) html += '<div class="why">' + m.disabledReason + '</div>';
       txt.innerHTML = html;
 
       const btn = document.createElement('button');
@@ -816,8 +883,8 @@
       const isBoss = a.kind === 'boss';
       btn.className = 'buy' + (a.ultimate ? ' ult' : '')
         + (a.kind === 'run' ? ' free' : '') + (isBoss ? ' danger' : '');
-      btn.textContent = panelButtonText(a);
-      btn.disabled = !a.enabled;
+      btn.textContent = m.buttonText;
+      btn.disabled = !m.enabled;
       btn.addEventListener('click', function () { panelCallback.onAction(a); });
 
       row.appendChild(txt);
@@ -1150,6 +1217,10 @@
 
   window.EmberfieldUI = {
     openPanel: openPanel, refreshPanel: refreshPanel, closePanel: closePanel,
+    // 面板的两个纯函数（Task 17）：页签配置与单行模型。
+    // 导出是为了让"铁匠铺有哪几页、每行按钮写什么"能被单测直接钉住，
+    // 而不必在 DOM 桩里反推字符串。
+    panelTabsFor: panelTabsFor, panelRowModel: panelRowModel,
     toast: toast, showHud: showHud, updateHud: updateHud, showResult: showResult, save: save,
     // ESC 菜单（Task 13）：场景只调这四个 + isEscOpen/isEscSettings
     openEsc: openEsc, closeEsc: closeEsc,

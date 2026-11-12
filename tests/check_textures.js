@@ -62,6 +62,18 @@ for (const m of src.matchAll(/\{\s*[a-z]+:\s*\{[^}]*?name:[^}]*?\}/g)) { /* noop
 // generateTexture 字面量扫描看不到这些 key —— 必须单独把 equipLayer
 // 的调用点抓出来，否则 35 件装备全部会被误报成"缺少贴图"。
 for (const m of src.matchAll(new RegExp(`equipLayer\\('(${KEY_RE})'`, 'g'))) made.add(m[1]);
+// ---- 面板图标（Task 17）：同一类问题 ----
+// upgradeIcon('ic-...') 里 generateTexture 收到的也是变量，上面的字面量扫描
+// 看不到这些 key。漏画一个图标的表现是"铁匠铺那一行行首少张图"，控制台零报错
+// —— 和装备贴图漏画一样静默，所以要在这里登记进来。
+const panelIconKeys = [];
+for (const m of src.matchAll(new RegExp(`upgradeIcon\\('(${KEY_RE})'`, 'g'))) {
+  made.add(m[1]);
+  panelIconKeys.push(m[1]);
+}
+// 这些 key 由 hub.js 的 'ic-' + key 拼出来引用，登记为"已引用"，
+// 否则会全被刷进"可清理"列表（那是给调试看的，不该被这些误报占满）。
+panelIconKeys.forEach((k) => { if (!used.has(k)) used.set(k, 'hub.js anvil icon'); });
 // refreshHeroEquip 里生成 'eq-<slot>-<id>'，所以必须按配置逐件展开比对。
 // 不做这一步的话，把某件装备的贴图名打错（或漏画一件）会完全静默：
 // 玩家穿上那件装备后什么都不显示，控制台零报错，正是这个测试要防的故障。
@@ -82,6 +94,26 @@ const equipMissing = equipKeys.filter((e) => !made.has(e.key));
 equipKeys.forEach((e) => { if (!used.has(e.key)) used.set(e.key, 'refreshHeroEquip'); });
 
 const missing = [...used.keys()].filter((k) => !made.has(k));
+
+// 铁匠铺每一步强化都必须有图标：hub.js 用 'ic-' + key 拼名字（config.UPGRADES
+// 的键）。少画一张、或把键名改成 ic-hp，画面上只是"那一行没有图"，
+// 控制台一声不响 —— 正是这个静态护栏该兜住的那类静默故障。
+{
+  const C0 = require(path.join(__dirname, '..', 'game', 'config.js'));
+  const wantIcons = Object.keys(C0.UPGRADES).map((k) => 'ic-' + k);
+  const iconMissing = wantIcons.filter((k) => !made.has(k));
+  if (iconMissing.length) {
+    console.log('');
+    iconMissing.forEach((k) => {
+      console.log(`  FAIL  强化项缺少面板图标 '${k}'（hub.js 里是 'ic-' + key 拼出来的）`);
+      console.log('        那一行会没有图，Phaser 与浏览器都不报错。');
+    });
+    console.log('');
+    console.log(`失败：${iconMissing.length} 个强化图标缺失`);
+    process.exit(1);
+  }
+  console.log(`  强化面板图标: ${wantIcons.length} 个全部有对应贴图 ✓`);
+}
 
 if (equipMissing.length) {
   console.log('');
