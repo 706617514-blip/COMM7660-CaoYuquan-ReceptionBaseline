@@ -531,22 +531,33 @@
 
   // ---------------------------------------------------------------- 整理与页签过滤（§4.5）
   /**
-   * 排序键的四段优先级（设计 §4.5，顺序不可调换）：
+   * 排序键的五段优先级（设计 §4.5 + Task 20 补的稀有度一层，顺序不可调换）：
    *   1. 特效装备在前、基础装备在后
-   *   2. 部位序 head → torso → back → weapon → feet
-   *   3. 等级**降序**（高的在前）
-   *   4. id 字典序 —— 前三条全并列时兜底，保证「同输入同输出」
+   *   2. 稀有度 tier **升序**（低的在前 —— PM：「按稀有度从低到高排」）
+   *   3. 部位序 head → torso → back → weapon → feet
+   *   4. 等级**降序**（高的在前）
+   *   5. id 字典序 —— 前四条全并列时兜底，保证「同输入同输出」
    *
-   * 前三段决定的是"哪一类排前面"，第四段才决定"同一类里谁先谁后"。
-   * 只看前两段就够把同 id 排在一起：同 id 必然同 kind、同 slot，
+   * 第 2 段是 Task 20 补的：改前只有 kindRank → slotRank → level → id，
+   * 于是同为 base、同为武器位、同为 Lv1 时，rustySword(tier 0) 与
+   * crystalStaff(tier 4) 只按 id 字典序排，「先低级后高级」根本不成立。
+   *
+   * 前几段决定的是"哪一类排前面"，末段才决定"同一类里谁先谁后"。
+   * 只看前两段就够把同 id 排在一起：同 id 必然同 kind、同 slot、同 tier，
    * 中间不可能夹进别的 id（等级/字典序只在同类内部起作用）。
    */
   function bagSortKey(entry) {
     const def = C.equipDef(entry.id);
     const special = !!(def && def.kind === 'special');
     const slotRank = def ? C.EQUIP_SLOTS.indexOf(def.slot) : -1;
+    // 稀有度一层（PM：整理要「按稀有度从低到高排」）。
+    // special 件没有 tier 字段（14 件全是 undefined），它们本来就靠 kindRank
+    // 排在最前，给它们 Infinity 不会改变这个结果 —— 而如果写死成 0，
+    // 就等于宣称"特殊件稀有度最低"，那是反的。
+    const tier = def && typeof def.tier === 'number' ? def.tier : Infinity;
     return {
       kindRank: special ? 0 : 1,
+      tier: tier,
       // 查不到部位（含未知 id）排到最后，而不是因为 -1 就插到队首。
       slotRank: slotRank < 0 ? C.EQUIP_SLOTS.length : slotRank,
       level: entry.level || 1,
@@ -558,7 +569,7 @@
    * 原地整理背包（设计 §4.5）。返回 void —— 排序是背包自身的状态变更，
    * 不产生新数组，否则调用方拿到的副本和真实背包会分叉。
    *
-   * V8 的 Array.prototype.sort 已稳定，四段比较链写完之后，
+   * V8 的 Array.prototype.sort 已稳定，五段比较链写完之后，
    * 完全相同的条目之间也保持原有相对顺序，「同输入同输出」由比较链本身保证。
    */
   function sortBag(state) {
@@ -567,6 +578,7 @@
     bag.sort(function (a, b) {
       const ka = bagSortKey(a), kb = bagSortKey(b);
       if (ka.kindRank !== kb.kindRank) return ka.kindRank - kb.kindRank;
+      if (ka.tier !== kb.tier) return ka.tier - kb.tier;
       if (ka.slotRank !== kb.slotRank) return ka.slotRank - kb.slotRank;
       if (ka.level !== kb.level) return kb.level - ka.level;
       return ka.id < kb.id ? -1 : (ka.id > kb.id ? 1 : 0);

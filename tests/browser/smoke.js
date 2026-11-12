@@ -1961,6 +1961,95 @@ const SCRIPT = `
     }
   }
 
+  // ---- 药水铺卖「背包页数+1」：真浏览器里点得到、买得着（Task 20）----
+  /*
+   * 本节量的是"需求原文指定的那条路径真的通了"：PM 要的是在药水铺卖扩容，
+   * 而改前药水铺只有三瓶药水，扩容只能从背包面板的 +扩容 点 —— 药水铺这条
+   * 路径根本没接。逻辑层由 test_game_meta.js 的 6c 节钉；这里钉的是渲染层：
+   * 行渲染出来没有、按钮写的是什么、点下去 meta 是不是真的变了。
+   *
+   * 本段整体在 SCRIPT 模板字符串里：注释里一个反引号都不许写，
+   * 正则里不许出现单个反斜杠。
+   */
+  {
+    const stB = window.EmberfieldApp.__state;
+    const hubB = globalThis.__game.scene.getScene('Hub');
+    window.BagHud.close();
+    hubB.panelOpen = false;
+    window.EmberfieldUI.closePanel();
+    await wait(200);
+
+    // 站到药水铺上（x/z 取 ZONES 里的真值，别写死坐标）
+    const shopZone = (window.GameHub.ZONES || []).filter(function (z) {
+      return z.id === 'shop';
+    })[0];
+    stB.hub.x = shopZone ? shopZone.x : 565;
+    stB.hub.z = shopZone ? shopZone.z : 122;
+    await wait(300);
+    out.t20ShopZone = (window.GameHub.zoneAt(stB) || {}).id || null;
+
+    // 把钱包和页数摆到确定状态：1 页、钱刚好够买第 2 页（200）
+    stB.meta.bagPages = 1;
+    stB.meta.coins = 1000;
+    const coinsBeforeBuy = stB.meta.coins;
+    const pagesBeforeBuy = stB.meta.bagPages;
+
+    hubB.panelOpen = true;
+    hubB.showPanel(window.GameHub.zoneById('shop'));
+    await wait(260);
+
+    const rowsB = document.querySelectorAll('#panelBody .act');
+    out.t20Rows = rowsB.length;
+    out.t20ShopTabs = document.querySelectorAll('#panel .tabs button').length;
+    const lastB = rowsB[rowsB.length - 1];
+    out.t20LastLabel = lastB
+      ? (lastB.querySelector('.t') ? lastB.querySelector('.t').textContent : null) : null;
+    out.t20LastSub = lastB
+      ? (lastB.querySelector('.s') ? lastB.querySelector('.s').textContent : null) : null;
+    const btnB = lastB ? lastB.querySelector('button') : null;
+    out.t20BtnText = btnB ? String(btnB.textContent) : null;
+    out.t20BtnDisabled = btnB ? !!btnB.disabled : null;
+    // 按钮矩形也记下来：截图之外还能证明"这颗按钮真的有可点面积"
+    if (btnB) {
+      const rb = btnB.getBoundingClientRect();
+      out.t20BtnRect = { left: Math.round(rb.left), top: Math.round(rb.top),
+        w: Math.round(rb.width), h: Math.round(rb.height) };
+    }
+    // 每行的标签文本（四行齐全的证据）
+    out.t20AllLabels = Array.prototype.slice.call(rowsB).map(function (r) {
+      const t = r.querySelector('.t');
+      return t ? t.textContent : null;
+    }).join('/');
+
+    // 真的点一下 —— 这是 A5 第 4 条：从 UI 能买到，不是只有 logic 层通
+    if (btnB) { btnB.click(); await wait(320); }
+    out.t20CoinsAfter = stB.meta.coins;
+    out.t20CoinsBefore = coinsBeforeBuy;
+    out.t20PagesAfter = stB.meta.bagPages;
+    out.t20PagesBefore = pagesBeforeBuy;
+    out.t20CoinsDelta = coinsBeforeBuy - stB.meta.coins;
+
+    // 点完面板会同步刷新（showPanel 的 onAction 会调 refreshPanel）：
+    // 最后一行的价格必须跳到 500 —— 证明刷新读到的是新状态。
+    const rowsB2 = document.querySelectorAll('#panelBody .act');
+    const lastB2 = rowsB2[rowsB2.length - 1];
+    out.t20RowsAfter = rowsB2.length;
+    out.t20LabelAfter = lastB2
+      ? (lastB2.querySelector('.t') ? lastB2.querySelector('.t').textContent : null) : null;
+    const btnB2 = lastB2 ? lastB2.querySelector('button') : null;
+    out.t20BtnTextAfter = btnB2 ? String(btnB2.textContent) : null;
+    out.t20SubAfter = lastB2
+      ? (lastB2.querySelector('.s') ? lastB2.querySelector('.s').textContent : null) : null;
+
+    // 面板里的异常也要收：driver 的 console-message 只收 level===3，
+    // 场景/渲染里抛出但没冒到 console 的错会漏掉（沿用 3e 段的 __pageErrs 口径）。
+    out.t20Errs = window.__pageErrs ? window.__pageErrs.length : 0;
+
+    hubB.panelOpen = false;
+    window.EmberfieldUI.closePanel();
+    await wait(150);
+  }
+
   // ---- 面板开着时缩小窗口：先把大窗口下的矩形记下来（Task 10c）----
   // 主段结束时必须保持面板打开，driver 会在 RESULT 之后把窗口缩到 520x420，
   // 再由 RESIZESCRIPT 量一次。这里记的是反证素材：如果"缩小前有一截在 520
@@ -2357,6 +2446,43 @@ const SMALLSCRIPT = `
   eq(t19.dollRaw, 6, '纸娃娃那 6 张仍是 40x60 整身画布（这层刻意没改，改了就和场景里的角色对不上）');
   eq(t19.restoredBag, t19.snapBag, '量完把背包还原（不污染后面的用例）');
   eq(t19.restoredEq, t19.snapEq, '量完把穿戴还原（不污染后面的用例）');
+
+  console.log('\n--- 3d-6. 药水铺卖「背包页数+1」（Task 20）---');
+  /*
+   * PM 原话「在药水铺卖一个『背包页数+1』的道具」。改前药水铺只有三瓶药水，
+   * 扩容只能从背包面板的 +扩容 点 —— 需求指定的那条入口是空的。
+   * 这一节在真浏览器里量四件事：行出来了、文案对、按钮写"购买 · 200"、
+   * 点下去 meta 真的变了（页数 +1、铜币 -200）。逻辑层由 test_game_meta 的
+   * 6c 节钉，这一节钉的是"渲染 + 点击这条链真的通"。
+   */
+  eq(r.t20ShopZone, 'shop', '站到了药水铺（站错地方下面全是在量别处）');
+  eq(r.t20Rows, 4, '药水铺面板 = 三瓶药水 + 一行扩容（改前 3 行）');
+  eq(r.t20ShopTabs, 0, '药水铺没有页签条（本轮刻意不加，改了这条会响）');
+  eq(r.t20AllLabels, '治疗药水/力量药水/护盾药水/背包页数+1',
+     '四行标签依次是三种药水 + 扩容（扩容在最后一行）');
+  eq(r.t20LastLabel, '背包页数+1', '最后一行的标签就是需求原文那五个字');
+  ok(typeof r.t20LastSub === 'string' && r.t20LastSub.indexOf('当前 1/6 页') >= 0,
+     '说明行写出当前页数（1 页时）', r.t20LastSub);
+  ok(typeof r.t20BtnText === 'string' && r.t20BtnText.indexOf('购买 · ') === 0,
+     '按钮写「购买 · 价格」（不是纯数字、不是「执行」）', r.t20BtnText);
+  eq(r.t20BtnDisabled, false, '钱够（1000 >= 200）时按钮可点');
+  ok(r.t20BtnRect && r.t20BtnRect.w > 0 && r.t20BtnRect.h > 0,
+     '按钮真的有可点面积（不是 0 尺寸的幽灵按钮）', JSON.stringify(r.t20BtnRect));
+
+  // A5 第 4 条：从 UI 真的能买到
+  eq(r.t20PagesBefore, 1, '点之前是 1 页（下面 +1 才有意义）');
+  eq(r.t20PagesAfter, 2, '点一下扩容按钮后页数变成 2（UI 这条路真的通）');
+  eq(r.t20CoinsBefore, 1000, '点之前的铜币是这个数（下面 -200 才是可核对的）');
+  eq(r.t20CoinsAfter, 800, '铜币正好少 200（不多不少）');
+  eq(r.t20CoinsDelta, 200, '扣款额 = pagePrices[1]');
+
+  // 点完面板同步刷新：价格跳到 500，说明读的是买完后的新状态
+  eq(r.t20RowsAfter, 4, '买完面板仍是 4 行（扩容行没消失、也没裂成两行）');
+  eq(r.t20LabelAfter, '背包页数+1', '买完最后一行还是扩容行');
+  ok(typeof r.t20BtnTextAfter === 'string' && r.t20BtnTextAfter.indexOf('购买 · 500') === 0,
+     '买完按钮价格跳到 500（跟着页数走）', r.t20BtnTextAfter);
+  ok(typeof r.t20SubAfter === 'string' && r.t20SubAfter.indexOf('当前 2/6 页') >= 0,
+     '买完说明行的当前页数变成 2', r.t20SubAfter);
 
   console.log('\n--- 3e. 按 J 进田地：不能卡在黑屏 ---');
   eq(r.fieldZoneId, 'field', '站在田地区域上（不然按 J 进不去）');

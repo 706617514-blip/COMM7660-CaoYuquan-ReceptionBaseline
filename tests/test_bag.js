@@ -589,6 +589,99 @@ group('整理排序与页签过滤（V10、V11）', function(){
   ok(L.bagFilter(s.meta.bag, 'weapon').length === 0, '空分类返回空数组而不是报错');
 });
 
+// ---------------------------------------------------------------- 整理与稀有度（Task 20）
+section('整理排序纳入稀有度 tier（Task 20）');
+group('整理排序纳入稀有度 tier（Task 20）', function(){
+  /*
+   * PM 原话「整理按钮（按稀有度从低到高排）」，但改前 bagSortKey 只有
+   * kindRank → slotRank → level 降序 → id，**没有 tier**。后果：同为 base、
+   * 同为武器位、同为 Lv1 时，rustySword(tier 0) 与 crystalStaff(tier 4) 只按
+   * id 字典序排 —— 玩家点「整理」看到的不是「先低级后高级」。
+   *
+   * 期望顺序是**先说清再断言**（上一批有过"按实现设计写断言"的教训）。
+   * 比较链：kindRank(special 先) → tier 升序 → slotRank(EQUIP_SLOTS 顺序) →
+   * level 降序 → id 升序。
+   * EQUIP_SLOTS = ['head','torso','back','weapon','feet']，所以
+   * slotRank: head=0 torso=1 back=2 weapon=3 feet=4。
+   */
+
+  // (1) tier 生效：这是"当前状态下的反例" —— 改前排的是 ironHelm(1) 在
+  //     leatherHelm(0) 前（因为同 slot、靠 id 字典序 ironHelm < leatherHelm），
+  //     而按稀有度应当 tier0 的皮盔在前、tier1 的铁盔在后。
+  const t = L.createState(42);
+  t.meta.coins = 999999;
+  L.bagAdd(t, 'crystalStaff', 1);   // base, weapon, tier 4
+  L.bagAdd(t, 'rustySword', 1);     // base, weapon, tier 0
+  L.bagAdd(t, 'ironHelm', 1);       // base, head,   tier 1
+  L.sortBag(t);
+
+  const seq = t.meta.bag.filter((e) => C.equipDef(e.id).kind !== 'special')
+    .map((e) => C.equipDef(e.id).tier);
+  ok(seq.every((v, i) => i === 0 || v >= seq[i - 1]),
+     '基础件按稀有度从低到高（tier 单调不减）', JSON.stringify(seq));
+  ok(t.meta.bag[0].id === 'rustySword',
+     '最低稀有度的锈剑排在最前（改前 crystalStaff/ironHelm 靠 id 抢占前面）',
+     t.meta.bag.map((e) => e.id).join(','));
+
+  // (2) 同 tier 内仍按部位：皮盔(tier0,head) 与 锈剑(tier0,weapon)
+  const t2 = L.createState(43);
+  L.bagAdd(t2, 'rustySword', 1);    // tier0, weapon (slotRank 3)
+  L.bagAdd(t2, 'leatherHelm', 1);   // tier0, head   (slotRank 0)
+  L.sortBag(t2);
+  eq(t2.meta.bag.map((e) => e.id).join(','), 'leatherHelm,rustySword',
+     '同为 tier 0 时按 EQUIP_SLOTS 顺序：head 在 weapon 前');
+
+  // (3) 同 tier 同部位仍按等级降序：两件锈剑 Lv1 / Lv3 → Lv3 在前
+  const t3 = L.createState(44);
+  L.bagAdd(t3, 'rustySword', 1);
+  L.bagAdd(t3, 'rustySword', 3);
+  L.sortBag(t3);
+  eq(t3.meta.bag[0].level, 3, '同为 tier 0 同为武器位时，等级高的在前');
+  eq(t3.meta.bag[1].level, 1, '等级低的在后');
+
+  // (4) special 仍整体在 base 之前（kindRank 不能被 tier 顶掉）
+  const t4 = L.createState(45);
+  L.bagAdd(t4, 'crystalStaff', 1);  // base, tier 4
+  L.bagAdd(t4, 'thornMail', 1);     // special, tier undefined
+  L.bagAdd(t4, 'rustySword', 1);    // base, tier 0
+  L.sortBag(t4);
+  eq(t4.meta.bag[0].id, 'thornMail',
+     '特殊件仍排在所有基础件之前（kindRank 优先于 tier）');
+  eq(t4.meta.bag.map((e) => e.id).join(','), 'thornMail,rustySword,crystalStaff',
+     '特殊件在前，其后基础件按 tier 升序（锈剑 tier0 在棱晶杖 tier4 前）');
+
+  // (5) 稳定性：两个完全相同的条目（同 id 同 level）相对顺序不变。
+  //     用 uid 认"哪一件是原来那一件" —— 排序前后 uid 序列应当一致。
+  const t5 = L.createState(46);
+  L.bagAdd(t5, 'ironHelm', 2);
+  L.bagAdd(t5, 'ironHelm', 2);
+  const uidsBefore = t5.meta.bag.map((e) => e.uid).join(',');
+  L.sortBag(t5);
+  eq(t5.meta.bag.map((e) => e.uid).join(','), uidsBefore,
+     '两个完全相同的条目排序前后相对顺序不变（稳定）');
+  eq(t5.meta.bag.length, 2, '稳定性断言的前提成立：确实有两件');
+
+  // (6) 回归：tier 插进来之后，同 id 仍必须连续挨着（不独占行）
+  const t6 = L.createState(47);
+  L.bagAdd(t6, 'rustySword', 1);
+  L.bagAdd(t6, 'crystalStaff', 1);
+  L.bagAdd(t6, 'rustySword', 3);
+  L.bagAdd(t6, 'ironHelm', 1);
+  L.sortBag(t6);
+  const ids6 = t6.meta.bag.map((e) => e.id);
+  const grouped6 = ids6.every((id) => {
+    const seg = ids6.slice(ids6.indexOf(id), ids6.lastIndexOf(id) + 1);
+    return seg.every((x) => x === id);
+  });
+  ok(grouped6 === true, '加了 tier 之后同 id 仍连续挨着（不独占行）', ids6.join(','));
+  ok(ids6.filter((x) => x === 'rustySword').length === 2,
+     '前提成立：确实有两件锈剑，否则上一条是空转');
+  // tier 层生效后，同一条背包的期望顺序是：
+  //   rustySword Lv3(tier0) → rustySword Lv1(tier0) → ironHelm(tier1) → crystalStaff(tier4)
+  eq(ids6.join(','), 'rustySword,rustySword,ironHelm,crystalStaff',
+     '整条期望顺序：tier 升序，同 tier 内等级降序');
+});
+
 // ---------------------------------------------------------------- 汇总
 console.log('\n' + '='.repeat(56));
 if (fail === 0) {

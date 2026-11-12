@@ -205,6 +205,32 @@
           payload: { id: id },
         });
       });
+
+      // 背包扩容也摆在这里卖（需求：「在药水铺卖一个『背包页数+1』的道具」）。
+      // 放在三瓶药水之后，永远占一行 —— 背包面板里的「+扩容」按钮继续存在，
+      // 两条入口并存是预期，不是重复。
+      //
+      // 页数与价格都从逻辑层取，不在这儿重算：normBagPages 负责把存档里
+      // 越界/脏的 bagPages 规整回 1..maxPages，价格表 pagePrices 也归 BAG 配置。
+      // 在 hub 里另抄一份规整逻辑或价格表，迟早和 buyBagPage 漂开。
+      const pages = L.normBagPages(state.meta.bagPages);
+      const maxPages = C.BAG.maxPages;
+      const perPage = C.BAG.cellsPerPage;
+      const fullPages = pages >= maxPages;
+      const pageCost = fullPages ? null : C.BAG.pagePrices[pages];
+      const pagePoor = !fullPages && state.meta.coins < pageCost;
+      out.push({
+        kind: 'bag-page', id: 'bag-page', label: '背包页数+1',
+        sub: fullPages
+          ? '已解锁全部 ' + maxPages + ' 页 · 共 ' + (maxPages * perPage) + ' 格'
+          : '当前 ' + pages + '/' + maxPages + ' 页 · 解锁后 ' + ((pages + 1) * perPage) + ' 格',
+        cost: pageCost,
+        // verb 决定按钮文案：面板的 panelButtonText 见到 verb 就渲染成
+        // 「购买 · 价格」（与兵器架一致）；不给的话按钮会退化成裸数字。
+        verb: '购买',
+        enabled: !fullPages && !pagePoor,
+        disabledReason: fullPages ? '已解锁全部 ' + maxPages + ' 页' : (pagePoor ? '铜币不够' : ''),
+      });
     } else if (zoneId === 'forgewear') {
       // 兵器架：列出**全部 35 件**，包括买不起的和已拥有的。
       // 全列出来是有意的 —— 这里是玩家唯一能看到"还有什么装备、
@@ -369,6 +395,9 @@
       return { ok: n > 0, reason: n ? '' : '种子不够', planted: n };
     }
     if (action.kind === 'potion') return L.buyPotion(state, action.payload.id, 1);
+    // 扩容不在这儿算钱也不在这儿改页数：价格表、上限、扣款都在
+    // buyBagPage 一处，面板只是把那一行摆出来。这里再抄一遍就成了两套真相。
+    if (action.kind === 'bag-page') return L.buyBagPage(state);
     if (action.kind === 'equip-buy') return L.buyEquipment(state, action.payload.id);
     // uid 必须一路透传：同 id 的重复件各是各的，掉了 uid 就只能退回
     // "第一件同 id"，于是面板写的等级和实际穿/升的那件对不上。

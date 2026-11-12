@@ -210,8 +210,9 @@ section('6b. 药水铺（新增的第四个建筑）');
   const poor = L.createState(78);
   poor.meta.coins = 0;
   const acts = H.zoneActions(poor, 'shop');
-  eq(acts.length, C.POTION_ORDER.length, '药水铺列出全部三种药水');
-  eq(acts.map((a) => a.payload.id).join(','), C.POTION_ORDER.join(','), '顺序与配置一致');
+  eq(acts.length, C.POTION_ORDER.length + 1, '药水铺列出全部三种药水 + 一行扩容（Task 20）');
+  eq(acts.map((a) => a.payload && a.payload.id).filter(Boolean).join(','),
+     C.POTION_ORDER.join(','), '顺序与配置一致');
   ok(acts.every((a) => !a.enabled), '没钱时都不可购买');
   ok(acts.every((a) => typeof a.cost === 'number' && a.cost > 0), '每种药水都标价');
 
@@ -236,6 +237,134 @@ section('6b. 药水铺（新增的第四个建筑）');
 
   // sub 行要写清效果与上限，玩家不需要猜
   ok(acts2.every((a) => a.sub && a.sub.length > 0), '每种药水都有说明行');
+}
+
+section('6c. 药水铺卖「背包页数+1」（Task 20）');
+{
+  /*
+   * 为什么这一行必须出现在药水铺
+   * --------------------------
+   * PM 原话是「在药水铺卖一个『背包页数+1』的道具」，设计 §4.7 第三行也写着
+   * 「扩容商品 背包页数+1 出现在药水铺」。实测改前药水铺只有三瓶药水，
+   * L.buyBagPage / C.BAG.pagePrices / 背包面板的 +扩容 按钮全都写好了，
+   * 但玩家从药水铺这条路径根本够不到 —— 等于白送。这一节钉的是"补上了"。
+   *
+   * 价格表 C.BAG.pagePrices = [0, 200, 500, 1000, 2000, 5000]：
+   * 买第 2 页落在下标 1（=200），买第 3 页落在下标 2（=500），以此类推。
+   */
+  const shopActs = (s) => H.zoneActions(s, 'shop');
+
+  // (1) 新档药水铺 = 3 瓶药水 + 1 扩容，且扩容排在最后
+  const fresh = L.createState(901);
+  fresh.meta.coins = 9999;
+  const a1 = shopActs(fresh);
+  eq(a1.length, C.POTION_ORDER.length + 1, '药水铺行数 = 三瓶药水 + 一行扩容');
+  eq(a1.length, 4, '药水铺一共四行（这轮就是 3 + 1）');
+  const last1 = a1[a1.length - 1];
+  eq(last1 && last1.kind, 'bag-page', '最后一行是扩容商品（不是夹在药水中间）');
+  eq(last1 && last1.id, 'bag-page', '扩容行的 id 是稳定字符串 bag-page');
+
+  // (2) 文案一字不差
+  eq(last1 && last1.label, '背包页数+1', '标签就是需求原文里的那五个字');
+
+  // (3) 新档 1 页：收 pagePrices[1] = 200，钱够就能点
+  eq(fresh.meta.bagPages, 1, '新档从 1 页开始（下面 200 这个价才对）');
+  eq(last1 && last1.cost, 200, '新档扩容价 = pagePrices[1] = 200');
+  eq(last1 && last1.enabled, true, '铜币 9999 时扩容行可点');
+  eq(last1 && last1.verb, '购买', '动词是「购买」（和兵器架一致，按钮渲染成 购买 · 200）');
+  eq(last1 && last1.icon, undefined, '药水铺这轮不给图标（icon 缺省）');
+  ok(typeof last1.sub === 'string' && last1.sub.indexOf('当前 1/6 页') >= 0,
+     '说明行写出当前页数「当前 1/6 页」', last1 && last1.sub);
+  ok(typeof last1.sub === 'string' && last1.sub.indexOf('70 格') >= 0,
+     '说明行写出解锁后的格数收益（第 2 页解锁后共 70 格）', last1 && last1.sub);
+
+  // (4) 买一次：页数 +1、正好扣 200、刷新后价格跳到 500
+  const r1 = H.perform(fresh, last1);
+  ok(r1 && r1.ok === true, '通过 perform 买下一页成功', JSON.stringify(r1));
+  eq(fresh.meta.bagPages, 2, '买完变成 2 页');
+  eq(fresh.meta.coins, 9999 - 200, '铜币正好少 200（不多不少）');
+  const a2 = shopActs(fresh);
+  const last2 = a2[a2.length - 1];
+  eq(last2 && last2.kind, 'bag-page', '刷新后最后一行仍是扩容行');
+  eq(last2 && last2.cost, 500, '价格跟着页数走：2 页时 = pagePrices[2] = 500');
+  ok(typeof last2.sub === 'string' && last2.sub.indexOf('当前 2/6 页') >= 0,
+     '说明行的当前页数跟着变', last2 && last2.sub);
+  ok(typeof last2.sub === 'string' && last2.sub.indexOf('105 格') >= 0,
+     '第 3 页解锁后共 105 格', last2 && last2.sub);
+
+  // (5) 铜币 199 < 200：灰掉并写明原因，而且点了不能有任何副作用
+  const poorS = L.createState(902);
+  poorS.meta.coins = 199;
+  const a3 = shopActs(poorS);
+  const poorRow = a3[a3.length - 1];
+  eq(poorRow && poorRow.kind, 'bag-page', '没钱时扩容行仍然列出来（不能悄悄消失）');
+  eq(poorRow && poorRow.enabled, false, '铜币 199 买不起 200 的页，按钮灰掉');
+  eq(poorRow && poorRow.disabledReason, '铜币不够', '灰掉的原因写明「铜币不够」');
+  const rPoor = H.perform(poorS, poorRow);
+  eq(rPoor && rPoor.ok, false, '点灰按钮返回 ok:false（而不是硬扣）');
+  eq(poorS.meta.coins, 199, '被拒绝后铜币一分没少');
+  eq(poorS.meta.bagPages, 1, '被拒绝后页数没变');
+
+  // (6) 连买到 6 页：行还在、灰掉、原因换成"已解锁全部 6 页"、价格给 null
+  const maxS = L.createState(903);
+  maxS.meta.coins = 999999;
+  for (let i = 0; i < C.BAG.maxPages - 1; i++) {
+    const row = shopActs(maxS).filter((a) => a.kind === 'bag-page')[0];
+    const rr = H.perform(maxS, row);
+    ok(rr && rr.ok === true, `连买第 ${i + 2} 页成功`, JSON.stringify(rr));
+  }
+  eq(maxS.meta.bagPages, C.BAG.maxPages, '已经到 6 页（maxPages 顶）');
+  const a4 = shopActs(maxS);
+  eq(a4.length, 4, '满页时扩容行仍然只占一行（不是消失、也不是裂成多行）');
+  const fullRow = a4[a4.length - 1];
+  eq(fullRow && fullRow.kind, 'bag-page', '满页时最后一行还是扩容行');
+  eq(fullRow && fullRow.enabled, false, '满页后按钮灰掉');
+  eq(fullRow && fullRow.disabledReason, '已解锁全部 6 页', '灰掉原因与 buyBagPage 的 reason 一致');
+  eq(fullRow && fullRow.cost, null, '满页时 cost 给 null（没有下一页可卖）');
+  ok(typeof fullRow.sub === 'string' && fullRow.sub.indexOf('已解锁全部 6 页') === 0,
+     '满页的说明行给终态文案', fullRow && fullRow.sub);
+  ok(typeof fullRow.sub === 'string' && fullRow.sub.indexOf('210 格') >= 0,
+     '满页说明行写出总格数 210', fullRow && fullRow.sub);
+  const coinsBeforeFull = maxS.meta.coins;
+  const rFull = H.perform(maxS, fullRow);
+  eq(rFull && rFull.ok, false, '满页再点返回 ok:false');
+  eq(maxS.meta.coins, coinsBeforeFull, '满页再点铜币不变（没有静默扣钱）');
+  eq(maxS.meta.bagPages, C.BAG.maxPages, '满页再点页数也不变');
+
+  // (7) perform 的返回值与 L.buyBagPage 同形状 —— hub 不能在中间吞字段
+  /*
+   * 这条是"hub 没自己另算规则"的证据：同一个起始状态，两条路径各走一遍，
+   * 返回对象的键集合必须一模一样。少了 cost/pages 就说明 hub 里长出了
+   * 第二份扩容实现（那样 buyBagPage 的三种拒绝也会被绕过）。
+   */
+  const viaHubState = L.createState(904);
+  viaHubState.meta.coins = 9999;
+  const viaLogicState = L.createState(904);
+  viaLogicState.meta.coins = 9999;
+  const hubRow = shopActs(viaHubState).filter((a) => a.kind === 'bag-page')[0];
+  const rHub = H.perform(viaHubState, hubRow);
+  const rLogic = L.buyBagPage(viaLogicState);
+  eq(Object.keys(rHub).sort().join(','), Object.keys(rLogic).sort().join(','),
+     'perform 与 L.buyBagPage 的返回键集合完全一致', Object.keys(rHub).join(','));
+  eq(rHub.ok, rLogic.ok, '两条路径的 ok 相同');
+  eq(rHub.cost, rLogic.cost, '两条路径的 cost 相同（hub 没另算价格）');
+  eq(rHub.pages, rLogic.pages, '两条路径的 pages 相同');
+  eq(viaHubState.meta.coins, viaLogicState.meta.coins, '两条路径扣的钱一致');
+  ok(Object.prototype.hasOwnProperty.call(rHub, 'cost')
+     && Object.prototype.hasOwnProperty.call(rHub, 'pages'),
+     'ok/cost/pages 三个键都在（hub 没吞字段）', JSON.stringify(rHub));
+
+  // (8) 页签过滤口径：未知 filter 不能把这行吃掉
+  /*
+   * 药水铺这轮不加页签条（PANEL_TABS 里没有 shop），但将来加的时候
+   * filter 会传进来。口径与兵器架一致：未知页签退化为不过滤 ——
+   * 宁可多显示一行，也别让这一行莫名消失。
+   */
+  const filterProbe = H.zoneActions(fresh, 'shop', 'no-such-tab');
+  eq(filterProbe.length, 4, '未知 filter 退化为不过滤（扩容行还在）');
+  const filteredAll = H.zoneActions(fresh, 'shop', 'all');
+  eq(filteredAll.length, 4, 'filter=all 时四行齐全');
+  eq(H.zoneActions(fresh, 'shop', undefined).length, 4, 'filter 缺省时四行齐全');
 }
 
 section('7. 农场田块几何（成品里点击播种走的就是这一段）');
