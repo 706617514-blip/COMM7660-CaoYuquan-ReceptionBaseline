@@ -556,6 +556,49 @@ section('10c. 装备函数接受可选 uid（同 id 多件时指哪一件）');
   ok(s7.meta.bag[0].level === 3, '退回后升的是第一件');
 }
 
+// ---------------------------------------------------------------- 10d. 环境音默认值
+section('10d. 设置：环境音默认值兜底（Task 23 / V22）');
+{
+  const s = L.createState(7);
+  eq(s.meta.settings && s.meta.settings.ambient, 0.30,
+    '新档自带 settings.ambient = 0.30（Task 23 的第三条滑块要读它）',
+    JSON.stringify(s.meta.settings));
+
+  // 老档：version 6 已经有 settings，但里面没有 ambient。
+  // 只写 `if (!meta.settings)` 的兜底在这条路径上根本不会触发 —— 必须按字段补。
+  const old = JSON.parse(L.serialize(L.createState(8)));
+  eq(old.version, 6, '仍是不升版本的 v6 存档');
+  delete old.meta.settings.ambient;
+  const back = L.deserialize(JSON.stringify(old));
+  eq(back.meta.settings.ambient, 0.30,
+    'v6 老档缺少 ambient 时读出 0.30（不是 undefined/NaN）',
+    String(back.meta.settings.ambient));
+
+  // 脏值：非数字、NaN、越界值都不能让虫鸣变成 NaN 增益
+  const dirty = JSON.parse(L.serialize(L.createState(9)));
+  dirty.meta.settings.ambient = '0.5';
+  eq(L.deserialize(JSON.stringify(dirty)).meta.settings.ambient, 0.30,
+    '字符串 ambient 退回默认值');
+  dirty.meta.settings.ambient = null;
+  eq(L.deserialize(JSON.stringify(dirty)).meta.settings.ambient, 0.30,
+    'null ambient 退回默认值');
+  dirty.meta.settings.ambient = 5;
+  eq(L.deserialize(JSON.stringify(dirty)).meta.settings.ambient, 1, '越界值夹到 1');
+  dirty.meta.settings.ambient = -2;
+  eq(L.deserialize(JSON.stringify(dirty)).meta.settings.ambient, 0, '负值夹到 0');
+
+  // 玩家真的调过之后要保留，不能被默认值覆盖
+  const custom = L.createState(10);
+  custom.meta.settings.ambient = 0.65;
+  eq(L.deserialize(L.serialize(custom)).meta.settings.ambient, 0.65,
+    '自定义环境音音量跨序列化保留');
+
+  // 完全缺 settings 的老档（v2 之前）也要补出 ambient
+  const bare = L.deserialize(JSON.stringify({ version: 2, meta: { coins: 10 } }));
+  eq(bare.meta.settings && bare.meta.settings.ambient, 0.30,
+    '迁移路径也补出 ambient 默认值', JSON.stringify(bare.meta.settings));
+}
+
 // ---------------------------------------------------------------- 11. 边界
 section('11. 场地边界');
 {

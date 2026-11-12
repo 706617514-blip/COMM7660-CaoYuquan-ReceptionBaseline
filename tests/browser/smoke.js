@@ -213,7 +213,7 @@ const SCRIPT = `
     out.audioSampleRate = cB ? cB.sampleRate : -1;
     out.audioSameCtx = cA === cB;
 
-    // 17 个音效逐个真播一次。返回 true = 真的建了振荡器/噪声源。
+    // 21 个音效逐个真播一次。返回 true = 真的建了振荡器/噪声源。
     out.audioPlayed = {};
     out.audioPlayThrew = null;
     (out.audioSfxNames || []).forEach(function (n) {
@@ -234,6 +234,16 @@ const SCRIPT = `
     await wait(150);
     out.audioMasterRestored = GA.masterGain ? GA.masterGain.gain.value : null;
     out.audioStateEnd = GA.context ? GA.context.state : null;
+
+    /*
+     * 环境音（Task 23 / V19）。HubScene.create 在页面加载时就调了 startAmbient，
+     * 但那一刻还没有 AudioContext（加载即建 ctx 会被自动播放策略拦），
+     * 所以真正起播要等这一次 ensureStarted()。这里量的是"起播之后"的状态：
+     * 名字要报 cricket，并且真的有一条自己的增益挂在 master 上。
+     */
+    out.ambientNameHub = typeof GA.ambientName === 'function' ? GA.ambientName() : null;
+    out.ambientHasGain = !!GA.ambientGain;
+    out.ambientGainValue = GA.ambientGain ? GA.ambientGain.gain.value : null;
 
     /*
      * 同帧连打：连段攻击一刀扫三下时，渲染层会在同一帧里调三次 play。
@@ -258,14 +268,40 @@ const SCRIPT = `
   }
 
   // ---- 2. 主操作：按键真的移动了玩家 ----
+  // 顺便量脚步（Task 23 / V4 V5）：计数只能来自实时游戏循环，
+  // 桩测试证明不了"按着 D 走会踩地板"。
   const st = window.EmberfieldApp.__state;
   const hub = st && st.hub;
+  const stepSum = function () {
+    const c = out.audioCalls || {};
+    return (c.step1 || 0) + (c.step2 || 0) + (c.step3 || 0);
+  };
   if (hub) {
     out.hubX0 = hub.x;
+    const s0 = stepSum();
     key('keydown', 'KeyD', 68);
     await wait(900);
     key('keyup', 'KeyD', 68);
     out.hubX1 = hub.x;
+    out.hubWalkDist = hub.x - out.hubX0;
+    out.hubStepsWalk = stepSum() - s0;
+
+    // 冲刺：同样 900ms、同样方向。位移更长，单位位移的步数也必须更多（V5）。
+    const s1 = stepSum();
+    const sx0 = hub.x;
+    key('keydown', 'ShiftLeft', 16);
+    key('keydown', 'KeyD', 68);
+    await wait(900);
+    key('keyup', 'KeyD', 68);
+    key('keyup', 'ShiftLeft', 16);
+    out.hubSprintDist = hub.x - sx0;
+    out.hubStepsSprint = stepSum() - s1;
+
+    // V4 的反证：松手之后 3 秒，一步都不许响。
+    // 定时器版实现（每 300ms 响一下）在这里会露馅 —— 这正是"按位移"的意义。
+    const s2 = stepSum();
+    await wait(3000);
+    out.hubStepsStill = stepSum() - s2;
   }
 
   // ---- 3. 进入战斗并检查状态推进 ----
@@ -285,7 +321,7 @@ const SCRIPT = `
   }
 
   // ---- 3a2. 战斗动作真的接到了音效（Task 12）----
-  // 桩测试只能证明"17 个音效各自播得出来"，证明不了"游戏里按 J 会去播"。
+  // 桩测试只能证明"21 个音效各自播得出来"，证明不了"游戏里按 J 会去播"。
   // 这里按四下 J（间隔 230ms，远大于 25ms 节流窗口），期望 slash 计数上涨。
   if (window.EmberfieldApp.__state && window.EmberfieldApp.__state.run) {
     const b0 = (out.audioCalls && out.audioCalls.slash) || 0;
@@ -1921,6 +1957,57 @@ const SCRIPT = `
     out.musicMetaAfter = stE.meta.settings ? stE.meta.settings.music : null;
     out.musicGainUnaffected = window.GameAudio && window.GameAudio.masterGain
       ? window.GameAudio.masterGain.gain.value : null;
+
+    // 3b) 环境音滑块（Task 23 / V21）：只动虫鸣那一条增益，总音量纹丝不动
+    const volA = document.getElementById('vol-ambient');
+    out.volAmbient = volA ? { tag: volA.tagName, type: volA.type, min: volA.min,
+      max: volA.max, value: volA.value } : null;
+    out.volAmbientLabel = (function () {
+      const row = volA && volA.parentNode;
+      const lab = row && row.querySelector ? row.querySelector('.vol-lab') : null;
+      return lab ? String(lab.textContent) : '';
+    })();
+    out.ambientMetaBefore = stE.meta.settings ? stE.meta.settings.ambient : null;
+    const masterBeforeAmb = window.GameAudio && window.GameAudio.masterGain
+      ? window.GameAudio.masterGain.gain.value : null;
+    if (volA) {
+      volA.value = '55';
+      volA.dispatchEvent(new Event('input', { bubbles: true }));
+      if (window.GameAudio && typeof window.GameAudio.play === 'function') {
+        window.GameAudio.play('coin');
+      }
+      await wait(300);
+    }
+    out.ambientMetaAfter = stE.meta.settings ? stE.meta.settings.ambient : null;
+    out.volAmbientValueText = (document.getElementById('vol-ambient-val') || {}).textContent || '';
+    out.ambientGainAfter55 = window.GameAudio && window.GameAudio.ambientGain
+      ? window.GameAudio.ambientGain.gain.value : null;
+    out.masterBeforeAmbientDrag = masterBeforeAmb;
+    out.masterAfterAmbientDrag = window.GameAudio && window.GameAudio.masterGain
+      ? window.GameAudio.masterGain.gain.value : null;
+    // 3) 拖到 0：虫鸣必须真的归零，而总音量**不许**跟着动。
+    // 这条是"两条通道独立"的硬证据 —— 一起静音就说明滑块接错了通道。
+    if (volA) {
+      volA.value = '0';
+      volA.dispatchEvent(new Event('input', { bubbles: true }));
+      if (window.GameAudio && typeof window.GameAudio.play === 'function') {
+        window.GameAudio.play('coin');
+      }
+      await wait(300);
+    }
+    out.ambientGainAtZero = window.GameAudio && window.GameAudio.ambientGain
+      ? window.GameAudio.ambientGain.gain.value : null;
+    out.masterAtAmbientZero = window.GameAudio && window.GameAudio.masterGain
+      ? window.GameAudio.masterGain.gain.value : null;
+    // 拖回 55，后面的断言与读数继续按 0.55 走
+    if (volA) {
+      volA.value = '55';
+      volA.dispatchEvent(new Event('input', { bubbles: true }));
+      if (window.GameAudio && typeof window.GameAudio.play === 'function') {
+        window.GameAudio.play('coin');
+      }
+      await wait(300);
+    }
     // 4) 设置页里按 ESC：先退回菜单页（不直接关，少一层误触），再按一次才关
     key('keydown', 'Escape', 27); await wait(60); key('keyup', 'Escape', 27);
     await wait(320);
@@ -1946,6 +2033,9 @@ const SCRIPT = `
     const runE = stE.run;
     const runSc = globalThis.__game.scene.getScene('Run');
     out.escRunFound = !!runE && !!runSc;
+    // V20：进了关卡就没有营地虫鸣（HubScene 关掉环境音，不是把它调成 0）
+    out.ambientNameInRun = window.GameAudio && typeof window.GameAudio.ambientName === 'function'
+      ? window.GameAudio.ambientName() : null;
     if (runE && runSc) {
       runE.loot.coins = 1000;
       runE.loot.seeds = 200;
@@ -2393,6 +2483,18 @@ const SMALLSCRIPT = `
   if (typeof r.hubX0 === 'number') {
     ok(r.hubX1 > r.hubX0 + 5, '按住 D 后玩家在真浏览器中真的移动了',
        `${r.hubX0.toFixed(1)} -> ${r.hubX1.toFixed(1)}`);
+
+    // 脚步（Task 23 / V4 V5）：走路真的踩出声音，冲刺更密，站住一声都没有。
+    ok(r.hubWalkDist > 100, '前置：900ms 走路位移足够跨过好几步', r.hubWalkDist);
+    ok(r.hubStepsWalk >= 3, '基地里走 900ms 真的踩出脚步声（按位移触发，V4）',
+       r.hubStepsWalk);
+    ok(r.hubSprintDist > r.hubWalkDist * 1.2, '前置：按住 Shift 真的跑得更快',
+       r.hubWalkDist + ' -> ' + r.hubSprintDist);
+    ok(r.hubStepsSprint / r.hubSprintDist > (r.hubStepsWalk / r.hubWalkDist) * 1.1,
+       '同样位移下冲刺的步数更密（V5：步距 22 < 26）',
+       (r.hubStepsSprint / r.hubSprintDist).toFixed(4) + ' vs ' +
+       (r.hubStepsWalk / r.hubWalkDist).toFixed(4));
+    eq(r.hubStepsStill, 0, '松手站 3 秒，一声脚步都没有（V4 反证：不是定时器）');
   }
 
   console.log('\n--- 3. 完成（completion）：对局推进 ---');
@@ -3211,6 +3313,31 @@ const SMALLSCRIPT = `
        '音乐滑块不改变总音量（没有接任何声源，不能假装有声音）',
        r.musicGainUnaffected + ' vs ' + r.volGainAfter);
 
+    // ③b 环境音滑块（Task 23 / V21）：真的接上了虫鸣，且不串到总音量
+    ok(r.volAmbient && r.volAmbient.tag === 'INPUT' && r.volAmbient.type === 'range',
+       '环境音是原生 input[type=range]', JSON.stringify(r.volAmbient));
+    eq(r.volAmbient && r.volAmbient.min, '0', '环境音滑块最左是 0');
+    eq(r.volAmbient && r.volAmbient.max, '100', '环境音滑块最右是 100');
+    eq(r.volAmbientLabel, '环境音', '滑块标签写的是「环境音」', r.volAmbientLabel);
+    ok(Math.abs(Number(r.ambientMetaBefore) - 0.3) < 0.001,
+       '前置：默认环境音 0.3（拖动前）', r.ambientMetaBefore);
+    ok(Math.abs(Number(r.ambientMetaAfter) - 0.55) < 0.001,
+       '拖到 55 后存档里的环境音是 0.55', r.ambientMetaAfter);
+    ok(typeof r.ambientGainAfter55 === 'number' &&
+       Math.abs(r.ambientGainAfter55 - 0.55) < 0.02,
+       '虫鸣增益真的跟着变（滑块接上了环境音通道，V21）', r.ambientGainAfter55);
+    ok(Math.abs(r.masterAfterAmbientDrag - r.masterBeforeAmbientDrag) < 0.001,
+       '拖环境音不改变总音量（两条通道互不串）',
+       r.masterBeforeAmbientDrag + ' vs ' + r.masterAfterAmbientDrag);
+    eq(r.volAmbientValueText, '55', '环境音右端数值显示 55', r.volAmbientValueText);
+    ok(typeof r.ambientGainAtZero === 'number' && Math.abs(r.ambientGainAtZero) < 0.001,
+       '环境音拖到 0 时虫鸣增益真的归零', r.ambientGainAtZero);
+    ok(typeof r.masterAtAmbientZero === 'number' && r.masterAtAmbientZero > 0.001,
+       '虫鸣归零时总音量照常（两条通道独立，不是一起静音）', r.masterAtAmbientZero);
+    console.log('  [读数·环境音] 存档 ' + r.ambientMetaBefore + ' -> ' + r.ambientMetaAfter +
+      ' 虫鸣增益 ' + r.ambientGainAfter55 +
+      ' 总音量 ' + r.masterBeforeAmbientDrag + ' -> ' + r.masterAfterAmbientDrag);
+
     // ④ 设置页里按 ESC 先退一层：菜单还在、设置页收起、场景仍暂停
     eq(r.escFromSettingsStillOpen, true, '设置页里按 ESC 只退回菜单页（不直接关）');
     eq(r.escSettingsDisplayAfterEsc, 'none', '退回后设置页收起来了');
@@ -3224,6 +3351,8 @@ const SMALLSCRIPT = `
 
     // ⑤ 战斗中两行 + 主动退出结算
     eq(r.escRunFound, true, '前置：进入了 Run 场景');
+    eq(r.ambientNameInRun, null,
+       '进入关卡后环境音停了（V20：虫鸣只在营地，不是调成 0）');
     eq(r.escOpenedRun, true, '战斗中按 ESC 打开菜单');
     eq(r.escRowsRun, 2, '战斗中菜单两行', JSON.stringify(r.escRowLabelsRun));
     eq(JSON.stringify(r.escRowLabelsRun), JSON.stringify(['设置', '退出战斗']),
@@ -3255,7 +3384,7 @@ const SMALLSCRIPT = `
   // "这台机器上音频时钟真的在跑"。这里读的是 Electron 里的真 AudioContext。
   ok(r.audioExists === true, '音效层已加载（window.GameAudio 存在且可调用 play）');
   if (r.audioExists) {
-    eq(r.audioSfxCount, 17, '配置里有 17 个音效');
+    eq(r.audioSfxCount, 21, '配置里有 21 个音效（Task 23：+脚步 3、+胜利，death 改名 defeat）');
     eq(r.audioCtxBeforeGesture, true,
        '手势之前没有建 AudioContext（惰性创建，页面加载不白占一个音频设备）');
     // ensureStarted 就是页面手势监听里调的那个函数。
@@ -3270,7 +3399,7 @@ const SMALLSCRIPT = `
     {
       const names = r.audioSfxNames || [];
       const unplayable = names.filter(function (n) { return r.audioPlayed[n] !== true; });
-      eq(unplayable.length, 0, '17 个音效在真浏览器里逐个播放都返回 true',
+      eq(unplayable.length, 0, '21 个音效在真浏览器里逐个播放都返回 true',
          unplayable.join(','));
       ok(r.audioPlayThrew === null, '没有任何音效抛异常', r.audioPlayThrew);
     }
@@ -3288,6 +3417,12 @@ const SMALLSCRIPT = `
     ok(Math.abs(r.audioMasterRestored - 0.5) < 0.02,
        '把音量调回 0.5 后 masterGain.gain 跟随', r.audioMasterRestored);
     eq(r.audioStateEnd, 'running', '探针结束时 context 仍是 running');
+
+    // 环境音（Task 23 / V19）：HubScene 一进基地就要求 crickets，起播后要挂上自己的增益。
+    eq(r.ambientNameHub, 'cricket', '基地里 ambientName() 报 cricket（V19）');
+    eq(r.ambientHasGain, true, '环境音真的挂了一条增益（不是只在存档里记个名字）');
+    ok(typeof r.ambientGainValue === 'number' && Math.abs(r.ambientGainValue - 0.3) < 0.02,
+       '环境音默认增益就是 0.30（与 meta.settings.ambient 一致）', r.ambientGainValue);
 
     {
       const th = r.audioThrottle || [];
@@ -3307,6 +3442,15 @@ const SMALLSCRIPT = `
       '->' + r.audioMasterRestored +
       ' 节流=' + JSON.stringify(r.audioThrottle) +
       ' 局内计数=' + JSON.stringify(r.audioCalls));
+
+    // 脚步/环境音的读数单独一行：报告里的"真浏览器读数"直接抄它。
+    console.log('  [读数·脚步] 走 ' + (r.hubWalkDist * 100 | 0) / 100 + 'px / ' +
+      r.hubStepsWalk + ' 步（' + (r.hubStepsWalk / r.hubWalkDist).toFixed(4) + ' 步/px）' +
+      ' 跑 ' + (r.hubSprintDist * 100 | 0) / 100 + 'px / ' + r.hubStepsSprint + ' 步（' +
+      (r.hubStepsSprint / r.hubSprintDist).toFixed(4) + ' 步/px）' +
+      ' 站 3 秒 ' + r.hubStepsStill + ' 步' +
+      ' ambient=' + r.ambientNameHub + '@' + r.ambientGainValue +
+      ' 局内=' + r.ambientNameInRun);
 
     // 接线：这些计数来自"游戏里按键"，不是测试直接喊 play。
     const calls = r.audioCalls || {};

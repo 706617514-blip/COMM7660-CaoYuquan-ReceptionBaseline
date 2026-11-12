@@ -497,6 +497,12 @@
         </div>
         <div id="vol-music-note">暂无 BGM · 音乐通道未接入（滑块只保存设置，不发声）</div>
         <div class="vol-row">
+          <span class="vol-lab">环境音</span>
+          <input id="vol-ambient" class="vol" type="range" min="0" max="100" step="1"
+                 aria-label="环境音音量">
+          <span class="vol-val" id="vol-ambient-val">30</span>
+        </div>
+        <div class="vol-row">
           <span class="vol-lab">音量</span>
           <input id="vol-master" class="vol" type="range" min="0" max="100" step="1"
                  aria-label="总音量">
@@ -1147,6 +1153,13 @@
     return (C.AUDIO && typeof C.AUDIO.volume === 'number') ? C.AUDIO.volume : 0.3;
   }
 
+  // 环境音的出厂值来自 config（Task 23）。默认值和总音量都是 0.30，
+  // 但那只是巧合：虫鸣要能独立于总音量调，所以不能借用 settingsDefaultVol。
+  function settingsDefaultAmbient() {
+    return (C.AUDIO && C.AUDIO.ambient && typeof C.AUDIO.ambient.volume === 'number')
+      ? C.AUDIO.ambient.volume : 0.3;
+  }
+
   function escSetView(view) {
     escView = view === 'settings' ? 'settings' : 'root';
     const on = escView === 'settings';
@@ -1162,6 +1175,9 @@
     // 音乐通道的值也存（§5.5），但没有 BGM 可接，所以只画数字
     paintVol($('vol-music'), $('vol-music-val'),
       typeof s.music === 'number' ? s.music : settingsDefaultVol());
+    // 环境音：这条是**真的**接了声源的（营地虫鸣），画的就是存档里的值
+    paintVol($('vol-ambient'), $('vol-ambient-val'),
+      typeof s.ambient === 'number' ? s.ambient : settingsDefaultAmbient());
     escSetView('settings');
   }
 
@@ -1249,6 +1265,27 @@
     saveEscSettings();
   });
   volMusicEl.addEventListener('change', function () { if (escState) save(escState); });
+  const volAmbientEl = $('vol-ambient');
+  volAmbientEl.addEventListener('input', function () {
+    const pct = Math.max(0, Math.min(100, Math.round(Number(volAmbientEl.value) || 0)));
+    setFill(volAmbientEl, pct);
+    $('vol-ambient-val').textContent = String(pct);
+    const v = pct / 100;
+    // 与环境音滑块对应的是**虫鸣那一条通道**（ambientGain），不是总音量：
+    // 拖"环境音"时总音量必须纹丝不动，否则玩家没法单独把虫鸣调小。
+    if (globalThis.GameAudio && typeof globalThis.GameAudio.setAmbientVolume === 'function') {
+      globalThis.GameAudio.setAmbientVolume(v);
+    }
+    if (escState && escState.meta) {
+      if (!escState.meta.settings) {
+        escState.meta.settings = { volume: settingsDefaultVol(), muted: false,
+          ambient: settingsDefaultAmbient() };
+      }
+      escState.meta.settings.ambient = v;
+    }
+    saveEscSettings();
+  });
+  volAmbientEl.addEventListener('change', function () { if (escState) save(escState); });
 
   $('esc-back').addEventListener('click', function () { escSetView('root'); });
 

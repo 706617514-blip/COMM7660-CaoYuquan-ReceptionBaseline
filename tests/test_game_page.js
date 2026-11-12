@@ -821,6 +821,83 @@ if (again2) { again2.click(); ok(againCalled, '点再来一局触发了场景的
      '没有腐烂时不显示腐烂文案', getEl('panelBody').innerHTML);
 }
 
+// ---------------------------------------------------------------- 设置面板
+section('5b. 设置面板：环境音滑块（Task 23 / V21）');
+{
+  // 结构：三条滑块 + 音乐那条的说明文字（§3.9：音乐不发声要写清楚）
+  ok(/id="vol-ambient"/.test(html), 'index.html 里有 #vol-ambient 滑块');
+  ok(/<span class="vol-lab">环境音<\/span>/.test(html), '滑块标签就叫「环境音」');
+  ok(/id="vol-music-note"/.test(html), '音乐滑块的说明文字保留（无 BGM 不发声）');
+  ok(/id="vol-master"/.test(html), '总音量滑块还在');
+
+  const st = L.createState(23);
+  eq(st.meta.settings && st.meta.settings.ambient, 0.30, '新档环境音默认 0.30');
+
+  const ga = sandbox.GameAudio;
+  const calls = { master: 0, ambient: 0, ambientVals: [], masterVals: [] };
+  const origMaster = ga.setMasterVolume;
+  const origAmbient = ga.setAmbientVolume;
+  ga.setMasterVolume = function (v) {
+    calls.master += 1; calls.masterVals.push(v);
+    return typeof origMaster === 'function' ? origMaster.call(ga, v) : null;
+  };
+  ga.setAmbientVolume = function (v) {
+    calls.ambient += 1; calls.ambientVals.push(v);
+    return typeof origAmbient === 'function' ? origAmbient.call(ga, v) : null;
+  };
+
+  const openSettings = function () {
+    sandbox.EmberfieldUI.openEsc([{ id: 'settings', label: '设置' }], { state: st, onClose() {} });
+    const rows2 = getEl('esc-list').children;
+    ok(rows2.length === 1, '菜单页只有一行（基地）', rows2.length);
+    rows2[0].click();
+  };
+  openSettings();
+  eq(getEl('esc-settings').className, '', '设置页显示');
+  eq(getEl('vol-ambient').value, '30', '环境音滑块默认画在 30（不是 0 / 空）');
+  eq(getEl('vol-ambient-val').textContent, '30', '右端数值与滑块同步');
+  eq(getEl('vol-master').value, '30', '总音量仍是默认 30');
+  eq(getEl('vol-music').value, '30', '音乐滑块照旧');
+
+  // 拖环境音：只动环境音通道
+  const ambEl = getEl('vol-ambient');
+  ambEl.value = '55';
+  (ambEl._handlers.input || []).forEach(function (fn) { fn(); });
+  eq(st.meta.settings.ambient, 0.55, '拖环境音写进 meta.settings.ambient');
+  eq(calls.ambient, 1, '拖环境音调用了 GameAudio.setAmbientVolume');
+  eq(calls.ambientVals[0], 0.55, '传给音频层的是 0~1 的值');
+  eq(calls.master, 0, '拖环境音**没有**碰总音量（masterGain 不动）');
+  eq(getEl('vol-ambient-val').textContent, '55', '数值跟着变');
+
+  // 拖总音量：只动 master，不串到环境音
+  const masterEl = getEl('vol-master');
+  masterEl.value = '40';
+  (masterEl._handlers.input || []).forEach(function (fn) { fn(); });
+  eq(calls.master, 1, '拖总音量调用了 setMasterVolume');
+  eq(calls.masterVals[0], 0.4, '总音量传 0.4');
+  eq(calls.ambient, 1, '拖总音量没有串到 setAmbientVolume');
+  eq(st.meta.settings.volume, 0.4, '总音量写回 meta.settings.volume');
+
+  // 拖音乐：仍然只存值，两个音频入口都不碰
+  const musicEl = getEl('vol-music');
+  musicEl.value = '70';
+  (musicEl._handlers.input || []).forEach(function (fn) { fn(); });
+  eq(st.meta.settings.music, 0.7, '音乐滑块只存值');
+  eq(calls.master, 1, '音乐滑块不碰 setMasterVolume');
+  eq(calls.ambient, 1, '音乐滑块不碰 setAmbientVolume');
+
+  // 重新打开设置页：画的是存档里的值，不是默认值
+  st.meta.settings.ambient = 0.8;
+  sandbox.EmberfieldUI.closeEsc();
+  openSettings();
+  eq(getEl('vol-ambient').value, '80', '重新打开时画的是存档里的环境音值');
+  eq(getEl('vol-ambient-val').textContent, '80', '右端数值同样是 80');
+  sandbox.EmberfieldUI.closeEsc();
+
+  ga.setMasterVolume = origMaster;
+  ga.setAmbientVolume = origAmbient;
+}
+
 // ---------------------------------------------------------------- 存档码
 section('6. 存档码导入');
 const code = sandbox.GameProfile.exportCode('老档', L.serialize(bootedState));

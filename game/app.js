@@ -1677,6 +1677,22 @@
 
       this.cameras.main.setBackgroundColor('#141a22');
       this.events.on('wake', () => { this.panelOpen = false; this.refreshPlots(); });
+
+      /*
+       * 营地环境音（Task 23 / 设计 §3.8）：虫鸣只在营地。
+       *
+       * 为什么调 startAmbient 而不是直接播一个音效：
+       *   - 它是**循环**的底噪，不是一次性事件；
+       *   - 它有独立通道，只受「环境音」滑块控制（总音量仍然管得住它）；
+       *   - 页面加载时音频还没解锁（自动播放策略），这一层只记下意图，
+       *     真正的源在首个手势里补建 —— 场景不该为此写状态机。
+       *
+       * shutdown 时必须关：进关卡后营地虫鸣还在响，等于"人走了虫还在耳边"。
+       * 注意不是调成 0 —— 调成 0 只是听不见，音源还在跑（白耗 CPU）。
+       */
+      const ambientName = (C.AUDIO && C.AUDIO.ambient && C.AUDIO.ambient.name) || 'cricket';
+      GameAudio.startAmbient(ambientName);
+      this.events.once('shutdown', () => { GameAudio.stopAmbient(); });
       // 调试钩子：无头探针需要能驱动场景（见 /tmp/probe.js）
       global.EmberfieldApp.__scene = this;
       global.EmberfieldApp.__state = this.state;
@@ -1877,7 +1893,16 @@
       const dt = Math.min(delta / 1000, 0.05);
       const input = this.input2.read();
       // 基地里同样支持 Shift 冲刺
+      const beforeX = this.state.hub.x;
+      const beforeZ = this.state.hub.z;
       H.moveHub(this.state, input, dt, input.sprint ? C.SPRINT_MULT : 1);
+      // 脚步按"这一帧真的移动了多远"触发（设计 §3.2），不是按时间。
+      // 站着不动 → 位移 0 → 一声都不响；冲刺 → 步距更短 → 更密。
+      const stepDx = this.state.hub.x - beforeX;
+      const stepDz = this.state.hub.z - beforeZ;
+      if (stepDx !== 0 || stepDz !== 0) {
+        GameAudio.footstep(Math.sqrt(stepDx * stepDx + stepDz * stepDz), input.sprint);
+      }
 
       updateGrass(this, dt);
 
@@ -2209,10 +2234,23 @@
       if (prev.waveIndex !== null && run.waveIndex > prev.waveIndex) GameAudio.play('wave');
       prev.waveIndex = run.waveIndex;
 
-      // ⑧ 玩家倒下：status 变 'lost'。local run 在 endRun 之后仍指向那个对象，
-      // 所以即使 state.run 已经被置空，这里也读得到。
-      if (prev.status !== null && prev.status !== 'lost' && run.status === 'lost') {
-        GameAudio.play('death');
+      /*
+       * ⑧ 结局：status 由进行中变为 won / lost 时各响一次（V7）。
+       *
+       * local run 在 endRun 之后仍指向那个对象，所以即使 state.run 已被置空，
+       * 这里也读得到。prev.status 记的是上一帧，因此"只响一次"是结构保证的 ——
+       * 不是靠时间窗口去猜（那会在掉帧时漏掉或重放）。
+       *
+       * 主动退出（ESC → 退出战斗）按战败入账，但它**不是**倒下：
+       * 玩家自己按了退出，再补一声"你死了"的低沉下行是错的反馈。
+       */
+      if (prev.status !== null && run.status !== prev.status) {
+        if (run.status === 'won') {
+          GameAudio.play('victory');
+        } else if (run.status === 'lost') {
+          const exited = !!(this.state.lastResult && this.state.lastResult.exited);
+          if (!exited) GameAudio.play('defeat');
+        }
       }
       prev.status = run.status;
 
@@ -2230,7 +2268,16 @@
       if (!run || this.state.phase !== 'run') return;
 
       const input = this.input2.read();
+      const stepX0 = run.player.x;
+      const stepZ0 = run.player.z;
       L.step(this.state, input, dt);
+      // 脚步（Task 23 / 设计 §3.2）：位移驱动，不是定时器。
+      // step 之内可能已经结算（run 被置空），所以只在"这一局还在打"时踩。
+      const stepDx = run.player.x - stepX0;
+      const stepDz = run.player.z - stepZ0;
+      if (this.state.run && (stepDx !== 0 || stepDz !== 0)) {
+        GameAudio.footstep(Math.sqrt(stepDx * stepDx + stepDz * stepDz), input.sprint);
+      }
 
       // 音效要在 step 之后、任何渲染之前触发：声音跟规则走，不跟画面走。
       // （命中声不在这里 —— 它需要"掉了多少血"，由下面的伤害数字块负责。）

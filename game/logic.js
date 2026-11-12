@@ -57,8 +57,9 @@
         // 条目的 uid 计数器。必须存档（放在 meta 里），否则读档后
         // 新条目会从 1 重新计数，和旧条目的 uid 撞车。
         uidSeq: 0,
-        // 音效与静音（Task 12 读写这里）。老档没有这个字段，迁移负责补。
-        settings: { volume: 0.30, muted: false },
+        // 音效、静音与环境音（Task 12 / Task 23 读写这里）。
+        // 老档没有这些字段，迁移与 deserialize 负责补。
+        settings: { volume: 0.30, muted: false, ambient: defaultAmbient() },
       },
       farm: {
         plots: new Array(C.FARM.cols * C.FARM.rows).fill(null).map(function () {
@@ -441,6 +442,38 @@
     const n = Math.floor(Number(v));
     if (!Number.isFinite(n)) return 1;
     return Math.min(Math.max(1, n), C.BAG.maxPages);
+  }
+
+  /**
+   * 环境音音量规整（Task 23）。
+   *
+   * 存档码是玩家可达的注入入口，所以这里不是"有值就用"：
+   * 只认有限数字，其余（'0.5'、null、{}、NaN）一律退回默认值 —— 退回默认
+   * 而不是退回 0，是因为"读不出来"应该是"回到出厂设置"，不是"静音"。
+   * 越界的数字夹到 [0,1]，跟总音量滑块的语义一致。
+   */
+  function normAmbient(v) {
+    if (typeof v !== 'number' || !isFinite(v)) return defaultAmbient();
+    if (v < 0) return 0;
+    if (v > 1) return 1;
+    return v;
+  }
+
+  /** 环境音的出厂值（config 里只有一处；config 缺这一块时退回 0.30）。 */
+  function defaultAmbient() {
+    return (C.AUDIO && C.AUDIO.ambient && typeof C.AUDIO.ambient.volume === 'number')
+      ? C.AUDIO.ambient.volume : 0.30;
+  }
+
+  /** 补/规整 meta.settings（老档缺字段、脏值都要能直接用）。 */
+  function normSettings(settings) {
+    const src = (settings && typeof settings === 'object') ? settings : {};
+    return {
+      volume: (typeof src.volume === 'number' && isFinite(src.volume))
+        ? Math.min(Math.max(src.volume, 0), 1) : C.AUDIO.volume,
+      muted: !!src.muted,
+      ambient: normAmbient(src.ambient),
+    };
   }
 
   /** 背包总格数 = 已解锁页数 × 每页格数。 */
@@ -2137,7 +2170,8 @@
       delete s.meta.inventoryLevels;
       s.meta.bagPages = normBagPages(s.meta.bagPages);
       // 音效设置也在这一版进来：老档没有，Task 12 一读就 TypeError。
-      if (!s.meta.settings) s.meta.settings = { volume: 0.30, muted: false };
+      // ambient 是 v6 之后才加的字段（STATE_VERSION 不动），normSettings 兜底。
+      s.meta.settings = normSettings(s.meta.settings);
       s.version = 6;
     }
     return s;
@@ -2163,7 +2197,9 @@
     // 却挡不住这些非空非法值 —— 它们会一路带进 bagCapacity 与页价表。
     s.meta.bagPages = normBagPages(s.meta.bagPages);
     if (!s.meta.uidSeq) s.meta.uidSeq = 0;
-    if (!s.meta.settings) s.meta.settings = { volume: 0.30, muted: false };
+    // 注意用 normSettings 而不是 `if (!s.meta.settings)`：v6 的老档**有**
+    // settings（只是没有 ambient），简单兜底永远不会触发，滑块会读到 undefined。
+    s.meta.settings = normSettings(s.meta.settings);
     if (!s.farm || !s.farm.plots) {
       s.farm = { plots: new Array(C.FARM.cols * C.FARM.rows).fill(null)
         .map(function () { return { state: 'empty', growth: 0 }; }) };

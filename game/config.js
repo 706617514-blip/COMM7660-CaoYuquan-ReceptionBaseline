@@ -601,6 +601,24 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
   const AUDIO = {
     volume: 0.30,           // 总音量（masterGain），首次进入的默认值
     throttle: 0.025,        // 同一音效 25ms 内只响一次（连段同帧三下会爆音）
+    // ---- 脚步（Task 23 / 设计 §3.2）----
+    // 按位移触发，不是按时间：走满 stepStride 个世界单位才响一步。
+    // 冲刺时步距更短（脚步更密），这是"跑起来"的听感来源，不是提高音量。
+    stepStride: 26,
+    stepStrideSprint: 22,
+    stepVolume: 0.12,       // 脚步总峰值上限：必须明显低于挥击（0.30），否则走两步就吵
+    // ---- 环境音（Task 23 / 设计 §3.8）----
+    // 营地虫鸣：一条独立通道（ambientGain），只受"环境音"滑块控制，
+    // 与总音量相乘而不受"音乐"滑块影响（那条没有声源）。
+    ambient: {
+      name: 'cricket',
+      volume: 0.30,         // 首次进入的默认值（与总音量默认值一致）
+      bufferSeconds: 8,     // 循环缓冲长度：8 秒内听不出接缝
+      cricketCount: 26,     // 8 秒内的蟋蟀叫声次数（稀疏背景，不是 26 只同时叫）
+      cricketHz: [4200, 6800],  // 蟋蟀频段：4.2~6.8kHz 的窄带"吱"
+      windHz: 60,           // 夜风底噪：60Hz 极低音，只提供"在场感"
+      seed: 20261113,       // 固定种子：每次进基地是同一套虫鸣（不换样本）
+    },
     sfx: {
       // ---- 战斗 ----
       slash: { voices: [
@@ -713,11 +731,38 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
         { wave: 'sawtooth', at: 0.04, dur: 0.40, gain: 0.08, f0: 82, f1: 55,
           filter: { type: 'lowpass', f0: 600, f1: 300, q: 1.0 } },
       ] },
-      death: { voices: [
-        // 玩家倒下：392 / 294 / 196 下行三音，每音 0.3s 指数衰减，收得干净
+      // 玩家倒下：392 / 294 / 196 下行三音，每音 0.3s 指数衰减，收得干净。
+      // Task 23 改名为 defeat（victory 的镜像），总长 0.55s 落在 0.3~0.8s 里。
+      defeat: { voices: [
         { wave: 'triangle', dur: 0.30, gain: 0.18, f0: 392 },
         { wave: 'triangle', at: 0.11, dur: 0.30, gain: 0.18, f0: 294 },
-        { wave: 'triangle', at: 0.22, dur: 0.32, gain: 0.20, f0: 196 },
+        { wave: 'triangle', at: 0.22, dur: 0.33, gain: 0.20, f0: 196 },
+      ] },
+      // 通关：392/523/784 上行三音（G-C-G 的开放感），总长 0.62s。
+      // 与 defeat 音色一致、方向相反 —— 玩家闭着眼也分得清赢了还是输了。
+      victory: { voices: [
+        { wave: 'triangle', dur: 0.18, gain: 0.16, f0: 392 },
+        { wave: 'triangle', at: 0.12, dur: 0.20, gain: 0.18, f0: 523 },
+        { wave: 'triangle', at: 0.20, dur: 0.42, gain: 0.20, f0: 784 },
+      ] },
+      // ---- 脚步（Task 23 / 设计 §3.2）----
+      // 三声一轮换。相对增益合计约 1.0，播放时再乘 AUDIO.stepVolume，
+      // 所以"脚步有多响"只有 config 里那一个地方说了算。
+      // 音色差异靠噪声带通中心频率 + 低频身体，三声不能像同一块地板。
+      step1: { voices: [
+        { wave: 'noise', dur: 0.045, gain: 0.55,
+          filter: { type: 'lowpass', f0: 900, q: 0.9 } },
+        { wave: 'sine', dur: 0.035, gain: 0.45, f0: 120, f1: 80 },
+      ] },
+      step2: { voices: [
+        { wave: 'noise', dur: 0.040, gain: 0.50,
+          filter: { type: 'lowpass', f0: 1120, q: 1.1 } },
+        { wave: 'sine', dur: 0.032, gain: 0.50, f0: 140, f1: 92 },
+      ] },
+      step3: { voices: [
+        { wave: 'noise', dur: 0.050, gain: 0.60,
+          filter: { type: 'lowpass', f0: 780, q: 0.8 } },
+        { wave: 'sine', dur: 0.030, gain: 0.40, f0: 104, f1: 70 },
       ] },
     },
   };
