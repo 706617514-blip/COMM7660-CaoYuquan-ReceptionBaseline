@@ -89,17 +89,19 @@ checked with `lsof` before and after).
 | Suite | Exit | Assertions | Note |
 |---|---|---|---|
 | `tests/check_textures.js` | 0 | _(prints counts, not assertions)_ | 62 textures generated, all 35 equipment sprites present, "全部纹理都已生成 ✓" |
-| `tests/test_audio.js` | 0 | 103 | |
+| `tests/test_audio.js` | 0 | 225 | |
 | `tests/test_bag.js` | 0 | 184 | |
-| `tests/test_game_logic.js` | 0 | 521 | |
-| `tests/test_game_meta.js` | 0 | 280 | |
-| `tests/test_game_page.js` | 0 | 162 | |
-| `tests/browser/smoke.js` | 0 | 429 | Electron, ~45 s, real canvas |
+| `tests/test_game_logic.js` | 0 | 611 | |
+| `tests/test_game_meta.js` | 0 | 313 | |
+| `tests/test_game_page.js` | 0 | 195 | |
+| `tests/test_bosspose.js` | 0 | 96 | Boss 姿态纯函数（Task 25 新增，不启浏览器） |
+| `tests/browser/smoke.js` | 0 | 538 | Electron, ~63 s, real canvas |
 | `tests/test_product_app.js` | 0 | 70 | Phase 1 app; `analysis/build_report2.py` re-counts it live |
 
-103 + 184 + 521 + 280 + 162 + 429 = **1,679** assertions across the six game suites, all exit 0
-(the bag/meta/page suites grew with Tasks 20-21: `test_bag` 172 -> 184,
-`test_game_meta` 186 -> 280, `test_game_page` 151 -> 162, `smoke` 396 -> 421).
+225 + 184 + 611 + 313 + 195 + 96 + 538 = **2,162** assertions across the seven game suites, all exit 0
+(Tasks 22-25 grew them again: `test_audio` 103 -> 225, `test_game_logic` 521 -> 611,
+`test_game_meta` 280 -> 313, `test_game_page` 162 -> 195, `smoke` 429 -> 538,
+plus the new `test_bosspose` at 96).
 
 (1,529 before Tasks 20–21 added the potion-shop bag-page entry, rarity-tier sorting
 and the forgewear slot tabs; see the notes below. 1,362 before Tasks 17–19 added
@@ -221,7 +223,40 @@ Not a defect, but worth recording: standing at the left end of the field makes t
 cover the last character of the "田地" capsule. Both are legible in sequence, and the keycap is
 drawn above the label by design.
 
-### A claim that did not survive checking: a verification that could not fail
+### Tasks 22-25: four more checks that had to be proved able to fail
+
+The same discipline was applied to the second requirement batch (fade-in/out, seed spoilage,
+footstep/victory/defeat/cricket audio, the shop's farm-plot purchase and farm paging, and the
+boss's procedural arms). Each task's report had to quote the red-phase `FAIL ... -> got X, want Y`
+lines, and each one was re-verified by deliberately breaking the implementation:
+
+| Break | Result |
+|---|---|
+| Set `AUDIO.ambient.fade` to 0 | 4 assertions red: `默认淡入淡出 0.25 秒`, `起播时先把增益压到 0（不硬起）`, `再用 linearRamp 升上去`, `stop 带了时间点（硬切实现会是不带参数的 stop()）` |
+| Delete the `#panel.on ~ #toast` CSS rule | `FAIL 提示条整个在卡片下面（不压住刚变化的那一行） -> 卡片底边 594 / 提示条顶边 535` (one failure, 515 pass) |
+| Force the farm's right arrow to `alpha 1` on every page | 2 red: `末页右箭头是灰的（到边了，点不动） -> 1` |
+| Point `BossPose.compute` at always-zero displacement | 2 red: `走动时姿态进入 walk -> seen=idle`, `走路时手臂是垂着的（0 < armRaise < 0.4） -> null` |
+| Drop both `bossArmGfx.clear()` calls | `FAIL 没有 Boss 时手臂层是空的 -> got 94412, want 0` |
+
+Two findings worth keeping from this batch:
+
+- **A "reset" assertion that could not fail, again.** The smoke section that borrows
+  `state.meta.bagPages` asserted "the value at the end equals the value on entry". But the
+  section entered with `bagPages === 2` (an earlier section had already bought a page) and
+  bought it from 1 to 2 again, so "entry value == exit value" held even with no reset code at
+  all. Deleting the whole reset block only turned the `coins` assertion red; deleting just the
+  page-count line left the page assertion green. Fixed by restoring to an explicit different
+  value (`C.BAG.maxPages` = 6) and asserting that the restore target differs from the
+  post-purchase value. This is the same failure shape as the `L.sellItem(s, wornUid).ok === false`
+  case earlier: the assertion is true for a reason unrelated to the rule it names.
+- **A geometric check that lived only in a throwaway probe.** The farm arrow positions, the
+  boss arm layer depth and the toast/Card overlap were first measured by one-off Electron
+  scripts. The panel-tab clipping incident (7 tabs in the DOM, 6 on screen, every assertion
+  green because it counted nodes instead of measuring geometry) is exactly what happens when a
+  geometry check is not promoted into the permanent suite. All three are now permanent
+  assertions in `tests/browser/smoke.js`.
+
+## A claim that did not survive checking: a verification that could not fail
 
 Recorded because the assertion *looked* like the strongest one in the batch and was, in fact,
 the only one that could never fail.
