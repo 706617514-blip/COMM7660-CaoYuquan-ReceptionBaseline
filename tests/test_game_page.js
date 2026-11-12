@@ -35,6 +35,8 @@ function makeEl(id) {
   const el = {
     id: id || '', textContent: '', _innerHTML: '', title: '', disabled: false,
     className: '', style: { cssText: '' }, children: [], _handlers: {},
+    dataset: {},
+    setAttribute(k, v) { this['attr_' + k] = v; },
     addEventListener(t, fn) { (this._handlers[t] = this._handlers[t] || []).push(fn); },
     appendChild(c) {
       this.children.push(c);
@@ -49,6 +51,12 @@ function makeEl(id) {
   const cls = new Set();
   el.classList = {
     add: (c) => cls.add(c), remove: (c) => cls.delete(c), contains: (c) => cls.has(c),
+    // baghud 用 toggle(名, 条件) 摆页面态（页签高亮 / 工具条隐藏）；缺了它
+    // 一条 TypeError 会把整段背包断言吞掉，看起来像"取图链路全崩"。
+    toggle: (c, on) => {
+      if (on === undefined) { if (cls.has(c)) cls.delete(c); else cls.add(c); return; }
+      if (on) cls.add(c); else cls.delete(c);
+    },
   };
   Object.defineProperty(el, 'innerHTML', {
     get() { return this._innerHTML; },
@@ -562,6 +570,120 @@ section('4c. 设施面板：按区域的页签 + 行内图标（Task 17）');
      fitRowsB[0] && fitRowsB[0].children[0] && fitRowsB[0].children[0].src);
   sandbox.SpriteLib.fitUrl = realFit;
   sandbox.SpriteLib.url = realUrl;
+
+  // ---- Task 19：背包格子与穿戴槽也走 fitUrl（盒子 32x46 / 20x28）----
+  /*
+   * 为什么在界面层测"调用序列"而不是"图长什么样"
+   * ------------------------------------------
+   * 桩里的 makeEl().querySelector() 每次返回新节点，测试拿不到 BagHud 内部建的
+   * ui.cells / ui.slots，所以没法直接读 <img>.src。能钉的是**取图链路**：
+   * 谁先被问、盒子多大、键拼得对不对、拿不到裁切图时退回哪条路。
+   * 真像素由 smoke 量（naturalWidth x naturalHeight + 内容包围盒）。
+   *
+   * 键为什么必须一致：sprites.js 里没有导出的键构造器，baghud 只能按同一个
+   * 约定再拼一次 'eq-' + slot + '-' + id。拼错的时候 fitUrl 拿到的是 Phaser 的
+   * __MISSING 占位纹理（Task 18 实测：不是 null，是一张 630 字符的图）——
+   * 画面上照样"有图"，只是内容全错，只有断言能抓住它。
+   */
+  ok(typeof sandbox.BagHud === 'object' && typeof sandbox.BagHud.open === 'function',
+     'BagHud 已挂在全局（背包取图在它里面）');
+  eq(Object.keys(sandbox.BagHud).sort().join(','), 'clamp,close,isOpen,open,refresh,setHost',
+     'BagHud 公开 API 一个没多一个没少（open/close/refresh/isOpen/clamp 签名不动）');
+
+  const bagSt19 = L.createState(781);
+  sandbox.GameHub.ensureHub(bagSt19);
+  bagSt19.meta.bag.length = 0;
+  ['leatherHelm', 'ironHelm', 'rustySword'].forEach(function (id) { L.bagAdd(bagSt19, id, 1); });
+  bagSt19.meta.equipment = {
+    head: { id: 'leatherHelm', level: 2 },
+    torso: { id: 'chestPlate', level: 1 },
+    back: { id: 'shortCape', level: 1 },
+    weapon: { id: 'rustySword', level: 1 },
+    feet: { id: 'windBoots', level: 1 },
+  };
+
+  const log19 = [];
+  const realFit19 = sandbox.SpriteLib.fitUrl;
+  const realEquip19 = sandbox.SpriteLib.equipUrl;
+  const realUrl19 = sandbox.SpriteLib.url;
+  const stubFit19 = function (k, w, h) {
+    log19.push('fit:' + String(k) + '@' + w + 'x' + h);
+    return null;                       // 先装成"取不到裁切图"，量退回路径
+  };
+  sandbox.SpriteLib.fitUrl = stubFit19;
+  sandbox.SpriteLib.equipUrl = function (slot, id) {
+    log19.push('equip:' + String(slot) + ':' + String(id));
+    return 'data:image/png;base64,EQ-' + id;
+  };
+  sandbox.SpriteLib.url = function (k) {
+    log19.push('url:' + String(k));
+    return 'data:image/png;base64,U-' + k;
+  };
+  let bagErr19 = null;
+  let bagOpened19 = false;
+  try { bagOpened19 = sandbox.BagHud.open(bagSt19); } catch (e) { bagErr19 = e; }
+  ok(bagErr19 === null, '桩里打开背包不抛（取图链路没有 TypeError）',
+     bagErr19 && String(bagErr19.stack || bagErr19).split('\n').slice(0, 2).join(' | '));
+  ok(bagOpened19 === true, 'BagHud.open 返回 true（build 成功，说明桩够用）');
+  ok(log19.length > 0, '取图链路真的跑到了（否则下面几条是在量空气）');
+
+  const pick19 = function (tag) {
+    return log19.filter(function (s) { return s.indexOf(tag) === 0; });
+  };
+  const fits19 = pick19('fit:');
+  const equips19 = pick19('equip:');
+  const urls19 = pick19('url:');
+  // 日志前缀 'fit:' 只是分类用的：比 key 的时候统一削掉
+  const fitArgs19 = fits19.map(function (s) { return s.slice(4); });
+  eq(fitArgs19.slice(0, 3).join('/'),
+     'eq-head-leatherHelm@32x46/eq-head-ironHelm@32x46/eq-weapon-rustySword@32x46',
+     '三个背包格子按 CSS 盒子 32x46 先问 fitUrl（改前从不问）', fitArgs19.join('/'));
+  // 左右两列指向同一个部位，paintSlots 按部位遍历、每个部位画它那两个节点，
+  // 所以顺序是 head,head,torso,torso,... —— 不是"左列五个再右列五个"。
+  eq(fitArgs19.slice(3).join('/'),
+     ['eq-head-leatherHelm@20x28', 'eq-head-leatherHelm@20x28',
+       'eq-torso-chestPlate@20x28', 'eq-torso-chestPlate@20x28',
+       'eq-back-shortCape@20x28', 'eq-back-shortCape@20x28',
+       'eq-weapon-rustySword@20x28', 'eq-weapon-rustySword@20x28',
+       'eq-feet-windBoots@20x28', 'eq-feet-windBoots@20x28'].join('/'),
+     '十个穿戴槽（5 部位 x 左右两列）一律按 20x28 问 fitUrl', fitArgs19.slice(3).join('/'));
+  eq(equips19.length, 18,
+     'fitUrl 拿不到时 13 处（3 格 + 10 槽）退回整身图，纸娃娃再取 5 层',
+     equips19.join('/'));
+  eq(urls19.map(function (s) { return s.slice(4); }).join('/'), 'hero',
+     '纸娃娃底图仍走 url(hero)（只有这一处，没有别的整身取图）', urls19.join('/'));
+
+  const fitKeys19 = fits19.map(function (s) { return s.slice(4).split('@')[0]; });
+  const equipKeys19 = equips19.map(function (s) {
+    const p = s.slice(6).split(':');
+    return 'eq-' + p[0] + '-' + p[1];
+  });
+  eq(fitKeys19.join('/'), equipKeys19.slice(0, 13).join('/'),
+     '每条 fitUrl 的键与 equipUrl 自己拼的键逐条相同（拼错会拿到 __MISSING 占位图，不是 null）');
+
+  // 拿到了裁切图：退回次数必须归零 —— 证明交出去的是 fitUrl 的那张
+  log19.length = 0;
+  sandbox.SpriteLib.fitUrl = function (k, w, h) {
+    log19.push('fit:' + String(k) + '@' + w + 'x' + h);
+    return 'data:image/png;base64,FIT-' + k;
+  };
+  sandbox.BagHud.refresh();
+  const fitsB19 = pick19('fit:');
+  const equipsB19 = pick19('equip:');
+  eq(fitsB19.length, 13, '一次刷新问 13 次 fitUrl（3 格 + 10 槽）', fitsB19.length);
+  eq(equipsB19.length, 5,
+     '拿到裁切图后格子与槽位不再退回整身图（只剩纸娃娃那 5 层）',
+     equipsB19.join('/'));
+  eq(pick19('url:').map(function (s) { return s.slice(4); }).join('/'), 'hero',
+     '纸娃娃底图没变（那层刻意没改）', pick19('url:').join('/'));
+  ok(equipsB19.every(function (s) { return s.indexOf('equip:') === 0 && s.length > 6; }),
+     '纸娃娃的五层仍然是"整身取图"那条路（不传盒子尺寸时行为与改前完全一致）',
+     equipsB19.join('/'));
+
+  sandbox.BagHud.close();
+  sandbox.SpriteLib.fitUrl = realFit19;
+  sandbox.SpriteLib.equipUrl = realEquip19;
+  sandbox.SpriteLib.url = realUrl19;
 
   // ---- Task 18：图标盒子的 CSS 决定"内容占多大" ----
   /*

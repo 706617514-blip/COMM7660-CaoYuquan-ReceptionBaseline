@@ -1238,6 +1238,178 @@ const SCRIPT = `
   await wait(250);
   window.BagHud.close();
 
+  // ---- 背包取图：按内容紧裁切 + 整数倍放大（Task 19）----
+  /*
+   * 病：格子与穿戴槽还在画整身 40x60 画布 —— 同一顶皮盔在兵器架里是宽扁的
+   * 帽子（内容占比 1.000），进了背包只剩 32x46 盒子中央一条 13px 的色带
+   * （内容占比 0.108），玩家的原话是"背包里看不出是什么"。
+   * 药：格子按 32x46、穿戴槽按 20x28 去问 SpriteLib.fitUrl，取不到才退回整图；
+   * 纸娃娃那一层是"主角本体 + 五层叠图"，必须继续用整身画布，不许改。
+   *
+   * 读数全部来自同一帧（面板开着、35 格与 10 个槽都在 DOM 里）：每张图的
+   * naturalWidth x naturalHeight、内容包围盒占比、CSS 落点。明细在 RESULT.t19。
+   * 这一整段在 SCRIPT 模板字符串里：不许反引号，也不写美元大括号。
+   */
+  if (window.BagHud && typeof window.BagHud.open === 'function') {
+    const t19 = {};
+    const stT = window.EmberfieldApp.__state;
+    const snapEq19 = JSON.parse(JSON.stringify(stT.meta.equipment));
+    const snapBag19 = JSON.parse(JSON.stringify(stT.meta.bag));
+
+    // 夹具：10 件覆盖五个部位，其中三顶头盔（头部是最难认的那些）
+    const fix19 = [
+      ['leatherHelm'], ['ironHelm'], ['guardHelm'],
+      ['rustySword'], ['shortSword'], ['broadSword'], ['crystalStaff'],
+      ['chestPlate'], ['shortCape'], ['windBoots']
+    ];
+    stT.meta.bag.length = 0;
+    fix19.forEach(function (p, i) {
+      stT.meta.bag.push({ uid: 't19-' + i, id: p[0], level: 1 + (i % 3) });
+    });
+    stT.meta.equipment = {
+      head: { id: 'leatherHelm', level: 2 },
+      torso: { id: 'chestPlate', level: 1 },
+      back: { id: 'shortCape', level: 1 },
+      weapon: { id: 'rustySword', level: 3 },
+      feet: { id: 'windBoots', level: 1 }
+    };
+    window.BagHud.open(stT);
+    await wait(450);
+
+    // 内容包围盒（alpha > 8）：只有这样才知道"交出来的这张位图里，
+    // 内容到底占了多少"，光看自然尺寸分不出整身画布与裁切图。
+    const bbox19 = function (im) {
+      const nw = im.naturalWidth, nh = im.naturalHeight;
+      if (!nw || !nh) return null;
+      const cv = document.createElement('canvas');
+      cv.width = nw; cv.height = nh;
+      const c2 = cv.getContext('2d', { willReadFrequently: true });
+      if (!c2) return null;
+      c2.clearRect(0, 0, nw, nh);
+      c2.drawImage(im, 0, 0);
+      const d = c2.getImageData(0, 0, nw, nh).data;
+      let x0 = nw, y0 = nh, x1 = -1, y1 = -1;
+      for (let y = 0; y < nh; y++) {
+        for (let x = 0; x < nw; x++) {
+          if (d[(y * nw + x) * 4 + 3] > 8) {
+            if (x < x0) x0 = x;
+            if (x > x1) x1 = x;
+            if (y < y0) y0 = y;
+            if (y > y1) y1 = y;
+          }
+        }
+      }
+      if (x1 < 0) return { ratio: 0, w: 0, h: 0 };
+      return {
+        ratio: Math.round(((x1 - x0 + 1) * (y1 - y0 + 1)) / (nw * nh) * 1000) / 1000,
+        w: x1 - x0 + 1, h: y1 - y0 + 1
+      };
+    };
+    const read19 = function (im) {
+      const bb = bbox19(im);
+      const rc = im.getBoundingClientRect();
+      return {
+        nw: im.naturalWidth, nh: im.naturalHeight,
+        cssW: Math.round(rc.width), cssH: Math.round(rc.height),
+        aspect: im.naturalWidth ? Math.round(im.naturalHeight / im.naturalWidth * 1000) / 1000 : -1,
+        ratio: bb ? bb.ratio : -1, bw: bb ? bb.w : -1, bh: bb ? bb.h : -1
+      };
+    };
+    const min19 = function (list, k) {
+      return list.length ? Math.min.apply(null, list.map(function (r) { return r[k]; })) : null;
+    };
+    const max19 = function (list, k) {
+      return list.length ? Math.max.apply(null, list.map(function (r) { return r[k]; })) : null;
+    };
+
+    // (1) 网格：每格一张图
+    const cells19 = Array.prototype.slice.call(document.querySelectorAll('#bag .cell'));
+    t19.cells = cells19.length;
+    const cr19 = cells19[0] ? cells19[0].getBoundingClientRect() : null;
+    t19.cellW = cr19 ? Math.round(cr19.width * 10) / 10 : null;
+    t19.cellH = cr19 ? Math.round(cr19.height * 10) / 10 : null;
+    const srcs19 = {};
+    let srcN19 = 0;
+    t19.grid = [];
+    cells19.forEach(function (c, i) {
+      const im = c.querySelector('img');
+      if (!im) return;
+      const rec = read19(im);
+      rec.i = i;
+      rec.title = String(c.title || '');
+      t19.grid.push(rec);
+      const s = String(im.src);
+      if (!srcs19[s]) { srcs19[s] = 1; srcN19++; }
+    });
+    t19.filled = t19.grid.length;
+    t19.gridSrcDistinct = srcN19;
+    const dims19 = {};
+    let dimN19 = 0;
+    t19.grid.forEach(function (r) {
+      const k = r.nw + 'x' + r.nh;
+      if (!dims19[k]) { dims19[k] = 1; dimN19++; }
+    });
+    t19.gridDimDistinct = dimN19;
+    const widths19 = {};
+    let widthN19 = 0;
+    t19.grid.forEach(function (r) {
+      if (!widths19[r.nw]) { widths19[r.nw] = 1; widthN19++; }
+    });
+    // 只按宽度去重会假红：胸甲 63x54 与疾风靴 63x27 同宽 → 主断言用 nw x nh 对
+    t19.gridWidthDistinct = widthN19;
+    t19.minRatio = min19(t19.grid, 'ratio');
+    t19.maxCssW = max19(t19.grid, 'cssW');
+    t19.maxCssH = max19(t19.grid, 'cssH');
+    // 头部三件按标题里的「盔」认，不按格子序号（序号随整理/排序会变）
+    t19.heads = t19.grid.filter(function (r) { return r.title.indexOf('盔') >= 0; });
+    t19.headMinNatW = min19(t19.heads, 'nw');
+    t19.headMaxAspect = max19(t19.heads, 'aspect');
+    t19.headMinRatio = min19(t19.heads, 'ratio');
+
+    // (2) 穿戴槽：5 个部位 x 左右两列 = 10 个槽，已穿戴的每个都有图
+    const slotImgs19 = Array.prototype.slice.call(document.querySelectorAll('#bag-wear .slot img'));
+    t19.slotNodes = document.querySelectorAll('#bag-wear .slot').length;
+    t19.slotImgs = slotImgs19.length;
+    t19.slots = slotImgs19.map(function (im) {
+      const rec = read19(im);
+      const sl = im.parentNode;
+      rec.slot = sl && sl.dataset ? sl.dataset.slot : null;
+      return rec;
+    });
+    t19.slotRaw = t19.slots.filter(function (r) { return r.nw === 40 && r.nh === 60; }).length;
+    t19.slotMinRatio = min19(t19.slots, 'ratio');
+    t19.slotMaxW = max19(t19.slots, 'nw');
+    t19.slotMaxH = max19(t19.slots, 'nh');
+    t19.slotMaxCssW = max19(t19.slots, 'cssW');
+    t19.slotMaxCssH = max19(t19.slots, 'cssH');
+
+    // (3) 纸娃娃：1 张身体 + 已穿戴的 5 层，全部仍是 40x60 整身画布
+    const dollImgs19 = Array.prototype.slice.call(document.querySelectorAll('#bag-wear .doll img'));
+    t19.dollImgs = dollImgs19.length;
+    t19.doll = dollImgs19.map(function (im) {
+      const rec = read19(im);
+      rec.alt = im.alt;
+      return rec;
+    });
+    t19.dollRaw = dollImgs19.filter(function (im) {
+      return im.naturalWidth === 40 && im.naturalHeight === 60;
+    }).length;
+
+    // 量完成对还原：后面的用例依赖这份状态
+    stT.meta.equipment = snapEq19;
+    stT.meta.bag = snapBag19;
+    window.BagHud.refresh();
+    window.BagHud.close();
+    await wait(200);
+    t19.snapBag = snapBag19.length;
+    t19.restoredBag = stT.meta.bag.length;
+    t19.snapEq = Object.keys(snapEq19).filter(function (k) { return !!snapEq19[k]; }).length;
+    t19.restoredEq = Object.keys(stT.meta.equipment).filter(function (k) {
+      return !!stT.meta.equipment[k];
+    }).length;
+    out.t19 = t19;
+  }
+
   // ---- 背包面板收口（Task 10b）：尺寸 / 层级 / 跨页签勾选 / 保留件 / 拖动 ----
   // 本段整体在 SCRIPT 模板字符串里：注释里一个反引号都不许出现。
   // 上一段最后 close() 了面板，display:none 的元素 rect 全是 0，
@@ -2129,6 +2301,62 @@ const SMALLSCRIPT = `
   eq(t17.restoredHead, t17.headBefore, '量完把身上那件穿回去（否则后面的替换用例全红）');
   eq(t17.restoredWorn, t17.wornBefore, '还原后身上件数与测量前一致（不多不少）');
   eq(t17.restoredBag, t17.bagBefore, '还原后背包件数与测量前一致（没有凭空多/少）');
+
+  console.log('\n--- 3d-5. 背包取图：格子与穿戴槽也走紧裁切（Task 19）---');
+  /*
+   * 这一节量的是"背包里的图是不是同一件东西的紧裁切版"：
+   *   - 内容占比：整身 40x60 画布上，一顶皮盔的内容只占 0.108（13px 高的一条），
+   *     裁切后应当 1.000；这一条改前全红（0.043 ~ 0.170）。
+   *   - 头部尺寸：改前 naturalWidth 恒为 40（整身画布宽），裁切后是 60/44/54。
+   *   - 高宽比：改前恒 1.5（40x60 画布），裁切后 0.65 / 0.636 / 0.519。
+   *   - 纸娃娃那层必须反着红：它继续是 40x60 —— 那是"主角本体 + 五层叠图"，
+   *     裁切了就对不上场景里的角色。
+   */
+  const t19 = r.t19 || {};
+  eq(t19.cells, 35, '背包格子仍是 35 格（换取图方式没动网格）');
+  ok(typeof t19.cellW === 'number' && Math.abs(t19.cellW - 48) <= 1
+     && typeof t19.cellH === 'number' && Math.abs(t19.cellH - 54.6) <= 1,
+     '格子几何与改前一致（48 x 54.6，允许 +-1px）',
+     JSON.stringify([t19.cellW, t19.cellH]));
+  eq(t19.filled, 10, '夹具 10 件都画出了图（下面量的是 10 张真图，不是空气）');
+  ok(t19.maxCssW <= 32 && t19.maxCssH <= 46,
+     '格子图的 CSS 落点没越出 32x46 的盒子（CSS 不用改）',
+     t19.maxCssW + 'x' + t19.maxCssH);
+  ok(t19.minRatio >= 0.55,
+     '每张格子图里内容都占满画面（改前 0.043~0.170：整身画布中间那一条）',
+     'min ratio ' + t19.minRatio);
+  eq((t19.heads || []).length, 3, '三顶头盔都量到了（按标题里的「盔」认）',
+     JSON.stringify((t19.heads || []).map(function (h) { return h.title + ' ' + h.nw + 'x' + h.nh; })));
+  ok(t19.headMinNatW > 40,
+     '头部图的 naturalWidth 都 > 40（改前恒为 40：整身画布就那么宽）',
+     String(t19.headMinNatW));
+  ok(t19.headMaxAspect > 0 && t19.headMaxAspect < 1.0,
+     '头部图不再是整身画布的 3:2 比例（高/宽改前恒 1.5）', String(t19.headMaxAspect));
+  ok(t19.headMinRatio >= 0.55,
+     '头部图的内容占满画面（改前那一片内容只占画布的一成多）', String(t19.headMinRatio));
+  /*
+   * 两两不同只按宽度算会**假红**：胸甲裁成 63x54、疾风靴裁成 63x27，宽度都是 63。
+   * 所以主断言用 nw x nh 对（改后 10 对全不同），宽度去重数只当读数抄进报告。
+   */
+  eq(t19.gridDimDistinct, t19.filled,
+     '10 格各自的位图尺寸两两不同（每件取的是自己那张裁切图）',
+     JSON.stringify([t19.gridDimDistinct, t19.gridWidthDistinct, t19.filled]));
+  eq(t19.gridSrcDistinct, t19.filled, '10 格的图两两不同（没有共用一张整身图）');
+  eq(t19.slotImgs, 10, '5 个部位 x 左右两列 = 10 个穿戴槽都有图');
+  ok(t19.slotNodes === 10, '穿戴槽节点仍是 10 个（换取图方式没动布局）', t19.slotNodes);
+  eq(t19.slotRaw, 0, '穿戴槽里不再出现 40x60 的整身画布（改前 10 张全是 40x60）');
+  ok(t19.slotMinRatio >= 0.55,
+     '穿戴槽的图内容也占满画面（改前 0.043~0.158）', 'min ratio ' + t19.slotMinRatio);
+  ok(t19.slotMaxW <= 40 && t19.slotMaxH <= 56,
+     '穿戴槽的位图不超过盒子的 2 倍（20x28 的 @2x）',
+     t19.slotMaxW + 'x' + t19.slotMaxH);
+  ok(t19.slotMaxCssW <= 20 && t19.slotMaxCssH <= 28,
+     '穿戴槽的 CSS 落点没越出 20x28（CSS 不用改）',
+     t19.slotMaxCssW + 'x' + t19.slotMaxCssH);
+  eq(t19.dollImgs, 6, '纸娃娃 = 1 张身体 + 5 层已穿戴的叠图');
+  eq(t19.dollRaw, 6, '纸娃娃那 6 张仍是 40x60 整身画布（这层刻意没改，改了就和场景里的角色对不上）');
+  eq(t19.restoredBag, t19.snapBag, '量完把背包还原（不污染后面的用例）');
+  eq(t19.restoredEq, t19.snapEq, '量完把穿戴还原（不污染后面的用例）');
 
   console.log('\n--- 3e. 按 J 进田地：不能卡在黑屏 ---');
   eq(r.fieldZoneId, 'field', '站在田地区域上（不然按 J 进不去）');

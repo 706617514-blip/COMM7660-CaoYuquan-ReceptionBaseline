@@ -66,6 +66,17 @@
   // 不能共用那个常量：它在 app.js 的闭包里，没有导出。改这里要同步改那边。
   const LAYER_ORDER = ['back', 'torso', 'feet', 'head', 'weapon'];
 
+  /*
+   * 图片盒子 = index.html 的 CSS 盒子，紧裁切的放大倍数就是按它算的
+   * （SpriteLib.fitUrl 的 scale = floor(min(bw*2/盒宽, bh*2/盒高))）。
+   * 改 CSS 必须同步改这里，否则浏览器会在已经放大的位图上再缩一次，
+   * 整数倍的像素对齐就白做了。
+   *   #bag .cell img        width:32px; max-height:46px
+   *   #bag-wear .slot img   width:20px; height:28px
+   */
+  const CELL_BOX = { w: 32, h: 46 };
+  const SLOT_BOX = { w: 20, h: 28 };
+
   // 左栏底部的四项数值（设计 §4.1：装备变化时立即更新）。
   const STAT_ROWS = [
     { key: 'maxHp', label: '生命上限' },
@@ -138,9 +149,27 @@
     return spriteLib().url(key);
   }
 
-  function spriteUrl(slot, id) {
+  /**
+   * 装备贴图：拿到盒子尺寸就交"按内容紧裁切 + 整数倍放大"的那张（Task 19），
+   * 拿不到就退回整身 40×60 画布 —— 与改前的行为完全一致。
+   *
+   * 为什么不传盒子时要保持原样：纸娃娃那一层（paintDoll）是"主角本体 + 五层
+   * 叠图"，五张图共用一个 40×60 坐标系才叠得准。把它也裁了，图与图之间就对不齐，
+   * 面板里的小人会和场景里的角色长得不一样。
+   *
+   * 键必须与 SpriteLib.equipUrl 的拼法一致（'eq-' + slot + '-' + id）：那边没有
+   * 导出的键构造器，只能按同一个约定再拼一次。拼错时 fitUrl 拿到的是 Phaser 的
+   * __MISSING 占位纹理（不是 null，是一张能解码的图），画面上照样"有图"，
+   * 只是内容全错 —— Node 测试逐条比对了这两条路径交出的键。
+   */
+  function spriteUrl(slot, id, boxW, boxH) {
     if (!slot || !id) return null;
-    return spriteLib().equipUrl(slot, id);
+    const L = spriteLib();
+    if (boxW && boxH && typeof L.fitUrl === 'function') {
+      const fit = L.fitUrl('eq-' + slot + '-' + id, boxW, boxH);
+      if (fit) return fit;
+    }
+    return L.equipUrl(slot, id);
   }
 
   // ---------------------------------------------------------------- 数据
@@ -356,7 +385,7 @@
     cell.dataset.uid = entry.uid || '';
     const def = defOf(entry.id);
     const name = def ? def.name : entry.id;
-    const url = spriteUrl(def && def.slot, entry.id);
+    const url = spriteUrl(def && def.slot, entry.id, CELL_BOX.w, CELL_BOX.h);
     if (url) {
       const img = el('img');
       img.src = url;
@@ -408,7 +437,7 @@
         n.textContent = '';
         n.className = 'slot' + (it ? ' on' : ' empty');
         if (it) {
-          const url = spriteUrl(slot, it.id);
+          const url = spriteUrl(slot, it.id, SLOT_BOX.w, SLOT_BOX.h);
           if (url) {
             const img = el('img');
             img.src = url;
@@ -453,6 +482,7 @@
     LAYER_ORDER.forEach(function (slot) {
       const it = eq[slot];
       if (!it) return;
+      // 不传盒子：纸娃娃要的是整身 40x60 画布，五层才叠得准（见 spriteUrl 注释）
       const url = spriteUrl(slot, it.id);
       if (!url) return;
       const def = defOf(it.id);
