@@ -91,14 +91,15 @@ checked with `lsof` before and after).
 | `tests/test_audio.js` | 0 | 103 | |
 | `tests/test_bag.js` | 0 | 172 | |
 | `tests/test_game_logic.js` | 0 | 521 | |
-| `tests/test_game_meta.js` | 0 | 164 | |
-| `tests/test_game_page.js` | 0 | 80 | |
-| `tests/browser/smoke.js` | 0 | 322 | Electron, ~43 s, real canvas |
+| `tests/test_game_meta.js` | 0 | 186 | |
+| `tests/test_game_page.js` | 0 | 151 | |
+| `tests/browser/smoke.js` | 0 | 396 | Electron, ~45 s, real canvas |
 | `tests/test_product_app.js` | 0 | 70 | Phase 1 app; `analysis/build_report2.py` re-counts it live |
 
-103 + 172 + 521 + 164 + 80 + 322 = **1,362** assertions across the six game suites, all exit 0.
+103 + 172 + 521 + 186 + 151 + 396 = **1,529** assertions across the six game suites, all exit 0.
 
-(1,348 before Task 16 added 14 geometry assertions — see the defect note below.)
+(1,362 before Tasks 17–19 added panel item art, the anvil category tabs and the
+tight-cropped sprite pipeline — 97 + 35 + 35 assertions; see the panel-art note below.)
 
 The smoke run's own readout, verbatim:
 
@@ -124,6 +125,28 @@ moment, not inferred from the image.
 | `/tmp/t15-esc-run.png` | ESC during a run: two rows — 设置 (dark) and 退出战斗 (red-tinted, `rgb(255,180,168)`), run scene paused, HUD dimmed behind the overlay. |
 | `/tmp/t15-settings.png` | Settings page: 音乐 and 音量 rows, each a 208×22 px track with an 8 px green fill to 30 % and a 16 px white round thumb, value 30 in gold to the right, the note "暂无 BGM · 音乐通道未接入（滑块只保存设置，不发声）" under the music row, 返回 bottom-right. Dragging 音量 to 70 moves value, label, fill and the real gain together (0.300 → 0.700); dragging 音乐 to 10 leaves the gain at 0.700. |
 | `/tmp/t15-v2-import.png` | A version-2 save imported through the code box, then entered. The hub renders with the three mature plots from that save, the player name is the imported one, no white screen, no console error. |
+
+### A defect this pass found: the shop panels had no item art at all
+
+Recorded because it is the same failure shape as the batch-bar bug — 1,362 green
+assertions, and the feature was simply not there.
+
+The design (§5.1) requires every weapon-rack row to show that item's sprite. Measured
+in the real browser: `{"title":"兵器架","rows":35,"tabs":5,"imgs":0}` — the tabs shipped,
+the rows were plain text. The anvil panel (`铁匠铺`) was worse: `{"rows":3,"tabs":0,"imgs":0}`,
+three text rows with no categories. The acceptance table had no clause saying an image
+must exist, so nothing could fail.
+
+Fixed in three passes, each one found by looking at the previous one's screenshot:
+
+| Task | What | Commit |
+|---|---|---|
+| 17 | `game/sprites.js` + `SpriteLib.url`; 28×28 upgrade icons baked in `app.js`; anvil tabs 全部/攻击/生存/机动; `<img>` in every shop row | `a8c48b4` |
+| 18 | `SpriteLib.fitUrl(key, boxW, boxH)` — crop to the non-transparent bounding box, then integer-scale (nearest neighbour). Panel icon content coverage went 0.043–0.28 → **1.000** | `3e48645` |
+| 19 | Same pipeline in the bag grid (32×46) and the ten worn slots (20×28). Hero doll deliberately left on the full 40×60 sheet | `893fce0` |
+
+New acceptance rows V31 / V32 pin the images (count, distinctness, `naturalWidth`,
+decoded-pixel coverage) so this cannot silently regress again.
 
 ### Old save: version 2 → 6
 
