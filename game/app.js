@@ -35,6 +35,16 @@
    */
   const GameAudio = global.GameAudio || { play: function () { return false; } };
 
+  /*
+   * Boss 姿态纯函数（Task 25）。bosspose.js 必须在本文件之前加载。
+   *
+   * 和 GameAudio 同样的处理：拿不到就退回 null，update 里跳过手臂绘制，
+   * 而不是每帧抛 TypeError（Boss 战整段渲染都会断）。
+   * 注意这是**降级**而不是正确行为 —— tests/test_game_page.js 钉了
+   * "BossPose 已挂在全局、compute/segments 是函数"，漏引脚本那里就红。
+   */
+  const BossPose = global.BossPose || null;
+
   const W = 960, HGT = 600;
   const GROUND_Y = C.GROUND_Y;
   // 每单位 z 对应的屏幕竖直位移。
@@ -55,6 +65,30 @@
     sy: GROUND_Y - z * Z_TO_Y - h,
     sc: 1 - (z / C.FIELD_D) * Z_SCALE,
   });
+
+  /*
+   * 两个颜色按 t 线性混合（0 → c0，1 → c1）。
+   * 不用 Phaser.Display.Color.Interpolate：Node 里的 Phaser 桩没那么全，
+   * 而这里只需要三通道整数插值，自己算的结果在两边完全一致。
+   */
+  function mixColor(c0, c1, t) {
+    const k = t < 0 ? 0 : (t > 1 ? 1 : t);
+    const r = Math.round(((c0 >> 16) & 255) + (((c1 >> 16) & 255) - ((c0 >> 16) & 255)) * k);
+    const g = Math.round(((c0 >> 8) & 255) + (((c1 >> 8) & 255) - ((c0 >> 8) & 255)) * k);
+    const b = Math.round((c0 & 255) + ((c1 & 255) - (c0 & 255)) * k);
+    return (r << 16) | (g << 8) | b;
+  }
+
+  /*
+   * 每只怪一个稳定的 0..1 种子（手臂摆动相位错开一点，几只 Boss 不会同步得像队列）。
+   * 用 id 的字符和，而不是 Math.random()：后者每帧都变，手臂会抖成故障。
+   */
+  function rndSeed(e) {
+    const id = String(e.id == null ? 'boss' : e.id);
+    let h = 0;
+    for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) & 0xffff;
+    return (h % 100) / 100;
+  }
 
   // ================================================================ 主角装备分层
   /**
@@ -1988,6 +2022,29 @@
       // 1400 高于所有 Boss 可能的深度，保证光点永远在最上层。
       this.bossGfx = this.add.graphics().setDepth(1400);
 
+      /*
+       * Boss 的藤蔓手臂层（Task 25）。
+       *
+       * 单独一层 Graphics，depth 跟着 boss 的 z 每帧重设（1000 - z + 1）：
+       * 比本体高一层，否则会被自己的躯干挡掉一半；但不能高过 effectGfx(1050)，
+       * 蓄力光点还得盖在手臂上。
+       *
+       * 姿态数值全部来自 game/bosspose.js（纯函数，Node 里测得到）。
+       * 这一层只负责把数值变成像素。
+       */
+      this.bossArmGfx = this.add.graphics().setDepth(1400);
+      // 上一帧的 boss 位置：本帧位移是 walk 判据的输入。
+      this.bossPrevPos = null;
+      // 上一帧的相位：compute() 是纯函数，相位由这里保存并回传。
+      this.bossPosePhase = 0;
+      // 本帧姿态（smoke 测试读 __bossPose.state 用；也是调试时的唯一读数）。
+      this.__bossPose = null;
+      // 手臂线段计数：证明"每帧真的重画了"，而不是画一次就停。
+      this.__armDebug = { frames: 0, segments: 0 };
+      // 脚下扬尘（footfall 时撒 3~5 个点，200ms 淡出）。
+      // 必须自己维护生命周期：Graphics 每帧 clear，浮点存在数组里才能活过一帧。
+      this.bossDust = [];
+
       this.shadow = this.add.image(0, 0, 'shadow').setDepth(1).setScale(0.8);
       this.hero = makeHero(this, 100);
       // 主角与小怪在 1000-z（z∈[0,210] → 790~1000），
@@ -2262,6 +2319,156 @@
       }
     }
 
+    /*
+     * 画 Boss 的两条藤蔓手臂（Task 25，设计文档 §3.1）。
+     *
+     * 为什么不画进 bossSprite：贴图是死的 191×321 PNG，躯干和腿都在里面。
+     * 手臂要随状态连续变化（站着微摆、走路甩、蓄力抬起、下砸落手），
+     * 逐帧图做不到（一张立绘 8 帧就要 8 张图），所以在独立 Graphics 层
+     * 每帧重画：躯干继续用 PNG，手臂是参数化的藤蔓。
+     *
+     * 坐标系：一切都相对"这一帧最终画出来的那具躯干"。
+     *   原点 = 贴图底边中点（origin 0.5,1）的当前位置 bodySx/bodySy
+     *   anchorX/anchorY 是 PIL 从 PNG 上逐像素量出的**贴图归一化**坐标，
+     *   所以要乘贴图尺寸、再乘当前缩放（含 squash 带来的 sx/sq）。
+     *   漏乘 scale 的话手臂会是贴图尺寸的 1/2.4 长，缩在躯干中间。
+     */
+    drawBossArms(e, pose, o) {
+      const g = this.bossArmGfx;
+      if (!g || !BossPose) return;
+      const B = C.BOSS;
+
+      // z 每帧都在变：走远要变小、也要排到更靠后的小怪后面。
+      // 比躯干高一层（+1），保证手臂压在自己身上而不是被吞掉。
+      g.setDepth(1000 - e.z + 1);
+
+      const texH = o.texH, texW = o.texW;
+      const SX = o.scale * o.sx;          // 贴图 x 方向的实际像素倍率
+      const SY = o.scale * o.sq;
+      // 六节基长 0.085×贴图高，累加（比 1+0.86+0.74+0.63+0.54+0.46=4.23 倍）
+      // 约 0.36×贴图高 —— 长度的量法：手臂比躯干窄，长度约到躯干 1/3 高。
+      const baseLen = B.armBaseLen * texH * o.scale;
+      const ratio = B.armSegRatio;
+      const n = ratio.length;
+      // 下垂时两臂向外张开（不然整条手臂落在躯干轮廓里面，等于没画）。
+      // 抬起来时张开收敛，两手在头顶附近汇合。
+      // 注意：这里的"外"是屏幕意义上的左右，所以张开角不能乘 facing ——
+      // 一开始乘了，实测朝左走时两条手臂一起向内偏，右手臂横穿身体。
+      const spread = (B.armSpread || 0.42) * (1 - pose.armRaise);
+      const seed = rndSeed(e);            // 每只怪一个固定抖动种子，别每帧乱跳
+      let segs = 0;
+
+      for (let a = 0; a < 2; a++) {
+        const side = a === 0 ? 1 : -1;    // +1 前臂，-1 后臂
+        // 锚点（贴图归一化 → 相对躯干原点的像素）
+        const ax = side;
+        const lx0 = ax * B.armAnchorX * texW * SX;
+        const ly0 = -(1 - B.armAnchorY) * texH * SY;
+        // 躯干有 lean（倾斜）时，锚点必须绕 origin 一起转，
+        // 否则转身时手臂会从肩膀"滑"出去。
+        const cs = Math.cos(o.rot), sn = Math.sin(o.rot);
+        let x = o.bodySx + lx0 * cs - ly0 * sn;
+        let y = o.bodySy + lx0 * sn + ly0 * cs;
+
+        // 基角：PI/2 = 竖直向下，0 = 朝前。armRaise 从 0→1 把手抬到头顶上方。
+        // 两侧用同一个基角，靠下面的 mx 做镜像 —— 这样抬起时两臂对称向外张开，
+        // 不会一条向左一条也向左（那会让一条手臂横穿躯干）。
+        const base = Math.PI / 2 - pose.armRaise * (Math.PI * 0.92) - spread;
+        const mx = side > 0 ? 1 : -1;     // 镜像轴：屏幕竖直中线
+        // 后臂相位错 PI：两条手臂左右摆反相，像走路时的手
+        const angles = BossPose.segments(base, pose.armSwing,
+          pose.armPhase + (side < 0 ? Math.PI : 0) + seed * side * 0.12, n);
+
+        // 先把六节的折点算出来，再分两遍画：一遍深色描边、一遍亮色主线。
+        // 不能逐节"描边+主线"交替画 —— 下一节的描边会盖住上一节的亮色，
+        // 关节处会出现一圈黑牙。
+        const px = [x], py = [y];
+        for (let i = 0; i < n; i++) {
+          const len = baseLen * (ratio[i] || 1);
+          x = x + mx * Math.cos(angles[i]) * len;
+          y = y + Math.sin(angles[i]) * len;
+          px.push(x); py.push(y);
+        }
+        // 肩关节：根部一颗小圆，否则六节直线像凭空从胸口长出来的一根棍子。
+        const jr = Math.max(1.6, B.armWidthRoot * 0.72 * o.scale);
+        g.fillStyle(0x14100b, 0.55);
+        g.fillCircle(px[0], py[0], jr + 1.2 * o.scale);
+        g.fillStyle(mixColor(B.armColorRoot, 0x9a8868, 0.35), 0.96);
+        g.fillCircle(px[0], py[0], jr);
+        // 描边：躯干本身就是一大团同色藤蔓（贴图平均色 0x433b30），
+        // 亮色的 6 节线直接压上去会和背景糊成一片。加一圈近黑描边，
+        // 手臂才"读"得出来 —— 实测不加时 idle/walk 两张图肉眼几乎看不出手臂。
+        for (let i = 0; i < n; i++) {
+          const t0 = i / (n - 1);
+          const w = (B.armWidthRoot + (B.armWidthTip - B.armWidthRoot) * t0) * o.scale;
+          g.lineStyle(Math.max(1, w + 2.2 * o.scale), 0x14100b, 0.55);
+          g.lineBetween(px[i], py[i], px[i + 1], py[i + 1]);
+        }
+        // 主线：根部粗、尖端细；根部亮（0x7a6a55）到尖端暗（0x5c4c3e）。
+        // 这两个色都比躯干的 0x4a4038 亮 —— 手臂要能从身上"读"出来。
+        for (let i = 0; i < n; i++) {
+          const t0 = i / (n - 1);
+          const w = (B.armWidthRoot + (B.armWidthTip - B.armWidthRoot) * t0) * o.scale;
+          const col = mixColor(B.armColorRoot, B.armColorTip, t0);
+          g.lineStyle(Math.max(1, w), col, 0.98 - 0.14 * t0);
+          g.lineBetween(px[i], py[i], px[i + 1], py[i + 1]);
+          segs++;
+        }
+
+        // 尖端两片藤叶：只有两节粗线的末端会显得像电线杆。
+        const leafA = angles[n - 1];
+        const LL = 0.05 * texH * o.scale;
+        for (let k = -1; k <= 1; k += 2) {
+          const a2 = leafA + k * 0.8;
+          const apx = x + mx * Math.cos(a2) * LL;
+          const apy = y + Math.sin(a2) * LL;
+          const b1x = x + mx * Math.cos(a2 + 0.3) * LL * 0.5;
+          const b1y = y + Math.sin(a2 + 0.3) * LL * 0.5;
+          const b2x = x + mx * Math.cos(a2 - 0.3) * LL * 0.5;
+          const b2y = y + Math.sin(a2 - 0.3) * LL * 0.5;
+          g.fillStyle(mixColor(B.armColorTip, 0x9c8a63, 0.55), 0.92);
+          g.fillTriangle(b1x, b1y, apx, apy, b2x, b2y);
+        }
+      }
+
+      // ---- 脚下扬尘：只在 footfall 那一帧撒 3~5 个点 ----
+      // 关键是"那一帧"：每帧都撒的话 60fps 下会变成一条烟柱。
+      if (pose.footfall) {
+        const feet = toScreen(e.x, e.z, 0);
+        const cnt = 3 + Math.floor(Math.random() * 3);      // 3..5
+        for (let i = 0; i < cnt; i++) {
+          const ang = -Math.PI * (0.12 + Math.random() * 0.76);
+          const sp = (0.5 + Math.random() * 0.9) * 46 * o.scale;
+          this.bossDust.push({
+            x: feet.sx + (Math.random() - 0.5) * 40 * o.scale,
+            y: feet.sy - Math.random() * 6,
+            vx: Math.cos(ang) * sp * (0.4 + Math.random() * 0.6),
+            vy: Math.sin(ang) * sp,
+            life: 0,
+            ttl: 0.20 + Math.random() * 0.08,               // 200ms 左右
+            r: (1.5 + Math.random() * 1.5) * o.scale,
+          });
+        }
+      }
+      // 扬尘逐帧推进；Graphics 每帧被 clear，粒子状态必须存在数组里。
+      for (let i = this.bossDust.length - 1; i >= 0; i--) {
+        const d = this.bossDust[i];
+        d.life += o.dt;
+        if (d.life >= d.ttl) { this.bossDust.splice(i, 1); continue; }
+        d.x += d.vx * o.dt;
+        d.y += d.vy * o.dt;
+        d.vx *= 0.93;
+        d.vy *= 0.93;
+        const k = d.life / d.ttl;
+        g.fillStyle(0x9d927c, (1 - k) * 0.5);
+        g.fillCircle(d.x, d.y, d.r * (1 + k * 1.6));
+      }
+
+      // 调试读数：smoke 靠它确认"这一帧真的画了手"（不是靠像素）。
+      this.__armDebug.segments = segs;
+      this.__armDebug.frames += 1;
+    }
+
     update(time, delta) {
       const dt = Math.min(delta / 1000, 0.05);
       const run = this.state.run;
@@ -2290,6 +2497,11 @@
       // 屏幕上会出现莫名其妙的色块和长条（真实踩过这个坑）。
       this.effectGfx.clear();
       this.bossGfx.clear();
+      // 手臂层同样每帧清：Boss 会死、会回基地、会重开一局。
+      // 不清的话玩家会在空地上看到两条浮空的藤蔓（这是个很容易漏的坑：
+      // bossSprite 在场景里是复用的，隐藏 sprite 不会顺手清掉另一层的图形）。
+      this.bossArmGfx.clear();
+      this.bossArmDrawn = false;
 
       /*
        * 灼烧 / 冰霜地面区。
@@ -2453,38 +2665,51 @@
           .setSize(150 * scale, 34 * scale)
           .setDepth(1000 - e.z - 1);
 
-        // ================= Boss 动作动画 =================
-        // 按 game-feel 技能的做法：**tween + squash & stretch**，而不是逐帧图。
+        // ================= Boss 动作（Task 25）=================
+        // 姿态改成**纯函数**算：game/bosspose.js 的 compute() 按状态给出
+        // bob / squash / lean / armRaise / armSwing / armPhase / footfall，
+        // 这里只负责把数值变成像素。
         //
-        // 为什么不用逐帧：一张立绘做 8 帧动画需要 8 张图，而 Boss 只有一张。
-        // 形变驱动的好处是**随状态实时变化** —— 蓄力时抖动、受击时后仰、
-        // 出手时前倾，这些都能从战斗状态直接算出来，不需要额外的美术。
+        // 为什么不再写 Math.sin：以前呼吸一套、蓄力抖动一套、走路起伏一套，
+        // 三套正弦互相叠加（蓄力时既后仰又抖 = 抽搐），而且 Node 里测不到，
+        // 姿态错了只能靠肉眼看截图 —— 一天看不了几张。现在 9 条不变量在
+        // tests/test_bosspose.js 里钉着，改坏了立刻红。
         //
-        // 每个动作遵循同一套规则：
-        //   瞬间形变（快）→ 缓动回正（慢），且都带一点过冲。
-        //   这就是 game-feel 里说的"juice is transient, not a new resting state"。
+        // 位移必须先过 refMove()：60fps 下 26 u/s 的 Boss 每帧水平只走 0.43，
+        // 原始位移永远够不到 0.5 的走路阈值（bosspose.js 文件头有实测勘误）。
+        if (!this.bossPrevPos) this.bossPrevPos = { x: e.x, z: e.z };
+        const moved = BossPose.refMove(e.x - this.bossPrevPos.x,
+                                       e.z - this.bossPrevPos.z, dt);
+        this.bossPrevPos.x = e.x;
+        this.bossPrevPos.z = e.z;
+        const chargeNow = e.casting
+          ? Math.max(0, Math.min(1, 1 - (e.casting.timer / e.casting.windup)))
+          : 0;
+        const pose = BossPose.compute({
+          dx: moved.dx, dz: moved.dz,
+          casting: e.casting || null,
+          facing: e.facing >= 0 ? 1 : -1,
+          phase: this.bossPosePhase,
+          dt: dt, time: time,
+          charge: chargeNow,
+        });
+        this.bossPosePhase = pose.phase;
+        this.__bossPose = pose;          // smoke / 调试读它
+        this.bossArmDrawn = true;
 
-        // 用 time 驱动的正弦做"呼吸"，让静止时也不是死的
-        const breathe = Math.sin(time / 620) * 0.014;
-        let sx = 1 + breathe, sy = 1 - breathe;      // 体积守恒：一轴胀一轴缩
-        let rot = 0;                                  // 倾斜（弧度）
-        let dyOff = 0;                                // 垂直偏移
+        // 姿态 → 形变。sx 由 squash 反推（体积守恒：压扁就必须变宽）。
+        // pose.bob 的单位是**贴图未缩放像素**，所以乘 scale 才是屏幕位移。
+        let sq = pose.squash;
+        let rot = pose.lean;
         let dxOff = 0;
+        const bobOff = pose.bob * scale;
+        let sxMul = 1;
         let tint = 0xffffff;
 
         if (e.casting) {
-          // ---- 蓄力：粒子光芒汇聚 + 身体后仰抖动 ----
+          // ---- 蓄力：粒子光芒汇聚（后仰/压扁已由 pose 给出，抖动删除）----
           const t = time / 1000;
-          const charge = 1 - (e.casting.timer / e.casting.windup);   // 0 → 1
-          // 蓄力越深，抖动越快越明显
-          const shakeAmp = 1.5 + charge * 4.5;
-          dxOff = Math.sin(t * (18 + charge * 26)) * shakeAmp;
-          dyOff = Math.cos(t * (23 + charge * 30)) * shakeAmp * 0.5;
-          // 身体被"压缩蓄势"：越接近释放越扁
-          sy = 1 - charge * 0.10;
-          sx = 1 + charge * 0.08;
-          // 微微后仰
-          rot = -0.045 * charge * (e.facing >= 0 ? 1 : -1);
+          const charge = chargeNow;                                  // 0 → 1
           tint = charge > 0.6 ? 0xffd0c0 : 0xffffff;
 
           // 粒子光芒汇聚（第二版）。
@@ -2560,11 +2785,16 @@
           }
         } else if (e.attackCd > (C.BOSS.attackCooldown / (C.BOSS.tiers[tier].speedMul || 1)) - 0.28) {
           // ---- 近身出手：前倾横扫（用 attackCd 刚被重置的窗口判断"刚出手"）----
-          const t = time / 1000;
-          const k = 1 - ((C.BOSS.attackCooldown / (C.BOSS.tiers[tier].speedMul || 1)) - (C.BOSS.attackCooldown / (C.BOSS.tiers[tier].speedMul || 1)) + (e.attackCd - ((C.BOSS.attackCooldown / (C.BOSS.tiers[tier].speedMul || 1)) - 0.28))) / 0.28;
+          // 这是**瞬时反应**，不是姿态，所以叠在 pose 上（+=/*=），不替换它。
+          // 夹在 [0,1]：正常的 attackCd 永远落在窗口内（3.1~4.43），但只要有
+          // 任何东西把它推高（调试、以后的减速/狂暴字段），k 会变成 -200，
+          // dxOff 就是 ±3200 —— 贴图直接被甩出屏幕、scaleX 变成 11 倍。
+          // 实测过：一次探针把 attackCd 设成 60，Boss 就飞到了 x=-2128。
+          const k = Math.max(0, Math.min(1,
+            1 - ((e.attackCd - ((C.BOSS.attackCooldown / (C.BOSS.tiers[tier].speedMul || 1)) - 0.28)) / 0.28)));
           dxOff = e.facing * 16 * (1 - k);
-          rot = e.facing * 0.10 * (1 - k);
-          sx = 1 + 0.06 * (1 - k);
+          rot += e.facing * 0.10 * (1 - k);
+          sxMul *= 1 + 0.06 * (1 - k);
         }
 
         if (e.hitFlash > 0) {
@@ -2572,32 +2802,41 @@
           // 用 hitFlash（0.12s）作为窗口，短暂但明确
           const k = e.hitFlash / 0.12;
           dxOff -= e.facing * 10 * k;                // 被击退的方向
-          sy = 1 - 0.06 * k;
-          sx = 1 + 0.05 * k;
-          rot = -e.facing * 0.05 * k;
+          sq *= 1 - 0.06 * k;
+          sxMul *= 1 + 0.05 * k;
+          rot += -e.facing * 0.05 * k;
           tint = 0xffc0b0;
         }
 
         if (e.stun > 0) {
           // ---- 僵直：低头、压扁、不动 ----
-          sy *= 0.94;
-          sx *= 1.04;
+          sq *= 0.94;
+          sxMul *= 1.04;
           rot += 0.06 * (e.facing >= 0 ? 1 : -1);
           tint = 0xd8d8d8;
         }
 
-        // 走路：缓慢的上下起伏 + 轻微左右摇摆。
-        // Boss 移速只有 26，所以摆动要慢而重，像庞然大物在挪动。
-        if (!e.casting && e.stun <= 0 && e.hitFlash <= 0) {
-          const walk = Math.sin(time / 480);
-          dyOff += Math.abs(walk) * 3 * scale;
-          rot += walk * 0.022 * (e.facing >= 0 ? 1 : -1);
-        }
+        // 走路的上下起伏 / 左右摇摆现在由 pose.bob 与 pose.lean 给出
+        // （以前这里是第三条手写正弦，和呼吸、蓄力抖动叠在一起）。
 
-        this.bossSprite.setScale(scale * sx, scale * sy);
+        const sx = (1 + (1 - sq)) * sxMul;
+        this.bossSprite.setScale(scale * sx, scale * sq);
         this.bossSprite.setRotation(rot);
-        this.bossSprite.setPosition(bs.sx + dxOff, gy + dyOff);
+        this.bossSprite.setPosition(bs.sx + dxOff, gy + bobOff);
         this.bossSprite.setTint(tint);
+
+        // ---- 两条藤蔓手臂 ----
+        // 必须画在躯干之后（同一帧里后画的盖在上面），并且单独一层：
+        // 手臂要从躯干"长出来"而不是被躯干挡掉一半。
+        this.drawBossArms(e, pose, {
+          scale: scale,
+          texW: this.bossSprite.width,
+          texH: texH,
+          bodySx: bs.sx + dxOff,
+          bodySy: gy + bobOff,
+          sx: sx, sq: sq, rot: rot,
+          dt: dt,
+        });
 
         // ---- 光环与技能特效 ----
         // 作用有二：盖住抠图残留的灰边；强化"异界入侵"的压迫感。
@@ -2677,6 +2916,16 @@
           }
         }
       });
+
+      // 这一帧**没有** Boss（还没刷 / 已经打死 / 开局回基地）：
+      // 手臂层必须是空的。bossSprite 是复用的精灵，隐藏它不会顺手清掉
+      // 另一个 Graphics 层上的图形 —— 漏掉这一步，玩家会在空地上看到两条浮空的藤蔓。
+      if (!this.bossArmDrawn) {
+        this.bossArmGfx.clear();
+        this.bossDust.length = 0;
+        this.bossPrevPos = null;
+        this.__bossPose = null;   // 免得调试/smoke 读到已死 Boss 的姿态
+      }
 
       // 小怪
       run.enemies.forEach((e, i) => {

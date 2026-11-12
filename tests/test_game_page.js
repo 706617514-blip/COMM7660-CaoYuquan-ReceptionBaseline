@@ -121,8 +121,9 @@ const html = fs.readFileSync(HTML, 'utf-8');
 const srcs = [...html.matchAll(/<script src="([^"]+)"/g)].map(m => m[1]);
 eq(JSON.stringify(srcs), JSON.stringify([
   'vendor/phaser.min.js', 'config.js', 'sprites.js', 'audio.js', 'logic.js', 'profile.js',
-  'hub.js', 'baghud.js', 'app.js',
-]), '脚本加载顺序正确（Phaser 先于 app.js；sprites.js 早于 baghud.js/app.js，它们要用）');
+  'hub.js', 'baghud.js', 'bosspose.js', 'app.js',
+]), '脚本加载顺序正确（Phaser 先于 app.js；sprites.js 早于 baghud.js/app.js，它们要用；'
+  + 'bosspose.js 早于 app.js —— app.js 求值时就要抓 BossPose）');
 
 let bootErr = null;
 try {
@@ -137,6 +138,9 @@ try {
   loadModule('game/profile.js');
   loadModule('game/hub.js');
   loadModule('game/baghud.js');
+  // bosspose.js 只依赖 config.js，且必须早于 app.js —— 后者在模块求值时就抓了
+  // global.BossPose（拿不到会退回"手臂不画"的空实现，页面全绿但 Boss 还是死图）。
+  loadModule('game/bosspose.js');
   loadModule('game/app.js');
 } catch (e) { bootErr = e; }
 ok(!bootErr, '模块加载不抛异常', bootErr && bootErr.message);
@@ -144,6 +148,9 @@ ok(!bootErr, '模块加载不抛异常', bootErr && bootErr.message);
 ok(typeof sandbox.GameHub === 'object', 'GameHub 已挂在全局');
 ok(typeof sandbox.SpriteLib === 'object', 'SpriteLib 已挂在全局（贴图键 → dataURL，铁匠铺与兵器架共用）');
 ok(typeof sandbox.EmberfieldApp === 'object', 'EmberfieldApp 已挂在全局');
+ok(typeof sandbox.BossPose === 'object', 'BossPose 已挂在全局（Boss 姿态纯函数）');
+eq(typeof (sandbox.BossPose && sandbox.BossPose.compute), 'function', 'BossPose.compute 存在');
+eq(typeof (sandbox.BossPose && sandbox.BossPose.segments), 'function', 'BossPose.segments 存在');
 ok(typeof sandbox.EmberfieldApp.FarmScene === 'function', '农场场景已定义并注册');
 ok(['BootScene', 'HubScene', 'RunScene', 'FarmScene'].every(
   (k) => typeof sandbox.EmberfieldApp[k] === 'function'),

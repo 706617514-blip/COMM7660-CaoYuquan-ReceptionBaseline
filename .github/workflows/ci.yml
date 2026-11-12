@@ -177,6 +177,11 @@ jobs:
         # 用 AudioContext 桩跑，不需要真声卡；真浏览器那层在 smoke 里。
         run: node tests/test_audio.js
 
+      - name: Boss walk and arm-raise pose (pure functions)
+        # 手臂六节方向、走路/蓄力/下砸四态判据、9 条不变量（抬手高度、
+        # 起伏幅度、footfall 频率、纯函数）。这些以前只有肉眼看截图能验。
+        run: node tests/test_bosspose.js
+
       - name: Page wiring under a DOM shim
         # 逻辑测试抓不到接线错误：id 拼错、事件没绑、面板按钮点了没反应。
         # 这一层会执行 index.html 里真实的 inline 脚本（Phaser 用最小桩）。

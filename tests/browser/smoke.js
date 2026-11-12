@@ -130,7 +130,10 @@ app.whenReady().then(async () => {
   process.stdout.write(out.join('\\n'));
   app.exit(0);
 });
-setTimeout(() => { process.stdout.write(out.join('\\n') + '\\nTIMEOUT'); app.exit(2); }, 60000);
+// 预算从 60s 提到 150s（Task 25）：加上 Boss 姿态那一段（要等 Boss 真的走动、
+  // 再等它真的起手）后整段页面脚本逼近原来的 60s 上限，于是驱动先超时、
+  // 断言一条都没跑 —— 报出来是"驱动未返回结果"，而不是"某条断言失败"。
+  setTimeout(() => { process.stdout.write(out.join('\\n') + '\\nTIMEOUT'); app.exit(2); }, 150000);
 `);
 
 const SCRIPT = `
@@ -419,6 +422,101 @@ const SCRIPT = `
       out.potionBarHasActive = bar ? !!bar.querySelector('.po.active') : false;
       // 持有量必须落到 DOM 上，否则玩家看不到自己还有几瓶
       out.potionBarText = bar ? bar.textContent.replace(/\\s+/g, '') : '';
+    }
+  }
+
+  // ---- 3c1. Boss 走路与抬手（Task 25）----
+  // 为什么只能在这里验：手臂是**每帧重画**的 Graphics 层，Node 里的 Phaser 是
+  // 桩、没有渲染循环，桩测试只能证明"算出了姿态"，证明不了"这一帧画了手"。
+  // 判据全部读 RunScene 自己留下的读数（__bossPose / __armDebug / commandBuffer），
+  // 不读像素 —— 像素只能证明"画了东西"，证明不了画的是走路还是蓄力。
+  {
+    out.bossPoseGlobal = !!(window.BossPose &&
+      typeof window.BossPose.compute === 'function' &&
+      typeof window.BossPose.segments === 'function');
+
+    // 走真实入口：HubScene.startBossRun 是玩家点"Boss 战"进的那条路
+    // （清波次 + spawnBoss + scene.start('Run')）。
+    const hubBoss = globalThis.__game
+      ? globalThis.__game.scene.getScene('Hub') : null;
+    out.bossEntry = !!(hubBoss && typeof hubBoss.startBossRun === 'function');
+    if (out.bossEntry) {
+      hubBoss.startBossRun('normal');
+      await wait(1700);
+
+      const runB = window.EmberfieldApp.__state.run;
+      const sc = globalThis.__game
+        ? globalThis.__game.scene.getScene('Run') : null;
+      out.bossRunActive = !!(runB && runB.isBossRun === true);
+      const bosses = runB
+        ? runB.enemies.filter(function (e) { return e.isBoss; }) : [];
+      out.bossCount = bosses.length;
+      out.bossArmGfx = !!(sc && sc.bossArmGfx);
+      out.bossSpriteShown = !!(sc && sc.bossSprite && sc.bossSprite.visible === true);
+      if (sc && sc.bossArmGfx && sc.bossSprite) {
+        out.bossArmDepth = sc.bossArmGfx.depth;
+        out.bossSpriteDepth = sc.bossSprite.depth;
+        out.bossArmAbove = sc.bossArmGfx.depth > sc.bossSprite.depth;
+      }
+
+      const b0 = bosses[0];
+      const p0 = runB ? runB.player : null;
+      if (b0 && p0 && sc) {
+        // 把玩家丢到远处：Boss 只能慢慢追，这一段就是纯走路（没有前摇）
+        p0.x = 80;
+        p0.z = 30;
+        p0.hp = p0.maxHp;
+        const bx0 = b0.x;
+        const frames0 = sc.__armDebug ? sc.__armDebug.frames : 0;
+        const seen = {};
+        let walkPose = null;
+        for (let i = 0; i < 30; i++) {
+          await wait(70);
+          const pz = sc.__bossPose;
+          if (pz) {
+            seen[pz.state] = 1;
+            if (!walkPose && pz.state === 'walk') {
+              walkPose = { raise: pz.armRaise, swing: pz.armSwing, bob: pz.bob };
+            }
+          }
+        }
+        out.bossSeenStates = Object.keys(seen).sort().join(',');
+        out.bossWalkSeen = !!seen.walk;
+        out.bossWalkArmRaise = walkPose ? +walkPose.raise.toFixed(3) : null;
+        out.bossWalkArmSwing = walkPose ? +walkPose.swing.toFixed(3) : null;
+        out.bossWalkDist = +(b0.x - bx0).toFixed(1);
+        out.bossArmFrames = sc.__armDebug ? sc.__armDebug.frames - frames0 : -1;
+        out.bossArmSegments = sc.__armDebug ? sc.__armDebug.segments : -1;
+        out.bossArmCmds = sc.bossArmGfx && sc.bossArmGfx.commandBuffer
+          ? sc.bossArmGfx.commandBuffer.length : -1;
+
+        // 贴到脸前：贴身技能冷却此时已过，等一个前摇（slam 0.55s / grab 0.40s）
+        p0.x = b0.x - 120;
+        p0.z = b0.z;
+        p0.hp = p0.maxHp;
+        let windPose = null;
+        for (let i = 0; i < 40; i++) {
+          await wait(45);
+          p0.hp = p0.maxHp;          // 别在测姿态的时候被前摇后的技能打死
+          const pz = sc.__bossPose;
+          if (pz && pz.state === 'windup') {
+            windPose = { raise: pz.armRaise, squash: pz.squash, lean: pz.lean };
+            break;
+          }
+        }
+        out.bossWindupSeen = !!windPose;
+        out.bossWindupRaise = windPose ? +windPose.raise.toFixed(3) : null;
+        out.bossWindupSquash = windPose ? +windPose.squash.toFixed(3) : null;
+
+        // 没有 Boss 的那一帧：手臂层与读数都必须清空。
+        // 漏掉清理的话玩家会在空地上看到两条浮空的藤蔓（bossSprite 是复用精灵，
+        // 隐藏它不会顺手清掉另一个 Graphics 层）。
+        runB.enemies = runB.enemies.filter(function (e) { return !e.isBoss; });
+        await wait(320);
+        out.bossPoseAfterDeath = sc.__bossPose;
+        out.bossArmCmdsAfterDeath = sc.bossArmGfx && sc.bossArmGfx.commandBuffer
+          ? sc.bossArmGfx.commandBuffer.length : -1;
+      }
     }
   }
 
@@ -2658,7 +2756,7 @@ const SMALLSCRIPT = `
 
   const code = await new Promise((resolve) => {
     child.on('exit', resolve);
-    setTimeout(() => { child.kill(); resolve(99); }, 70000);
+    setTimeout(() => { child.kill(); resolve(99); }, 170000);
   });
 
   srv.close();
@@ -2750,6 +2848,36 @@ const SMALLSCRIPT = `
   ok(r.potionBarHasActive === true, 'buff 生效时对应槽位有 active 标记');
   ok(typeof r.potionBarText === 'string' && r.potionBarText.indexOf('治疗') >= 0,
      '药水栏写出了药水名', r.potionBarText);
+
+  console.log('\n--- 3c1. Boss 走路与抬手（手臂是每帧重画的 Graphics 层）---');
+  ok(r.bossPoseGlobal === true, 'BossPose 已加载（compute/segments 都在）');
+  ok(r.bossEntry === true, 'HubScene 上有 startBossRun（走的是玩家真实入口）');
+  ok(r.bossRunActive === true, 'startBossRun 真的开出了 Boss 局', String(r.bossRunActive));
+  eq(r.bossCount, 1, 'Boss 局里恰好一只 Boss');
+  ok(r.bossArmGfx === true, 'RunScene 上有独立的手臂 Graphics 层', String(r.bossArmGfx));
+  ok(r.bossSpriteShown === true, 'Boss 躯干贴图可见');
+  ok(r.bossArmAbove === true, '手臂层深度高于躯干（否则被自己挡住）',
+     'arm=' + String(r.bossArmDepth) + ' sprite=' + String(r.bossSpriteDepth));
+  ok(typeof r.bossWalkDist === 'number' && Math.abs(r.bossWalkDist) > 5,
+     'Boss 真的挪了位置（否则下面的 walk 是空跑）',
+     'bossWalkDist=' + String(r.bossWalkDist));
+  ok(r.bossWalkSeen === true, '走动时姿态进入 walk', 'seen=' + String(r.bossSeenStates));
+  ok(typeof r.bossWalkArmRaise === 'number' &&
+     r.bossWalkArmRaise > 0 && r.bossWalkArmRaise < 0.4,
+     '走路时手臂是垂着的（0 < armRaise < 0.4）', String(r.bossWalkArmRaise));
+  ok((r.bossArmFrames | 0) > 5, '手臂层每帧都在重画（不是画一次就停）',
+     String(r.bossArmFrames) + ' 帧');
+  ok((r.bossArmSegments | 0) >= 12, '两条手臂各 6 节都画了（>=12 段）',
+     String(r.bossArmSegments) + ' 段');
+  ok((r.bossArmCmds | 0) > 0, '手臂 Graphics 里真有绘制指令',
+     String(r.bossArmCmds) + ' 条');
+  ok(r.bossWindupSeen === true, '蓄力时姿态进入 windup', String(r.bossWindupSeen));
+  ok(typeof r.bossWindupRaise === 'number' && r.bossWindupRaise > 0.5,
+     '蓄力时手臂明显抬起（armRaise > 0.5）', String(r.bossWindupRaise));
+  ok(r.bossPoseAfterDeath === null,
+     '没有 Boss 时姿态读数被清空（不会留下浮空藤蔓）',
+     String(r.bossPoseAfterDeath));
+  eq(r.bossArmCmdsAfterDeath, 0, '没有 Boss 时手臂层是空的');
 
   console.log('\n--- 3d. 装备：穿上后主角分层渲染 ---');
   ok(r.heroIsContainer === true, '主角是 Container（装备分层的前提）',

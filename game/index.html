@@ -602,6 +602,9 @@
 <script src="profile.js"></script>
 <script src="hub.js"></script>
 <script src="baghud.js"></script>
+<!-- Boss 姿态纯函数必须在 app.js 之前：app.js 求值时就抓 window.BossPose，
+     抓不到会退回"不画手臂"的空实现 —— 页面不报错，Boss 还是那张死图。 -->
+<script src="bosspose.js"></script>
 <script src="app.js"></script>
 <script>
 (function () {
