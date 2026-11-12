@@ -36,7 +36,10 @@
 
   /**
    * 区域沿 x 轴排布（从左到右就是玩家的动线）：
-   *   田地 → 铁匠 → 兵器架 → 药水铺 → 技能祭坛 → 远征之门
+   *   田地 → 铁匠 → 兵器架 → 商店 → 技能祭坛 → 远征之门
+   *
+   * 商店（原药水铺，Task 24 改名）：卖的不只是药水，还有田地这种永久资产，
+   * 所以名字不能再叫"药水铺"。区域 id 仍是 'shop' —— 动线判定与旧存档都靠它。
    *
    * reach 是横向触发半径：玩家 x 落在 [x-reach, x+reach] 内才可能交互。
    * z 是这一排设施自己的纵深（上下错落用）：绘制端据此算屏幕 y，
@@ -55,7 +58,10 @@
       x: 265, z: 122, reach: 58, reachZ: REACH_Z, art: 'anvil' },
     { id: 'forgewear', name: '兵器架', hint: '购买 · 装备 · 升级装备',
       x: 415, z: 88, reach: 58, reachZ: REACH_Z, art: 'rack' },
-    { id: 'shop', name: '药水铺', hint: '补给消耗品 · 每局都要重新买',
+    // Task 24：设计原文这里是「补给消耗品 · 农场田地 · 每局都要重新买」，
+    // 但"每局都要重新买"紧跟"农场田地"会被读成"田地也要每局重买"——
+    // 田地是永久资产，这么说等于在标语里写谎。把重买的主语写回药水。
+    { id: 'shop', name: '商店', hint: '补给消耗品 · 农场田地 · 药水每局重买',
       x: 565, z: 122, reach: 58, reachZ: REACH_Z, art: 'shop' },
     { id: 'altar', name: '技能祭坛', hint: '提升技能等级',
       x: 720, z: 88, reach: 58, reachZ: REACH_Z, art: 'altar' },
@@ -188,7 +194,9 @@
         });
       });
     } else if (zoneId === 'shop') {
-      // 药水铺：三种消耗品，价格固定、每局都要重新买。
+      // 商店：药水、背包扩容、开垦田地。
+      // 药水是三种消耗品，价格固定、每局都要重新买；
+      // 田地是永久资产（Task 24），买一次就一直在地里。
       // 全部列出（包括买不起/已带满的），因为这里同时承担"展示效果"的功能 ——
       // 玩家要先看到"护盾药水能减伤"才知道下局该带什么。
       C.POTION_ORDER.forEach(function (id) {
@@ -230,6 +238,26 @@
         verb: '购买',
         enabled: !fullPages && !pagePoor,
         disabledReason: fullPages ? '已解锁全部 ' + maxPages + ' 页' : (pagePoor ? '铜币不够' : ''),
+      });
+
+      // 开垦田地（Task 24 / 设计 §3.6）：商店现在也卖永久资产。
+      // 上限与单价都从 C.FARM 取，块数从 state.farm.plots 数出来 ——
+      // 唯一真相在逻辑层，hub 不另抄一份。
+      const plotCount = state.farm && state.farm.plots ? state.farm.plots.length : 0;
+      const maxPlots = C.FARM.maxPlots;
+      const plotsFull = plotCount >= maxPlots;
+      const plotCost = plotsFull ? null : C.FARM.plotPrice;
+      const plotPoor = !plotsFull && state.meta.coins < plotCost;
+      out.push({
+        kind: 'farm-plot', id: 'farm-plot', label: '开垦一块田地',
+        sub: plotsFull
+          ? '已开垦全部 ' + maxPlots + ' 块 · 每块每局 +' + C.FARM.yieldPerPlot + ' 铜币'
+          : '当前 ' + plotCount + '/' + maxPlots + ' 块 · 每块产出 +' +
+            C.FARM.yieldPerPlot + ' 铜币/局',
+        cost: plotCost,
+        verb: '购买',
+        enabled: !plotsFull && !plotPoor,
+        disabledReason: plotsFull ? '田地已经开垦到上限' : (plotPoor ? '铜币不够' : ''),
       });
     } else if (zoneId === 'forgewear') {
       // 兵器架：列出**全部 35 件**，包括买不起的和已拥有的。
@@ -402,6 +430,8 @@
     // 扩容不在这儿算钱也不在这儿改页数：价格表、上限、扣款都在
     // buyBagPage 一处，面板只是把那一行摆出来。这里再抄一遍就成了两套真相。
     if (action.kind === 'bag-page') return L.buyBagPage(state);
+    // 同理：上限、单价、扣款都在 buyFarmPlot 一处。
+    if (action.kind === 'farm-plot') return L.buyFarmPlot(state);
     if (action.kind === 'equip-buy') return L.buyEquipment(state, action.payload.id);
     // uid 必须一路透传：同 id 的重复件各是各的，掉了 uid 就只能退回
     // "第一件同 id"，于是面板写的等级和实际穿/升的那件对不上。
@@ -425,21 +455,25 @@
    * 成品里玩家点击播种走的是 FarmScene → hitPlot，而这段几何原先只存在于
    * 渲染代码里，Node 测试完全覆盖不到 —— 点错田都测不出来。
    *
-   * @param {number} width  画布宽
-   * @param {number} baseY  最靠前一行田的中心 y
+   * @param {number} width    画布宽
+   * @param {number} baseY    最靠前一行田的中心 y
+   * @param {number} [startIdx] 本页第一块田的**绝对**索引（翻页用，缺省 0）。
+   *   一页固定 3×3，翻页只换索引不换位置：这样绘制、命中、点击三处
+   *   读的都是同一份几何，只是 idx 落在不同的十位区间。
    */
-  function farmLayout(width, baseY) {
+  function farmLayout(width, baseY, startIdx) {
     const CX = width / 2;
-    const rows = 3, cols = 3;
+    const rows = C.FARM.rows, cols = C.FARM.cols;
+    const start = startIdx || 0;
     const geo = [];
     for (let r = 0; r < rows; r++) {
-      const depth = r / (rows - 1);          // 0 近 → 1 远
+      const depth = rows > 1 ? r / (rows - 1) : 0;   // 0 近 → 1 远
       const cy = baseY - r * 96;
       const rowW = 470 - depth * 110;
       const rowH = 74 - depth * 18;
       for (let c = 0; c < cols; c++) {
         geo.push({
-          idx: r * cols + c, cx: CX + (c - 1) * (rowW / 3), cy: cy,
+          idx: start + r * cols + c, cx: CX + (c - 1) * (rowW / 3), cy: cy,
           w: (rowW / 3) - 12, h: rowH, depth: depth,
         });
       }

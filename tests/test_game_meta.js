@@ -210,7 +210,9 @@ section('6b. 药水铺（新增的第四个建筑）');
   const poor = L.createState(78);
   poor.meta.coins = 0;
   const acts = H.zoneActions(poor, 'shop');
-  eq(acts.length, C.POTION_ORDER.length + 1, '药水铺列出全部三种药水 + 一行扩容（Task 20）');
+  // Task 24 被迫改值：商店多了「开垦一块田地」一行，4 → 5。
+  // 这不是新增断言，是把既有断言的期望值跟着行数走。
+  eq(acts.length, C.POTION_ORDER.length + 2, '商店列出三种药水 + 一行扩容 + 一行田地（Task 24）');
   eq(acts.map((a) => a.payload && a.payload.id).filter(Boolean).join(','),
      C.POTION_ORDER.join(','), '顺序与配置一致');
   ok(acts.every((a) => !a.enabled), '没钱时都不可购买');
@@ -220,7 +222,11 @@ section('6b. 药水铺（新增的第四个建筑）');
   const rich = L.createState(79);
   rich.meta.coins = 300;
   const acts2 = H.zoneActions(rich, 'shop');
-  ok(acts2.every((a) => a.enabled), '钱够时都能买');
+  // 300 铜币够买三瓶药水，但不够开垦田地（3000）—— 这一条问的是药水，
+  // 所以只看药水行。Task 24 加行后"全部可买"不再成立（被迫改值）。
+  const potionActs2 = acts2.filter((a) => a.kind === 'potion');
+  eq(potionActs2.length, C.POTION_ORDER.length, '三瓶药水都列出来了');
+  ok(potionActs2.every((a) => a.enabled), '三瓶药水钱够时都能买');
   const buyHeal = acts2.find((a) => a.payload.id === 'heal');
   const r = H.perform(rich, buyHeal);
   ok(r.ok, '通过 perform 买治疗药水成功', JSON.stringify(r));
@@ -258,10 +264,12 @@ section('6c. 药水铺卖「背包页数+1」（Task 20）');
   const fresh = L.createState(901);
   fresh.meta.coins = 9999;
   const a1 = shopActs(fresh);
-  eq(a1.length, C.POTION_ORDER.length + 1, '药水铺行数 = 三瓶药水 + 一行扩容');
-  eq(a1.length, 4, '药水铺一共四行（这轮就是 3 + 1）');
-  const last1 = a1[a1.length - 1];
-  eq(last1 && last1.kind, 'bag-page', '最后一行是扩容商品（不是夹在药水中间）');
+  // Task 24 被迫改值：商店多了「开垦一块田地」，4 → 5；扩容行不再是最后一行，
+  // 改成按 kind 查找。断言本身（扩容行在、价对、文案对）一条没减。
+  eq(a1.length, C.POTION_ORDER.length + 2, '商店行数 = 三瓶药水 + 一行扩容 + 一行田地');
+  eq(a1.length, 5, '商店一共五行（3 + 1 + 1）');
+  const last1 = a1.filter((a) => a.kind === 'bag-page')[0];
+  eq(last1 && last1.kind, 'bag-page', '扩容商品在（不是夹在药水中间）');
   eq(last1 && last1.id, 'bag-page', '扩容行的 id 是稳定字符串 bag-page');
 
   // (2) 文案一字不差
@@ -284,8 +292,8 @@ section('6c. 药水铺卖「背包页数+1」（Task 20）');
   eq(fresh.meta.bagPages, 2, '买完变成 2 页');
   eq(fresh.meta.coins, 9999 - 200, '铜币正好少 200（不多不少）');
   const a2 = shopActs(fresh);
-  const last2 = a2[a2.length - 1];
-  eq(last2 && last2.kind, 'bag-page', '刷新后最后一行仍是扩容行');
+  const last2 = a2.filter((a) => a.kind === 'bag-page')[0];
+  eq(last2 && last2.kind, 'bag-page', '刷新后扩容行仍在');
   eq(last2 && last2.cost, 500, '价格跟着页数走：2 页时 = pagePrices[2] = 500');
   ok(typeof last2.sub === 'string' && last2.sub.indexOf('当前 2/6 页') >= 0,
      '说明行的当前页数跟着变', last2 && last2.sub);
@@ -296,7 +304,7 @@ section('6c. 药水铺卖「背包页数+1」（Task 20）');
   const poorS = L.createState(902);
   poorS.meta.coins = 199;
   const a3 = shopActs(poorS);
-  const poorRow = a3[a3.length - 1];
+  const poorRow = a3.filter((a) => a.kind === 'bag-page')[0];
   eq(poorRow && poorRow.kind, 'bag-page', '没钱时扩容行仍然列出来（不能悄悄消失）');
   eq(poorRow && poorRow.enabled, false, '铜币 199 买不起 200 的页，按钮灰掉');
   eq(poorRow && poorRow.disabledReason, '铜币不够', '灰掉的原因写明「铜币不够」');
@@ -315,9 +323,10 @@ section('6c. 药水铺卖「背包页数+1」（Task 20）');
   }
   eq(maxS.meta.bagPages, C.BAG.maxPages, '已经到 6 页（maxPages 顶）');
   const a4 = shopActs(maxS);
-  eq(a4.length, 4, '满页时扩容行仍然只占一行（不是消失、也不是裂成多行）');
-  const fullRow = a4[a4.length - 1];
-  eq(fullRow && fullRow.kind, 'bag-page', '满页时最后一行还是扩容行');
+  // Task 24 被迫改值：4 → 5（商店加了一行田地），扩容行改按 kind 查找。
+  eq(a4.length, 5, '满页时商店仍是五行（扩容行只占一行，没消失也没裂开）');
+  const fullRow = a4.filter((a) => a.kind === 'bag-page')[0];
+  eq(fullRow && fullRow.kind, 'bag-page', '满页时扩容行还在');
   eq(fullRow && fullRow.enabled, false, '满页后按钮灰掉');
   eq(fullRow && fullRow.disabledReason, '已解锁全部 6 页', '灰掉原因与 buyBagPage 的 reason 一致');
   eq(fullRow && fullRow.cost, null, '满页时 cost 给 null（没有下一页可卖）');
@@ -361,10 +370,87 @@ section('6c. 药水铺卖「背包页数+1」（Task 20）');
    * 宁可多显示一行，也别让这一行莫名消失。
    */
   const filterProbe = H.zoneActions(fresh, 'shop', 'no-such-tab');
-  eq(filterProbe.length, 4, '未知 filter 退化为不过滤（扩容行还在）');
+  // Task 24 被迫改值：4 → 5（多了一行田地）。filter 口径本身没变。
+  eq(filterProbe.length, 5, '未知 filter 退化为不过滤（扩容行还在）');
   const filteredAll = H.zoneActions(fresh, 'shop', 'all');
-  eq(filteredAll.length, 4, 'filter=all 时四行齐全');
-  eq(H.zoneActions(fresh, 'shop', undefined).length, 4, 'filter 缺省时四行齐全');
+  eq(filteredAll.length, 5, 'filter=all 时五行齐全');
+  eq(H.zoneActions(fresh, 'shop', undefined).length, 5, 'filter 缺省时五行齐全');
+}
+
+section('6d. 商店开垦田地（Task 24：药水铺扩容成商店）');
+{
+  /*
+   * 名字与身份
+   * ----------
+   * 商店现在卖的不只是药水，还有田地（永久资产）。名字不改，玩家会以为
+   * "田地"是个临时道具；但区域 id 必须还是 'shop' —— 存档和动线判断都靠它。
+   */
+  const shop = H.ZONES.find((z) => z.id === 'shop');
+  ok(!!shop, '商店区域仍在（只改名，不换 id）');
+  eq(shop && shop.name, '商店', '药水铺改名为商店');
+  eq(shop && shop.id, 'shop', '区域 id 仍是 shop（存档可读性靠它）');
+  ok(!!shop && shop.hint.indexOf('田地') >= 0, 'hint 里提到田地', shop && shop.hint);
+
+  const rowOf = (s) => H.zoneActions(s, 'shop').find((a) => a.kind === 'farm-plot');
+
+  // (1) 有一行「开垦田地」，价格/动词/说明都对
+  const fresh = L.createState(1101);
+  fresh.meta.coins = 9999;
+  const row = rowOf(fresh);
+  ok(!!row, '商店里有一行开垦田地');
+  if (row) {
+    eq(row.id, 'farm-plot', 'id 稳定（hub.perform 靠它派发）');
+    eq(row.label, '开垦一块田地', '标签明说买的是田地');
+    eq(row.cost, C.FARM.plotPrice, '价格来自 C.FARM.plotPrice，不是内联 3000');
+    eq(row.verb, '购买', '动词与其它商品一致（面板按钮靠它）');
+    ok(row.enabled, '钱够时能买', JSON.stringify(row));
+    ok(typeof row.sub === 'string' && row.sub.indexOf('9/27') >= 0,
+       '说明行写「当前 9/27 块」', row && row.sub);
+    ok(row.sub.indexOf('+' + C.FARM.yieldPerPlot) >= 0,
+       '说明行写每块产出（数字来自配置）', row && row.sub);
+  }
+
+  // (2) 说明行的数字是算出来的，不是写死的 9/27
+  const grown = L.createState(1102);
+  grown.meta.coins = 9999;
+  while (grown.farm.plots.length < 26) grown.farm.plots.push({ state: 'empty', growth: 0 });
+  const row26 = rowOf(grown);
+  ok(!!row26 && row26.sub.indexOf('26/27') >= 0, '26 块时说明行是 26/27',
+     row26 && row26.sub);
+  ok(!!row26 && row26.sub.indexOf('9/27') < 0, '26 块时不再出现 9/27（不是硬编码）',
+     row26 && row26.sub);
+
+  // (3) 差钱：变灰 + 写明原因，且仍标价（玩家要知道差多少）
+  const poor = L.createState(1103);
+  poor.meta.coins = C.FARM.plotPrice - 1;
+  const rowPoor = rowOf(poor);
+  ok(!!rowPoor && !rowPoor.enabled, '差 1 铜币时不可买');
+  eq(rowPoor && rowPoor.disabledReason, '铜币不够', '差钱时写明「铜币不够」');
+  eq(rowPoor && rowPoor.cost, C.FARM.plotPrice, '买不起时仍标价');
+
+  // (4) 满额：不能用"价格 null"混过去，要明说上限
+  const fullS = L.createState(1104);
+  fullS.meta.coins = 99999;
+  while (fullS.farm.plots.length < C.FARM.maxPlots) {
+    fullS.farm.plots.push({ state: 'empty', growth: 0 });
+  }
+  const rowFull = rowOf(fullS);
+  ok(!!rowFull && !rowFull.enabled, '满 27 块时不可买');
+  eq(rowFull && rowFull.disabledReason, '田地已经开垦到上限', '满额时写明上限原因');
+
+  // (5) 通过 perform 真的能买到 —— 只测 zoneActions 测不到"派发没接上"
+  const buyer = L.createState(1105);
+  buyer.meta.coins = 5000;
+  const beforePlots = buyer.farm.plots.length;
+  const rBuy = H.perform(buyer, rowOf(buyer));
+  eq(rBuy.ok, true, '通过 perform 开垦成功');
+  eq(buyer.farm.plots.length, beforePlots + 1, '田地 +1');
+  eq(buyer.meta.coins, 5000 - C.FARM.plotPrice, '扣掉 C.FARM.plotPrice');
+
+  // (6) 满额时强行 perform 也要被拒（不能绕过 UI 判断）
+  const rFull = H.perform(fullS, rowOf(fullS));
+  eq(rFull.ok, false, '满额时 perform 被拒绝');
+  eq(fullS.meta.coins, 99999, '满额时 perform 没扣钱');
 }
 
 section('7. 农场田块几何（成品里点击播种走的就是这一段）');
@@ -421,6 +507,35 @@ section('7. 农场田块几何（成品里点击播种走的就是这一段）')
   const anvil2 = H.zoneActions(s, 'anvil');
   const broke = anvil2.find((a) => a.payload.key === 'maxHp');
   ok(!H.perform(s, broke).ok, '钱不够时执行被拒绝（不能绕过 UI 判断）');
+}
+
+section('7b. 第 2 页起的田块几何（Task 24 翻页）');
+{
+  /*
+   * 翻页只换索引，不换位置：第 2 页的田块布局与第 1 页逐像素一致，
+   * 只是 geo.idx 从 9 开始。这样 FarmScene 只需要换 plotGeo，
+   * 绘制/命中/点击三处都不用写第二份逻辑。
+   */
+  ok(typeof H.farmLayout === 'function', 'farmLayout 存在');
+
+  const p0 = H.farmLayout(960, 452, 0);
+  const p1 = H.farmLayout(960, 452, C.FARM.perPage);
+  eq(p0.map((g) => g.idx).join(','), '0,1,2,3,4,5,6,7,8', 'startIdx=0 时索引仍是 0..8');
+  eq(p1.map((g) => g.idx).join(','), '9,10,11,12,13,14,15,16,17',
+     'V18 第 2 页索引从 9 开始');
+  ok(p1.every((g, i) => g.cx === p0[i].cx && g.cy === p0[i].cy &&
+                        g.w === p0[i].w && g.h === p0[i].h),
+     '翻页只换索引，位置与尺寸逐块一致');
+
+  const def = H.farmLayout(960, 452);
+  eq(def.map((g) => g.idx).join(','), '0,1,2,3,4,5,6,7,8',
+     '不传 startIdx 时向后兼容（不会跑到第 2 页）');
+  eq(def.length, 9, '缺省仍然 9 块（每页 9 块）');
+
+  // 第 2 页的田块也能被命中，且命中结果是绝对索引
+  const hit1 = H.farmHitPlot(p1, p1[0].cx, p1[0].cy);
+  eq(hit1, 9, '第 2 页第 1 块的中心命中绝对索引 9');
+  eq(H.farmHitPlot(p1, 5, 5), -1, '第 2 页点田外仍是 -1');
 }
 
 section('8. 技能升级到满级后关闭');

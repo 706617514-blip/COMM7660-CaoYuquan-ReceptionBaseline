@@ -2320,6 +2320,146 @@ section('V10/V11. 超出自家播种量的种子每局腐烂 25%');
   }
 }
 
+section('V14/V15. 商店开垦田地：扣 3000、上限 27、失败零副作用（Task 24）');
+{
+  /*
+   * 买田地和买背包页是同一种交易：先判能不能，再扣钱，最后改变状态 ——
+   * 顺序反了就会出现"钱扣了、田没加"这种只能读档救的存档。这里每条
+   * 失败路径都配一条"钱和块数都没动"的断言；没有它，"返回 ok:false"
+   * 只是证明函数没崩，不能证明它没顺手扣钱。
+   */
+  ok(typeof L.buyFarmPlot === 'function', 'logic 导出 buyFarmPlot（漏导出时 hub 拿到 undefined）');
+  const buyFarmPlot = typeof L.buyFarmPlot === 'function'
+    ? L.buyFarmPlot
+    : function () { return { ok: false, reason: '未实现' }; };
+  const P = C.FARM.plotPrice;
+
+  // V16：新档就是 3×3 = 9 块，且配置里有价格/上限/每页
+  const fresh = L.createState(2400);
+  eq(fresh.farm.plots.length, C.FARM.cols * C.FARM.rows, 'V16 新档田地 = 3×3 = 9 块');
+  eq(fresh.farm.plots.length, 9, 'V16 新档田地正好 9 块');
+  eq(C.FARM.maxPlots, 27, '田地上限 27 块（3 页）');
+  eq(C.FARM.perPage, 9, '一页 9 块');
+  eq(C.FARM.plotPrice, 3000, '每块 3000 铜币（PM 定价）');
+  eq(fresh.farm.page, 0, '新档页码是 0（第 1 页）');
+
+  const mk = function (coins, plots) {
+    const s = L.createState(2401);
+    s.meta.coins = coins;
+    s.farm.plots = [];
+    for (let i = 0; i < plots; i++) s.farm.plots.push({ state: 'empty', growth: 0 });
+    return s;
+  };
+
+  // V14：成功路径 —— 钱、块数、返回值三处都要对得上
+  const s = mk(5000, 9);
+  const r = buyFarmPlot(s);
+  eq(r.ok, true, 'V14 钱够时开垦成功');
+  eq(r.cost, P, 'V14 返回实际花费');
+  eq(r.plots, 10, 'V14 返回开垦后的块数');
+  eq(s.meta.coins, 5000 - P, 'V14 扣掉 3000 铜币');
+  eq(s.farm.plots.length, 10, 'V14 田地 +1');
+  ok(!!s.farm.plots[9], 'V14 第 10 块田存在（不是只改了长度）');
+  if (s.farm.plots[9]) {
+    eq(s.farm.plots[9].state, 'empty', 'V14 新开的地是空地');
+    eq(s.farm.plots[9].growth, 0, 'V14 新开的地生长进度 0');
+  }
+
+  // V15：差 1 铜币 —— 拒绝，且不能扣钱/加地
+  const poor = mk(P - 1, 9);
+  const rPoor = buyFarmPlot(poor);
+  eq(rPoor.ok, false, 'V15 2999 铜币买不到 3000 的地');
+  eq(rPoor.reason, '铜币不够', 'V15 原因写明铜币不够');
+  eq(poor.meta.coins, P - 1, 'V15 失败不扣钱');
+  eq(poor.farm.plots.length, 9, 'V15 失败不加地');
+
+  // V15：满额 —— 钱再多也不许越界
+  const full = mk(99999, C.FARM.maxPlots);
+  const rFull = buyFarmPlot(full);
+  eq(rFull.ok, false, 'V15 满 27 块后买不到');
+  eq(rFull.reason, '田地已经开垦到上限', 'V15 原因写明上限');
+  eq(full.meta.coins, 99999, 'V15 满额失败不扣钱');
+  eq(full.farm.plots.length, C.FARM.maxPlots, 'V15 满额不越界');
+
+  // 连买到上限：正好 18 次，第 19 次被挡下（上限是硬边界，不是"差不多"）
+  const grow = mk(P * 20, 9);
+  let bought = 0;
+  while (buyFarmPlot(grow).ok) bought++;
+  eq(bought, C.FARM.maxPlots - 9, '从 9 块连买 18 次到达上限');
+  eq(grow.farm.plots.length, 27, '停在 27 块');
+  eq(grow.meta.coins, P * 20 - (C.FARM.maxPlots - 9) * P, '刚好扣了 18 块的钱');
+
+  // 第 2 页的地是真能种的：plant 直接吃绝对索引
+  const seeded = mk(0, 10);
+  seeded.meta.seeds = 5;
+  const rPlant = L.plant(seeded, 9);
+  eq(rPlant.ok, true, '第 2 页第 1 块（绝对索引 9）能播种');
+  eq(seeded.farm.plots[9].state, 'growing', '播种后这块地进入生长');
+}
+
+section('V17/V18. 农场分页：页数由块数推导，页码要夹住（Task 24）');
+{
+  ok(typeof L.farmPageCount === 'function', 'logic 导出 farmPageCount');
+  ok(typeof L.farmPageOf === 'function', 'logic 导出 farmPageOf（漏导出时场景拿到 undefined）');
+  const pageCount = typeof L.farmPageCount === 'function'
+    ? L.farmPageCount : function () { return -1; };
+  const pageOf = typeof L.farmPageOf === 'function'
+    ? L.farmPageOf : function () { return -1; };
+
+  const withPlots = function (n) {
+    const s = L.createState(2500);
+    s.farm.plots = [];
+    for (let i = 0; i < n; i++) s.farm.plots.push({ state: 'empty', growth: 0 });
+    return s;
+  };
+
+  eq(pageCount(L.createState(2501)), 1, '新档 9 块 = 1 页');
+  eq(pageCount(withPlots(10)), 2, '10 块 = 2 页');
+  eq(pageCount(withPlots(18)), 2, '18 块 = 2 页（正好两页）');
+  eq(pageCount(withPlots(19)), 3, '19 块 = 3 页');
+  eq(pageCount(withPlots(27)), 3, '27 块 = 3 页');
+
+  eq(pageOf(0), 0, '第 1 块在第 1 页');
+  eq(pageOf(8), 0, '第 9 块在第 1 页');
+  eq(pageOf(9), 1, 'V18 第 10 块在第 2 页');
+  eq(pageOf(26), 2, '第 27 块在第 3 页');
+
+  // 页码持久化：翻页后存档要记得，重进农场还在那一页
+  const s10 = withPlots(10);
+  s10.farm.page = 1;
+  eq(JSON.parse(L.serialize(s10)).farm.page, 1, '存档里带着当前页码');
+
+  // 存档码是玩家可达的注入入口：页码非法时要夹到合法范围
+  const obj = JSON.parse(L.serialize(withPlots(9)));
+  obj.farm.page = 5;
+  eq(L.deserialize(JSON.stringify(obj)).farm.page, 0, '只有 1 页时 page=5 被夹回 0');
+  obj.farm.page = -3;
+  eq(L.deserialize(JSON.stringify(obj)).farm.page, 0, '负页码被夹回 0');
+  obj.farm.page = 'x';
+  eq(L.deserialize(JSON.stringify(obj)).farm.page, 0, '非数字页码规整为 0');
+  obj.farm.page = 1.7;
+  eq(L.deserialize(JSON.stringify(obj)).farm.page, 0, '小数页码被夹成整数页码');
+
+  const o2 = JSON.parse(L.serialize(withPlots(18)));
+  o2.farm.page = 1;
+  eq(L.deserialize(JSON.stringify(o2)).farm.page, 1, '18 块（2 页）时第 2 页保留');
+  o2.farm.page = 9;
+  eq(L.deserialize(JSON.stringify(o2)).farm.page, 1, '页码超过末页时夹到末页');
+}
+
+section('V17. 翻页后第 2 页的地照常生长（endRun 遍历整张 plots）');
+{
+  const s = L.createState(2600);
+  s.farm.plots = [];
+  for (let i = 0; i < 10; i++) s.farm.plots.push({ state: 'empty', growth: 0 });
+  s.meta.seeds = 10;
+  eq(L.plant(s, 9).ok, true, '先在第 2 页种下');
+  L.startRun(s, 'grass'); L.endRun(s, true);
+  eq(s.farm.plots[9].state, 'growing', '一局后仍在生长（growth 1/2）');
+  L.startRun(s, 'grass'); L.endRun(s, true);
+  eq(s.farm.plots[9].state, 'mature', '两局后成熟 —— endRun 没有只遍历前 9 块');
+}
+
 // ---------------------------------------------------------------- 汇总
 console.log('\n' + '='.repeat(56));
 if (fail === 0) {

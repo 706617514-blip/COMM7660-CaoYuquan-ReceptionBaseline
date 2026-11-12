@@ -65,6 +65,9 @@
         plots: new Array(C.FARM.cols * C.FARM.rows).fill(null).map(function () {
           return { state: 'empty', growth: 0 };
         }),
+        // 农场当前页（0 基）。页数不存 —— 由 plots.length 推导，
+        // 免得"加了一块地但页码还停在旧范围"这种两份真相打架。
+        page: 0,
       },
       run: null,
       lastResult: null,
@@ -530,6 +533,49 @@
     state.meta.coins -= cost;
     state.meta.bagPages += 1;
     return { ok: true, cost: cost, pages: state.meta.bagPages };
+  }
+
+  // ---------------------------------------------------------------- 农场分页
+  /**
+   * 农场一共几页（Task 24 / 设计 §3.7）。
+   *
+   * 页数**不存**在存档里，而是由 plots.length 推导：一块地只能在某一页，
+   * 地多了页数自然多。存两份就会出现"买了地但页数没加"的裂缝。
+   * 至少 1 页：空存档或坏存档也不能让界面显示"第 1/0 页"。
+   */
+  function farmPageCount(state) {
+    const n = state && state.farm && Array.isArray(state.farm.plots)
+      ? state.farm.plots.length : 0;
+    return Math.max(1, Math.ceil(n / C.FARM.perPage));
+  }
+
+  /** 第 index 块（绝对索引）落在第几页（0 基）。 */
+  function farmPageOf(index) {
+    const i = Math.floor(Number(index));
+    if (!Number.isFinite(i) || i < 0) return 0;
+    return Math.floor(i / C.FARM.perPage);
+  }
+
+  /**
+   * 开垦一块新田地（Task 24 / 设计 §3.6）。
+   *
+   * 和 buyBagPage 同样的顺序：判上限 → 判钱 → 扣钱 → 加地。
+   * 失败路径必须零副作用：先扣钱再判上限，玩家会"钱没了地也没多"。
+   * 上限是硬边界（27 = 3 页），到顶返回原因而不是静默不做事。
+   */
+  function buyFarmPlot(state) {
+    if (!state.farm || !Array.isArray(state.farm.plots)) {
+      return { ok: false, reason: '田地数据损坏' };
+    }
+    const max = C.FARM.maxPlots;
+    if (state.farm.plots.length >= max) {
+      return { ok: false, reason: '田地已经开垦到上限' };
+    }
+    const cost = C.FARM.plotPrice;
+    if (state.meta.coins < cost) return { ok: false, reason: '铜币不够' };
+    state.meta.coins -= cost;
+    state.farm.plots.push({ state: 'empty', growth: 0 });
+    return { ok: true, cost: cost, plots: state.farm.plots.length };
   }
 
   /** 放一件进背包，返回落位下标；容量内满了返回 -1（由调用方决定怎么办）。 */
@@ -2202,7 +2248,17 @@
     s.meta.settings = normSettings(s.meta.settings);
     if (!s.farm || !s.farm.plots) {
       s.farm = { plots: new Array(C.FARM.cols * C.FARM.rows).fill(null)
-        .map(function () { return { state: 'empty', growth: 0 }; }) };
+        .map(function () { return { state: 'empty', growth: 0 }; }), page: 0 };
+    }
+    // 农场页码（Task 24）：v6 老档没有这个字段，而且存档码是玩家可达的
+    // 注入入口 —— 5 / -3 / 'x' / 1.7 都能原样进来。不夹住的话，
+    // FarmScene 会拿它去算 plotGeo 起点，界面直接空一页或指向不存在的田。
+    {
+      const pages = farmPageCount(s);
+      let page = Math.floor(Number(s.farm.page));
+      if (!Number.isFinite(page) || page < 0) page = 0;
+      if (page > pages - 1) page = pages - 1;
+      s.farm.page = page;
     }
     return s;
   }
@@ -2241,6 +2297,9 @@
     bagAdd, bagRemove, bagAt, bagCount, bagCapacity,
     bagIndexOfId, bagIndexOfUid, bagEntry, nextUid,
     buyBagPage, pageOf, pageSlice, normBagPages,
+    // 农场分页与买地（Task 24）：场景与商店都要用，漏挂就变成"函数存在
+    // 但 hub / FarmScene 拿到 undefined" —— 这个坑踩过两次。
+    buyFarmPlot, farmPageCount, farmPageOf,
     // 整理与页签过滤（§4.5）：sortBag 原地排，bagFilter 返回条目数组。
     sortBag, bagFilter,
     playerStats, maturePlots, passiveIncome,

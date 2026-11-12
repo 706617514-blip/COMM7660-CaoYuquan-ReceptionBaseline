@@ -867,7 +867,7 @@
     g.generateTexture('altar', 64, 54);
 
     /**
-     * 药水铺：摊位 + 条纹雨棚 + 三个药瓶。
+     * 商店（原药水铺）：摊位 + 条纹雨棚 + 三个药瓶。
      *
      * 轮廓上必须和铁匠铺（矮、方、石头）完全不同 ——
      * 玩家是靠剪影找建筑的，颜色接近的两堆方块在景深压缩后会糊成一团。
@@ -906,7 +906,7 @@
 
     /*
      * 兵器架（装备商店）。
-     * 剪影必须和铁匠铺（矮方石头）、药水铺（尖顶帐篷）都不同 ——
+     * 剪影必须和铁匠铺（矮方石头）、商店（尖顶帐篷）都不同 ——
      * 这里用"横向长架上斜插的几把武器"，是全身唯一带**多根细长斜线**
      * 的建筑，远景压缩后靠这个轮廓区分，不靠颜色。
      */
@@ -2960,8 +2960,10 @@
       const baseY = 452;
 
       // 几何来自 hub.farmLayout —— 同一份代码既用于绘制也用于命中判定，
-      // 且能被 Node 测试覆盖（见 tests/test_game_meta.js）
-      this.plotGeo = H.farmLayout(W, baseY);
+      // 且能被 Node 测试覆盖（见 tests/test_game_meta.js）。
+      // Task 24 起多一个 startIdx：翻页只换索引区间，位置不变。
+      this.baseY = baseY;
+      this.plotGeo = H.farmLayout(W, baseY, this.curPage() * C.FARM.perPage);
 
       // 田地边框（木栅栏，环绕整块田）
       const fence = this.add.graphics().setDepth(5);
@@ -2992,14 +2994,24 @@
       }).setDepth(900);
       this.refreshHud();
 
-      this.add.text(W - 24, 26, '点击空田播种　·　成熟后每局自动产出，无需收取　·　ESC 回基地', {
+      this.add.text(W - 24, 26, '点击空田播种　·　两侧箭头翻页　·　成熟后每局自动产出，无需收取　·　ESC 回基地', {
         fontSize: '12px', color: '#8fa3b8', fontFamily: 'sans-serif',
         backgroundColor: '#0b1117aa', padding: { x: 10, y: 6 },
       }).setOrigin(1, 0).setDepth(900);
 
+      // ---- 翻页箭头（Task 24 / 设计 §3.7）----
+      // 画在屏幕左右缘、垂直居中：田块占 245..715，箭头在 34 / 926，
+      // 与田块的点击矩形完全不重叠 —— 点箭头绝不会落成播种。
+      this.buildArrows();
+      this.refreshArrows();
+
       // ---- 点击播种 ----
       this.input.on('pointerdown', (pointer) => {
         if (this.busy) return;
+        // 箭头先判：命中箭头就只翻页，不再往下走田地命中，
+        // 于是"箭头压在田块上"的最坏情况下也不会误播种。
+        const dir = this.hitArrow(pointer.x, pointer.y);
+        if (dir !== 0) { this.turnPage(dir); return; }
         const idx = this.hitPlot(pointer.x, pointer.y);
         if (idx >= 0) this.tryPlant(idx);
       });
@@ -3012,6 +3024,86 @@
       return H.farmHitPlot(this.plotGeo, px, py);
     }
 
+    /**
+     * 当前页（0 基）。
+     *
+     * 存档里的 farm.page 是脏的（v6 老档没有它、存档码又是可注入的），
+     * 这里只负责**读**出一个合法值，不顺手改存档 —— 读路径改状态会让
+     * "打开农场就把页码写成 0"这种事悄悄发生。
+     */
+    curPage() {
+      const pages = L.farmPageCount(this.state);
+      const raw = Math.floor(Number(this.state.farm && this.state.farm.page));
+      if (!Number.isFinite(raw) || raw < 0) return 0;
+      return Math.min(raw, pages - 1);
+    }
+
+    /**
+     * 左右翻页箭头。44×44，屏幕左右缘、垂直居中，depth 860：
+     * 高于田块（10/20/30）与前景栅栏（700），低于 HUD（900）。
+     */
+    buildArrows() {
+      const size = 44;
+      const y = HGT / 2;
+      const mk = (x, dir) => {
+        const c = this.add.container(x, y).setDepth(860);
+        c.setSize(size, size);
+        const g = this.add.graphics();
+        g.fillStyle(0x0b1117, 0.62);
+        g.fillCircle(0, 0, size / 2);
+        g.lineStyle(2, 0xe8b04b, 0.75);
+        g.strokeCircle(0, 0, size / 2 - 1);
+        g.fillStyle(0xe8b04b, 0.95);
+        // dir = -1 指向左，+1 指向右
+        g.fillTriangle(dir * 9, 0, -dir * 5, -9, -dir * 5, 9);
+        c.add(g);
+        return c;
+      };
+      this.arrowLeft = mk(34, -1);
+      this.arrowRight = mk(W - 34, 1);
+    }
+
+    /** 按当前页的重心决定两个箭头谁在：首页只有右，末页只有左。 */
+    refreshArrows() {
+      if (!this.arrowLeft || !this.arrowRight) return;
+      const page = this.curPage();
+      const pages = L.farmPageCount(this.state);
+      this.arrowLeft.setVisible(page > 0);
+      this.arrowRight.setVisible(page < pages - 1);
+    }
+
+    /** 命中哪个箭头：-1 左、+1 右、0 没命中。只认看得见的箭头。 */
+    hitArrow(px, py) {
+      const hit = (a) => !!a && a.visible &&
+        Math.abs(px - a.x) <= a.width / 2 + 6 &&
+        Math.abs(py - a.y) <= a.height / 2 + 6;
+      if (hit(this.arrowLeft)) return -1;
+      if (hit(this.arrowRight)) return 1;
+      return 0;
+    }
+
+    /**
+     * 翻一页。越界不做事（返回 false），翻成功才写存档并重画。
+     * 返回 boolean 是为了调用方（点击、探针）能区分"翻成了"和"到边了"。
+     */
+    turnPage(dir) {
+      if (this.busy) return false;
+      const d = dir < 0 ? -1 : 1;
+      const pages = L.farmPageCount(this.state);
+      const page = this.curPage();
+      const next = page + d;
+      if (next < 0 || next > pages - 1) return false;
+      this.state.farm.page = next;
+      global.EmberfieldUI.save(this.state);
+      // 索引区间跟着页走；位置（cx/cy/w/h）完全不变 —— 玩家看到的
+      // 还是那块田，只是换了"第几页"的十位。
+      this.plotGeo = H.farmLayout(W, this.baseY, next * C.FARM.perPage);
+      this.redrawField();
+      this.refreshArrows();
+      this.refreshHud();
+      return true;
+    }
+
     redrawField() {
       const g = this.soilGfx;
       g.clear();
@@ -3021,6 +3113,17 @@
       this.plotGeo.forEach((geo) => {
         const plot = this.state.farm.plots[geo.idx];
         const dark = 0.06 + geo.depth * 0.16;
+
+        // 本页末尾的空位：这一页没填满（比如 10 块地 → 第 2 页只有 1 块）。
+        // 画一个更暗的凹槽而不是直接跳过 —— 跳过会让整页缺一块，
+        // 看起来像渲染坏了；凹槽让"这里还没开垦"也说得通。
+        if (!plot) {
+          g.fillStyle(0x14100b, 0.9);
+          g.fillRoundedRect(geo.cx - geo.w / 2, geo.cy - geo.h / 2, geo.w, geo.h, 5);
+          g.lineStyle(1.5, 0x2a1f15, 0.8);
+          g.strokeRoundedRect(geo.cx - geo.w / 2, geo.cy - geo.h / 2, geo.w, geo.h, 6);
+          return;
+        }
 
         // 土块：深棕底，犁沟做明暗配对（暗沟 + 亮脊），才像翻耕过的地
         g.fillStyle(0x2a1f15, 1);
@@ -3214,9 +3317,15 @@
 
     refreshHud() {
       const s = this.state;
+      const pages = L.farmPageCount(s);
+      // 只有一页时不写页码：写「第 1/1 页」等于告诉玩家"这一页也是全部"，
+      // 反而让人以为还有别处看不到的地。
+      const pageLine = pages > 1
+        ? '第 ' + (this.curPage() + 1) + '/' + pages + ' 页　　' : '';
       this.hudText.setText(
         '铜币  ' + s.meta.coins + '　　种子  ' + s.meta.seeds + '\n' +
-        '成熟田  ' + L.maturePlots(s) + ' / 9　　每局被动  +' + L.passiveIncome(s) + '\n' +
+        pageLine + '成熟田  ' + L.maturePlots(s) + ' / ' + s.farm.plots.length +
+        '　　每局被动  +' + L.passiveIncome(s) + '\n' +
         '作物需要 ' + C.FARM.runsToMature + ' 局成熟（输掉也算）\n' +
         '成熟后每局结算自动产出，不需要手动收取'
       );

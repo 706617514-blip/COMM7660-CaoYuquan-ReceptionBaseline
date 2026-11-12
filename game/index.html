@@ -767,7 +767,7 @@
   //
   // 铁匠铺是同一类问题（Task 17）：三项强化里"加伤害"和"加移速"是两种完全
   // 不同的需求，混在一屏只能靠读说明分辨 —— 按加成方向分三页。
-  // 键是**区域 id**：没配置的区域不渲染页签条（祭坛 / 药水铺 / 门 / 田地）。
+  // 键是**区域 id**：没配置的区域不渲染页签条（祭坛 / 商店 / 门 / 田地）。
   // ---------------------------------------------------------------
   const PANEL_TABS = {
     forgewear: [
@@ -867,7 +867,7 @@
       'margin-bottom:12px;font-variant-numeric:tabular-nums';
     res.innerHTML = '铜币 <b style="color:#e8b04b">' + s.meta.coins + '</b>' +
       '　种子 <b style="color:#e8b04b">' + s.meta.seeds + '</b>' +
-      '　成熟田 <b style="color:#e8b04b">' + L.maturePlots(s) + '</b>/9' +
+      '　成熟田 <b style="color:#e8b04b">' + L.maturePlots(s) + '</b>/' + s.farm.plots.length +
       '　被动 <b style="color:#e8b04b">+' + L.passiveIncome(s) + '</b>/局';
     body.appendChild(res);
 

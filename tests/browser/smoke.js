@@ -970,6 +970,201 @@ const SCRIPT = `
     }
   }
 
+  // ---- 3f. 农场分页：第 2 页与翻页箭头（Task 24）----
+  /*
+   * 分页的验收（设计 V17/V18）：
+   *  - 10 块地 = 2 页；第 1 页只有右箭头，第 2 页只有左箭头
+   *  - 第 2 页第 1 块 = 绝对索引 9（点它种的是第 10 块地）
+   *  - 箭头 44x44 贴左右缘、不压田块；点箭头只翻页，绝不播种
+   *
+   * 最后一条最容易写成恒真：箭头本来就摆在田块外，"点箭头没播种"不点
+   * 也不会播种。所以先把箭头挪到一块空地上再点同一坐标 —— 少了"箭头优先"
+   * 的守卫，这一下就会种下去。对照组（直接点另一块空田）负责证明点击
+   * 通道本身是通的，否则实验组的"没播种"可能只是点击根本没生效。
+   */
+  {
+    const sc = globalThis.__game.scene;
+    const st = window.EmberfieldApp.__state;
+    const seedsOrig = st.meta.seeds;
+
+    st.farm.plots = st.farm.plots.slice(0, 9);
+    while (st.farm.plots.length < 10) st.farm.plots.push({ state: 'empty', growth: 0 });
+    st.farm.page = 0;
+    st.meta.seeds = 40;
+    window.EmberfieldUI.save(st);
+    if (sc.isActive('Farm')) sc.stop('Farm');
+    if (sc.isActive('Run')) sc.stop('Run');
+    if (sc.isActive('Hub')) sc.stop('Hub');
+    sc.start('Farm');
+    await wait(900);
+
+    const farm = sc.getScene('Farm');
+    out.pgActive = sc.isActive('Farm');
+    out.pgPages = typeof window.GameLogic.farmPageCount === 'function'
+      ? window.GameLogic.farmPageCount(st) : -1;
+    out.pgFirstIdx = farm && farm.plotGeo && farm.plotGeo[0] ? farm.plotGeo[0].idx : null;
+    out.pgLeftVisible = !!(farm && farm.arrowLeft && farm.arrowLeft.visible);
+    out.pgRightVisible = !!(farm && farm.arrowRight && farm.arrowRight.visible);
+    out.pgHud = farm && farm.hudText ? String(farm.hudText.text) : '';
+
+    // 用 canvas 上的真实 mousedown 点击（Phaser 的输入管理器监听它），
+    // 坐标按 FIT 缩放换算成 client 坐标。
+    const clickGame = function (gx, gy) {
+      const cv = document.querySelector('canvas');
+      const r = cv.getBoundingClientRect();
+      const sx = r.width / 960, sy = r.height / 600;
+      const opts = {
+        clientX: r.left + gx * sx, clientY: r.top + gy * sy,
+        bubbles: true, cancelable: true, button: 0, buttons: 1, view: window,
+      };
+      cv.dispatchEvent(new MouseEvent('mousedown', opts));
+      cv.dispatchEvent(new MouseEvent('mouseup', opts));
+    };
+
+    if (farm && farm.arrowLeft && farm.arrowRight) {
+      out.pgArrowLeftX = farm.arrowLeft.x;
+      out.pgArrowLeftY = farm.arrowLeft.y;
+      out.pgArrowRightX = farm.arrowRight.x;
+      out.pgArrowRightY = farm.arrowRight.y;
+      out.pgArrowW = farm.arrowLeft.width;
+      out.pgArrowH = farm.arrowLeft.height;
+      out.pgArrowDepth = farm.arrowLeft.depth;
+      const overPlots = function (a) {
+        let n = 0;
+        farm.plotGeo.forEach(function (g) {
+          if (Math.abs(a.x - g.cx) < a.width / 2 + g.w / 2 &&
+              Math.abs(a.y - g.cy) < a.height / 2 + g.h / 2) n += 1;
+        });
+        return n;
+      };
+      out.pgArrowOverPlotsLeft = overPlots(farm.arrowLeft);
+      out.pgArrowOverPlotsRight = overPlots(farm.arrowRight);
+    } else {
+      out.pgArrowLeftX = null;
+      out.pgArrowLeftY = null;
+      out.pgArrowRightX = null;
+      out.pgArrowRightY = null;
+      out.pgArrowW = null;
+      out.pgArrowH = null;
+      out.pgArrowDepth = null;
+      out.pgArrowOverPlotsLeft = null;
+      out.pgArrowOverPlotsRight = null;
+    }
+
+    const rightX = farm && farm.arrowRight ? farm.arrowRight.x : 926;
+    const rightY = farm && farm.arrowRight ? farm.arrowRight.y : 300;
+    const leftX = farm && farm.arrowLeft ? farm.arrowLeft.x : 34;
+    const leftY = farm && farm.arrowLeft ? farm.arrowLeft.y : 300;
+
+    // 点右箭头 → 第 2 页
+    clickGame(rightX, rightY);
+    await wait(400);
+    out.pgPageAfterClick = st.farm.page;
+    out.pgIdx2 = farm && farm.plotGeo && farm.plotGeo[0] ? farm.plotGeo[0].idx : null;
+    out.pgLeft2 = !!(farm && farm.arrowLeft && farm.arrowLeft.visible);
+    out.pgRight2 = !!(farm && farm.arrowRight && farm.arrowRight.visible);
+    out.pgHud2 = farm && farm.hudText ? String(farm.hudText.text) : '';
+
+    // 末页再点右箭头：不该翻出第 3 页
+    clickGame(rightX, rightY);
+    await wait(250);
+    out.pgPageAfterExtraRight = st.farm.page;
+
+    // 点左箭头 → 回第 1 页
+    clickGame(leftX, leftY);
+    await wait(400);
+    out.pgPageAfterLeft = st.farm.page;
+    out.pgIdxBack = farm && farm.plotGeo && farm.plotGeo[0] ? farm.plotGeo[0].idx : null;
+    out.pgLeftBack = !!(farm && farm.arrowLeft && farm.arrowLeft.visible);
+    out.pgRightBack = !!(farm && farm.arrowRight && farm.arrowRight.visible);
+
+    // 页码持久化：重进农场仍在第 2 页
+    st.farm.page = 1;
+    window.EmberfieldUI.save(st);
+    sc.stop('Farm');
+    await wait(200);
+    sc.start('Farm');
+    await wait(900);
+    const farm2 = sc.getScene('Farm');
+    out.pgPageAfterRestart = st.farm.page;
+    out.pgIdxAfterRestart = farm2 && farm2.plotGeo && farm2.plotGeo[0]
+      ? farm2.plotGeo[0].idx : null;
+
+    // 回到第 1 页做播种对照（第 1 页才有 9 块可点）。
+    // turnPage 的契约是数字方向（-1 左 / +1 右），与 hitArrow 的返回值一致 —
+    // 这里传 'left' 会落到 +1 分支上（字符串与数字比较是 false），第 1 步就错。
+    if (farm2 && typeof farm2.turnPage === 'function') farm2.turnPage(-1);
+    await wait(400);
+    out.pgPageForGuard = st.farm.page;
+
+    if (farm2 && farm2.arrowLeft && farm2.plotGeo && farm2.plotGeo[1]) {
+      st.meta.seeds = 40;
+      st.farm.plots.forEach(function (p) { p.state = 'empty'; p.growth = 0; });
+      window.EmberfieldUI.save(st);
+      farm2.redrawField();
+      farm2.refreshHud();
+
+      const g0 = farm2.plotGeo[0];
+      const g1 = farm2.plotGeo[1];
+
+      // 对照组：直接点空田 → 真的种下去了
+      clickGame(g0.cx, g0.cy);
+      await wait(350);
+      out.pgCtrlSeedDelta = 40 - st.meta.seeds;
+      out.pgCtrlPlotState = st.farm.plots[g0.idx] ? st.farm.plots[g0.idx].state : null;
+
+      // 实验组：把左箭头挪到第 2 块空地上，再点同一个坐标
+      const sx0 = farm2.arrowLeft.x, sy0 = farm2.arrowLeft.y;
+      const seedsBeforeArrow = st.meta.seeds;
+      farm2.arrowLeft.setPosition(g1.cx, g1.cy);
+      farm2.arrowLeft.setVisible(true);
+      clickGame(g1.cx, g1.cy);
+      await wait(350);
+      out.pgGuardSeedsSame = st.meta.seeds === seedsBeforeArrow;
+      out.pgGuardPlotState = st.farm.plots[g1.idx] ? st.farm.plots[g1.idx].state : null;
+      out.pgGuardPage = st.farm.page;
+      // 复位，免得后面的断言看到一只跑偏的箭头
+      farm2.arrowLeft.setPosition(sx0, sy0);
+      if (typeof farm2.refreshArrows === 'function') farm2.refreshArrows();
+      else farm2.arrowLeft.setVisible(false);
+    }
+
+    // 中间页（V17 第三条）：27 块 = 3 页，停在第 2 页时**左右都有**。
+    // 这一条必须真的造出三页，两页的布局下"中间页"不存在 ——
+    // 首页只有右、末页只有左，两条都可能对着一份"只画右箭头"的坏实现变绿。
+    if (farm2 && farm2.arrowLeft && farm2.arrowRight) {
+      while (st.farm.plots.length < 27) st.farm.plots.push({ state: 'empty', growth: 0 });
+      st.farm.page = 1;
+      window.EmberfieldUI.save(st);
+      farm2.redrawField();
+      farm2.refreshHud();
+      farm2.refreshArrows();
+      await wait(250);
+      out.pgMidPages = window.GameLogic.farmPageCount(st);
+      out.pgMidLeft = farm2.arrowLeft.visible;
+      out.pgMidRight = farm2.arrowRight.visible;
+      farm2.turnPage(1);
+      await wait(250);
+      out.pgMidPageAfterNext = st.farm.page;
+      out.pgMidRightAfterNext = farm2.arrowRight.visible;
+      out.pgMidLeftAfterNext = farm2.arrowLeft.visible;
+      farm2.turnPage(-1);
+      await wait(250);
+      out.pgMidPageBack = st.farm.page;
+      out.pgMidBothBack = farm2.arrowLeft.visible && farm2.arrowRight.visible;
+    }
+
+    // 收尾：把状态与场景复位，后面的段落还要用 Hub
+    st.farm.plots = st.farm.plots.slice(0, 9);
+    st.farm.page = 0;
+    st.meta.seeds = seedsOrig;
+    window.EmberfieldUI.save(st);
+    sc.stop('Farm');
+    await wait(200);
+    sc.start('Hub');
+    await wait(500);
+  }
+
   // ---- 4. 重开（restart）按钮存在 ----
   out.hasAgainButton = !!document.getElementById('btn-again') ||
                        document.body.innerHTML.indexOf('再来一局') >= 0;
@@ -2140,7 +2335,16 @@ const SCRIPT = `
     const rowsB = document.querySelectorAll('#panelBody .act');
     out.t20Rows = rowsB.length;
     out.t20ShopTabs = document.querySelectorAll('#panel .tabs button').length;
-    const lastB = rowsB[rowsB.length - 1];
+    // Task 24 被迫改值：商店多了一行「开垦一块田地」，最后一行不再是扩容。
+    // 改成按标签找 —— 按下标取到的会是田地那一行，量错了对象。
+    const bagRowOf = function (list) {
+      for (let i = 0; i < list.length; i++) {
+        const t = list[i].querySelector('.t');
+        if (t && t.textContent === '背包页数+1') return list[i];
+      }
+      return null;
+    };
+    const lastB = bagRowOf(rowsB);
     out.t20LastLabel = lastB
       ? (lastB.querySelector('.t') ? lastB.querySelector('.t').textContent : null) : null;
     out.t20LastSub = lastB
@@ -2171,7 +2375,7 @@ const SCRIPT = `
     // 点完面板会同步刷新（showPanel 的 onAction 会调 refreshPanel）：
     // 最后一行的价格必须跳到 500 —— 证明刷新读到的是新状态。
     const rowsB2 = document.querySelectorAll('#panelBody .act');
-    const lastB2 = rowsB2[rowsB2.length - 1];
+    const lastB2 = bagRowOf(rowsB2);
     out.t20RowsAfter = rowsB2.length;
     out.t20LabelAfter = lastB2
       ? (lastB2.querySelector('.t') ? lastB2.querySelector('.t').textContent : null) : null;
@@ -2772,12 +2976,13 @@ const SMALLSCRIPT = `
    * 点下去 meta 真的变了（页数 +1、铜币 -200）。逻辑层由 test_game_meta 的
    * 6c 节钉，这一节钉的是"渲染 + 点击这条链真的通"。
    */
-  eq(r.t20ShopZone, 'shop', '站到了药水铺（站错地方下面全是在量别处）');
-  eq(r.t20Rows, 4, '药水铺面板 = 三瓶药水 + 一行扩容（改前 3 行）');
-  eq(r.t20ShopTabs, 0, '药水铺没有页签条（本轮刻意不加，改了这条会响）');
-  eq(r.t20AllLabels, '治疗药水/力量药水/护盾药水/背包页数+1',
-     '四行标签依次是三种药水 + 扩容（扩容在最后一行）');
-  eq(r.t20LastLabel, '背包页数+1', '最后一行的标签就是需求原文那五个字');
+  eq(r.t20ShopZone, 'shop', '站到了商店（站错地方下面全是在量别处）');
+  // Task 24 被迫改值：商店多了「开垦一块田地」，4 → 5。
+  eq(r.t20Rows, 5, '商店面板 = 三瓶药水 + 一行扩容 + 一行田地（改前 3 行）');
+  eq(r.t20ShopTabs, 0, '商店没有页签条（本轮刻意不加，改了这条会响）');
+  eq(r.t20AllLabels, '治疗药水/力量药水/护盾药水/背包页数+1/开垦一块田地',
+     '五行标签依次是三种药水 + 扩容 + 田地（扩容排在田地前面）');
+  eq(r.t20LastLabel, '背包页数+1', '扩容行的标签就是需求原文那五个字');
   ok(typeof r.t20LastSub === 'string' && r.t20LastSub.indexOf('当前 1/6 页') >= 0,
      '说明行写出当前页数（1 页时）', r.t20LastSub);
   ok(typeof r.t20BtnText === 'string' && r.t20BtnText.indexOf('购买 · ') === 0,
@@ -2794,8 +2999,9 @@ const SMALLSCRIPT = `
   eq(r.t20CoinsDelta, 200, '扣款额 = pagePrices[1]');
 
   // 点完面板同步刷新：价格跳到 500，说明读的是买完后的新状态
-  eq(r.t20RowsAfter, 4, '买完面板仍是 4 行（扩容行没消失、也没裂成两行）');
-  eq(r.t20LabelAfter, '背包页数+1', '买完最后一行还是扩容行');
+  // Task 24 被迫改值：4 → 5（商店多了田地那一行）。
+  eq(r.t20RowsAfter, 5, '买完面板仍是 5 行（扩容行没消失、也没裂成两行）');
+  eq(r.t20LabelAfter, '背包页数+1', '买完扩容行还在（按标签找到的还是它）');
   ok(typeof r.t20BtnTextAfter === 'string' && r.t20BtnTextAfter.indexOf('购买 · 500') === 0,
      '买完按钮价格跳到 500（跟着页数走）', r.t20BtnTextAfter);
   ok(typeof r.t20SubAfter === 'string' && r.t20SubAfter.indexOf('当前 2/6 页') >= 0,
@@ -2861,6 +3067,66 @@ const SMALLSCRIPT = `
      JSON.stringify(r.farmErrorSample || []));
   ok(r.backToHub === true, '农场里按 ESC 能回到基地（证明没卡死）',
      String(r.backToHub));
+
+  console.log('\n--- 3f. 农场分页：第 2 页与翻页箭头（Task 24）---');
+  ok(r.pgActive === true, '分页测试真的在农场场景里（不是空跑）', String(r.pgActive));
+  eq(r.pgPages, 2, '10 块地 = 2 页');
+  eq(r.pgFirstIdx, 0, '第 1 页第 1 块的绝对索引是 0');
+  eq(r.pgLeftVisible, false, '第 1 页没有左箭头（左边没得翻）');
+  eq(r.pgRightVisible, true, '第 1 页有右箭头');
+  ok(String(r.pgHud).indexOf('第 1/2 页') >= 0, 'HUD 写「第 1/2 页」', r.pgHud);
+  ok(String(r.pgHud).indexOf('/ 10') >= 0,
+     'HUD 的成熟田分母跟着块数走（不是写死 /9）', r.pgHud);
+
+  // 箭头几何：44×44、贴屏幕左右缘、纵向居中、层级在田块之上 HUD 之下
+  ok(typeof r.pgArrowLeftX === 'number' && r.pgArrowLeftX >= 0 && r.pgArrowLeftX <= 60,
+     '左箭头贴着屏幕左缘', r.pgArrowLeftX);
+  ok(typeof r.pgArrowRightX === 'number' && r.pgArrowRightX >= 900 && r.pgArrowRightX <= 960,
+     '右箭头贴着屏幕右缘', r.pgArrowRightX);
+  eq(r.pgArrowW, 44, '箭头宽 44');
+  eq(r.pgArrowH, 44, '箭头高 44');
+  ok(typeof r.pgArrowLeftY === 'number' && r.pgArrowLeftY > 250 && r.pgArrowLeftY < 350,
+     '箭头纵向居中（y 约 300）', r.pgArrowLeftY);
+  ok(typeof r.pgArrowDepth === 'number' && r.pgArrowDepth > 20 && r.pgArrowDepth < 900,
+     '箭头层级高于作物(20)、低于 HUD(900)', r.pgArrowDepth);
+  eq(r.pgArrowOverPlotsLeft, 0, '左箭头没有压在任何田块上');
+  eq(r.pgArrowOverPlotsRight, 0, '右箭头没有压在任何田块上');
+
+  // 点右箭头翻页：真的翻过去了，且第 2 页第 1 块是绝对索引 9
+  eq(r.pgPageAfterClick, 1, '点右箭头翻到第 2 页');
+  eq(r.pgIdx2, 9, 'V18 第 2 页第 1 块 = 绝对索引 9');
+  eq(r.pgLeft2, true, '第 2 页出现左箭头');
+  eq(r.pgRight2, false, '末页没有右箭头');
+  ok(String(r.pgHud2).indexOf('第 2/2 页') >= 0, 'HUD 跟着翻到「第 2/2 页」', r.pgHud2);
+  eq(r.pgPageAfterExtraRight, 1, '末页再点右箭头不会翻出第 3 页');
+
+  // 点左箭头翻回去
+  eq(r.pgPageAfterLeft, 0, '点左箭头回到第 1 页');
+  eq(r.pgIdxBack, 0, '回到第 1 页后第 1 块又是索引 0');
+  eq(r.pgLeftBack, false, '第 1 页左箭头消失');
+  eq(r.pgRightBack, true, '第 1 页右箭头回来');
+
+  // 页码持久化
+  eq(r.pgPageAfterRestart, 1, '重进农场仍停在第 2 页（页码存了）');
+  eq(r.pgIdxAfterRestart, 9, '重进后第 2 页第 1 块仍是绝对索引 9');
+
+  // 箭头不能压在田块上导致误播种（对照组 + 实验组）
+  eq(r.pgPageForGuard, 0, '守卫测试回到第 1 页');
+  eq(r.pgCtrlSeedDelta, 1, '对照组：直接点空田真的种下了一颗种子', r.pgCtrlSeedDelta);
+  eq(r.pgCtrlPlotState, 'growing', '对照组：那块田进入生长（点击通道是通的）');
+  eq(r.pgGuardSeedsSame, true, '实验组：点压在空田上的箭头不播种（箭头优先）');
+  eq(r.pgGuardPlotState, 'empty', '实验组：那块田仍是空的');
+  eq(r.pgGuardPage, 0, '实验组：第 1 页点左箭头不翻页（没有第 0 页）');
+
+  // V17 中间页：3 页时停在第 2 页，左右箭头都得在
+  eq(r.pgMidPages, 3, '27 块地 = 3 页（中间页存在的前提）');
+  eq(r.pgMidLeft, true, '中间页有左箭头');
+  eq(r.pgMidRight, true, '中间页也有右箭头（首页/末页的用例盖不住这一条）');
+  eq(r.pgMidPageAfterNext, 2, '中间页点右箭头翻到第 3 页');
+  eq(r.pgMidRightAfterNext, false, '第 3 页（末页）右箭头消失');
+  eq(r.pgMidLeftAfterNext, true, '第 3 页左箭头在');
+  eq(r.pgMidPageBack, 1, '末页点左箭头翻回第 2 页');
+  eq(r.pgMidBothBack, true, '翻回中间页后左右箭头又都在');
 
   console.log('\n--- 4. 重开（restart）---');
   ok(r.hasAgainButton === true, '存在「再来一局」（restart）入口');
