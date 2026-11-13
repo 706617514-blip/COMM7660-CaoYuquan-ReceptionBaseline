@@ -73,20 +73,25 @@ jobs:
         run: |
           set -eu
           rm -rf site
+          mkdir -p site
+          # 每个文件都要点名列举的旧写法，在 2026-11-13 出过一次事故：
+          # sprites.js / baghud.js / audio.js / bosspose.js 和 game/assets/*.png
+          # 都没被复制，而工作流自己的自检也只查那 5 个老文件，于是绿着发布了一个
+          # 首页引用了四个 404 脚本的站点。改成整目录发布：以后往 game/ 里加任何
+          # 文件都自动带上，不需要记得回来改这里。
+          cp -R game/. site/
+          rm -rf site/phase1
           mkdir -p site/phase1
-          cp game/index.html game/config.js game/logic.js game/profile.js \
-             game/hub.js game/app.js site/
-          mkdir -p site/vendor
-          cp game/vendor/phaser.min.js site/vendor/
           cp product/index.html site/phase1/index.html
           cp product/reference-data.js site/phase1/reference-data.js
-          # 部署产物必须是自洽的：缺任何一个文件都会让页面白屏
-          for f in site/index.html site/config.js site/logic.js site/profile.js \
-                   site/hub.js site/app.js site/vendor/phaser.min.js \
-                   site/phase1/index.html site/phase1/reference-data.js; do
-            [ -s "$f" ] || { echo "::error::missing or empty: $f"; exit 1; }
-          done
           echo "staged:"; find site -type f | sort
+
+      - name: Verify the staged site is self-contained
+        # 判据不是"我复制了我以为该复制的文件"，而是"页面自己声明的依赖都在磁盘上"。
+        # index.html 里每个 <script src> 都要解析得到；Boss 贴图是运行期 load.image
+        # 的，页面里查不到，单独钉住。这条检查故意复查 index.html 而不是硬编码清单，
+        # 这样以后有人加了脚本标签却忘了别的步骤，构建会红而不是发布白屏。
+        run: python3 analysis/check_staged_site.py site
 
       - uses: actions/configure-pages@v5
 
