@@ -81,7 +81,7 @@ https://706617514-blip.github.io/COMM7660-CaoYuquan-ReceptionBaseline/phase1/
 
 **不是**根地址 `https://706617514-blip.github.io/COMM7660-CaoYuquan-ReceptionBaseline/`。
 
-根地址打开的是**你做的游戏**（熔野耕作），跟这次试点要测的东西完全是两回事。测试要测的是
+根地址打开的是**你做的游戏**（Kill the Vines），跟这次试点要测的东西完全是两回事。测试要测的是
 `/phase1/` 那个评测工具。**发错链接的话，参与者会打开打怪游戏，完全不知道你要他干嘛。**
 
 地址栏里根地址更短更好复制，这里特别容易顺手发错。

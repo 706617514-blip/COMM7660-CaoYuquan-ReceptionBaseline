@@ -231,13 +231,13 @@ def build(pilot: Path | None) -> None:
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p.paragraph_format.space_after = Pt(12)
-    r = p.add_run("Emberfield — a 2.5D side-scrolling roguelite with a farming economy")
+    r = p.add_run("Kill the Vines — a 2.5D side-scrolling roguelite with a farming economy")
     r.font.name = FONT; r.font.size = Pt(12)
 
     # ---- 访问信息块（黑体段落，不计入正文） ----
     heading(doc, "Access information")
     for line in [
-        "Project title: Emberfield (熔野耕作) — Phase 2 prototype",
+        "Project title: Kill the Vines — Phase 2 prototype",
         "Name and student identifier: Cao Yuquan — 26366290",
         "Phase: Phase 2, prototype delivery and evaluation",
         "Repository: https://github.com/706617514-blip/COMM7660-CaoYuquan-ReceptionBaseline",
@@ -280,7 +280,7 @@ def build(pilot: Path | None) -> None:
          "changes no decision is not an MVP.** The evidence pointed instead at a game in a less "
          "crowded tag.")
     para(doc,
-         "Emberfield is a browser roguelite in which combat funds a farming economy that "
+         "Kill the Vines is a browser roguelite in which combat funds a farming economy that "
          "determines how hard the next run can be. Four decisions carry the argument. It has a "
          "**depth axis**: movement, hit resolution and enemy behaviour all use (x, z), and one "
          "enemy fires down a straight line in both axes, so stepping in depth is the dodge. "
