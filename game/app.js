@@ -1024,6 +1024,20 @@
    *
    * 自己维护一个 keydown/keyup 集合，语义直白且可测。
    */
+  /*
+   * Boss 档 → 难度 id 的映射。
+   *
+   * 这是**两套命名**，不能互相顶替：
+   *   难度 id  grass / wood / deep / forge      （C.DIFFICULTIES）
+   *   Boss 档  normal / hard / hell             （C.BOSS.tiers）
+   * 而且 C.difficultyById 对未知 id 会**静默回退到 wood**（实测 'hard'、
+   * 'hell'、'' 全部得到 wood），所以把 bossTier 直接当难度 id 传进去不会
+   * 报错，只会悄悄开成林地 —— 2026-11-13 那个「再来一局永远回林地」的
+   * 缺陷就是这条静默回退掩盖出来的。这里显式映射，漏了也只会退回林地
+   * 但至少是被写下来的一次决定，而不是意外。
+   */
+  const BOSS_TIER_DIFF = { normal: 'wood', hard: 'deep', hell: 'forge' };
+
   function createInput(scene) {
     const down = Object.create(null);
 
@@ -1091,14 +1105,67 @@
     // 失焦时清空：否则切出去再回来会"卡键"，角色一直往一个方向跑
     const onBlur = () => { for (const k in down) down[k] = false; };
 
-    window.addEventListener('keydown', onDown, { passive: false });
-    window.addEventListener('keyup', onUp);
-    window.addEventListener('blur', onBlur);
+    /*
+     * 监听器只在**当前活跃的那个场景**上挂一份。
+     *
+     * 2026-11-13 PM 报「点了再来一局进入战斗后按 tab 和 esc 都没有反应」。
+     * 根因：RunScene 与 HubScene 同时 active 时，两个 createInput 各自
+     * 注册了一份 window keydown 监听器，两次都开火：
+     *   Hub 的先跑 toggleBag() -> 背包没开 -> 开背包 + this.scene.pause()
+     *   Run 的后跑 toggleBag() -> 背包已经开了 -> 关掉
+     * 一开一关在同一个事件里抵消，玩家看到的就是「按了没反应」。
+     * ESC 同理。
+     *
+     * 修法有两层，缺一不可：
+     *   1. 本层：每次 keydown 先判断自己是不是当前场景，不是就直接返回。
+     *      这挡住"两个场景并存"时的那一份多余的响应。
+     *   2. restartRun 那层：切场景时先 scene.stop() 再 start('Hub')，
+     *      从源头不让两个场景并存（正常游戏流程里本来也不该并存）。
+     * 只做第 2 层不够 —— 任何别的路径把两个场景同时开起来，缺陷会原样回来；
+     * 只做第 1 层也不够 —— 后台那个场景的 update 仍在跑，只是按键不响应。
+     */
+    const isActiveScene = () => {
+      /*
+       * 用 sys.settings.status 而不是 sys.isActive()。
+       *
+       * isActive() 的实现在某些调用时机下会去读一个还没挂上的对象，
+       * 实测抛 `Cannot read properties of undefined (reading 'sys')` ——
+       * 而它是在 window keydown 里调的，一抛就把整个按键处理打断
+       * （连带 toggleBag 都不执行）。settings.status 是场景系统里最底层
+       * 的状态字段，场景实例一建好就有，不会中途变 undefined。
+       *
+       * Phaser 的场景状态常量：0=PENDING 1=INIT 2=START 3=LOADING
+       * 4=CREATING 5=RUNNING 6=PAUSED 7=SLEEPING 8=SHUTDOWN 9=DESTROYED。
+       * RUNNING 与 PAUSED 都要放行 —— 暂停（背包/ESC 菜单）期间按键必须
+       * 继续被处理，否则"再按一次 Tab 关掉背包"永远做不到（自锁）。
+       */
+      const sys = scene && scene.sys;
+      if (!sys || !sys.settings) return false;
+      const st = sys.settings.status;
+      return st === 5 || st === 6;
+    };
+
+    const onDownGuarded = (ev) => {
+      if (!isActiveScene()) return;
+      onDown(ev);
+    };
+    const onUpGuarded = (ev) => {
+      if (!isActiveScene()) return;
+      onUp(ev);
+    };
+    const onBlurGuarded = () => {
+      if (!isActiveScene()) return;
+      onBlur();
+    };
+
+    window.addEventListener('keydown', onDownGuarded, { passive: false });
+    window.addEventListener('keyup', onUpGuarded);
+    window.addEventListener('blur', onBlurGuarded);
 
     scene.events.once('shutdown', () => {
-      window.removeEventListener('keydown', onDown);
-      window.removeEventListener('keyup', onUp);
-      window.removeEventListener('blur', onBlur);
+      window.removeEventListener('keydown', onDownGuarded);
+      window.removeEventListener('keyup', onUpGuarded);
+      window.removeEventListener('blur', onBlurGuarded);
     });
 
     // 边沿检测：上一帧没按、这一帧按了。用于"按一下触发一次"的操作。
@@ -1534,7 +1601,7 @@
   class HubScene extends Phaser.Scene {
     constructor() { super('Hub'); }
 
-    create() {
+    create(data) {
       this.state = CURRENT_STATE;
       this.input2 = createInput(this);
       this.panelOpen = false;
@@ -1730,6 +1797,10 @@
       // 调试钩子：无头探针需要能驱动场景（见 /tmp/probe.js）
       global.EmberfieldApp.__scene = this;
       global.EmberfieldApp.__state = this.state;
+
+      // 「再来一局」的落地点。必须在 create() 的**最后**触发：startRun 会
+      // scene.start('Run')，在 create 中途切场景会让后半段往已停的场景里写对象。
+      this.autoRunFrom(data);
     }
 
     /*
@@ -1865,6 +1936,26 @@
       });
     }
 
+    /*
+     * 「再来一局」的落地点。
+     *
+     * restartRun 会 this.scene.start('Hub', { autoRun: ... })，Hub 起来之后
+     * 立刻按参数把新一局开出去。放在 create() 的**末尾**（create 之后
+     * 调），是为了让基地先完整建好 —— startRun 会 this.scene.start('Run')，
+     * 在 create 中途切场景会让 create 后半段往已停的场景里写对象。
+     *
+     * 为什么不让 restartRun 自己直接 startRun：那会让 Run 与 Hub 同时
+     * active（缺陷 3 的成因），而且绕过 Hub 就绕过了渐黑过渡。
+     * 走基地这一个入口，两条路径共用同一套过渡与防连点逻辑。
+     */
+    autoRunFrom(data) {
+      if (!data || !data.autoRun) return false;
+      const a = data.autoRun;
+      if (a.bossTier) { this.startBossRun(a.bossTier); return true; }
+      if (a.difficultyId) { this.startRun(a.difficultyId); return true; }
+      return false;
+    }
+
     startRun(difficultyId) {
       /*
        * 进关卡要渐黑，照抄农场那套（设计 §3.4）：硬切是"瞬移"，
@@ -1880,7 +1971,23 @@
        * 测试直接拿 Hub 场景调），标志停在最后一次渐黑留下的 true —— 那是过期
        * 状态，不能拿它把调用吞掉，否则"再来一局"会点了没反应。
        */
-      const hubLive = this.sys.isActive();
+      /*
+       * 用 settings.status 判断"基地还在不在"，不用 sys.isActive()。
+       *
+       * isActive() 在某些调用时机（场景刚被 start 起来、create 还没跑完）
+       * 会去读一个尚未挂上的对象，实测抛
+       * `Cannot read properties of undefined (reading 'sys')` ——
+       * 「再来一局」正好走这条路径：restartRun 先 scene.stop() 再
+       * scene.start('Hub', {autoRun})，Hub 在 create 末尾调 startRun，
+       * 那一刻 this.sys 还没被场景系统完全装好。
+       * 抛出去之后过渡逻辑整个中断，玩家点「再来一局」就卡住。
+       *
+       * status：0=PENDING 1=INIT 2=START 3=LOADING 4=CREATING
+       * 5=RUNNING 6=PAUSED 7=SLEEPING 8=SHUTDOWN 9=DESTROYED。
+       * 只有 RUNNING / PAUSED 才算"基地还活着、能跑渐黑动画"。
+       */
+      const hubStatus = (this.sys && this.sys.settings) ? this.sys.settings.status : -1;
+      const hubLive = hubStatus === 5 || hubStatus === 6;
       if (hubLive) {
         if (this.transitioning) return;
         this.transitioning = true;
@@ -1894,18 +2001,64 @@
        * fadeOut 的完成事件永远不会来 —— 那样就成了"点了没反应"。立刻切，不摆渐黑。
        */
       if (!hubLive) { this.scene.start('Run'); return; }
+      /*
+       * 渐黑必须**有人兜底**。
+       *
+       * PM 2026-11-13 报「进入第二个 boss 关卡在了渐黑」：fadeOut 之后
+       * 场景卡在黑屏，既不切场景也不恢复。渐黑靠相机的 update 推进，
+       * 完成事件才会来 —— 只要这台相机在 340ms 内被暂停/停掉/切走
+       * （背包或 ESC 菜单暂停场景、另一条路径先 scene.start 了、
+       * transitioning 还挂着把后续输入吞掉），事件就永远不来，
+       * 画面就永久停在黑场，而且玩家**没有任何操作能救回来**。
+       *
+       * 兜底：另起一个 420ms 的定时器（比 340ms 渐黑宽裕 80ms），
+       * 无论相机有没有跑完，到点都强制切场景并清掉标志。正常路径下
+       * 完成事件先到、定时器再跑时场景已经切走（scene.start 幂等保护），
+       * 所以这条不会造成"切两次"。这是**唯一**能保证玩家不会卡死的手段。
+       */
       this.cameras.main.fadeOut(340, 0, 0, 0);
-      this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('Run'));
+      const goRun = () => {
+        if (!this.scene.isActive()) return;        // 已经切走了
+        this.transitioning = false;
+        this.scene.start('Run');
+      };
+      this.cameras.main.once('camerafadeoutcomplete', goRun);
+      this.time.delayedCall(420, goRun);
     }
 
     /** Boss 挑战：清空普通波次，只放一只 Boss。 */
     startBossRun(tierId) {
-      const hubLive = this.sys.isActive();
+      /*
+       * 用 settings.status 判断"基地还在不在"，不用 sys.isActive()。
+       *
+       * isActive() 在某些调用时机（场景刚被 start 起来、create 还没跑完）
+       * 会去读一个尚未挂上的对象，实测抛
+       * `Cannot read properties of undefined (reading 'sys')` ——
+       * 「再来一局」正好走这条路径：restartRun 先 scene.stop() 再
+       * scene.start('Hub', {autoRun})，Hub 在 create 末尾调 startRun，
+       * 那一刻 this.sys 还没被场景系统完全装好。
+       * 抛出去之后过渡逻辑整个中断，玩家点「再来一局」就卡住。
+       *
+       * status：0=PENDING 1=INIT 2=START 3=LOADING 4=CREATING
+       * 5=RUNNING 6=PAUSED 7=SLEEPING 8=SHUTDOWN 9=DESTROYED。
+       * 只有 RUNNING / PAUSED 才算"基地还活着、能跑渐黑动画"。
+       */
+      const hubStatus = (this.sys && this.sys.settings) ? this.sys.settings.status : -1;
+      const hubLive = hubStatus === 5 || hubStatus === 6;
       if (hubLive) {
         if (this.transitioning) return;
         this.transitioning = true;
       }
-      L.startRun(this.state, 'wood');
+      /*
+       * 难度不再写死成 'wood'。
+       *
+       * 原来这里硬编码 L.startRun(this.state, 'wood')，于是无论挑战哪一档
+       * Boss，run.difficultyId 都是 wood，结算时写进 lastResult，
+       * 「再来一局」就必然开成普通林地（PM 2026-11-13 报的缺陷）。
+       * Boss 档（normal/hard/hell）与难度 id（grass/wood/deep/forge）
+       * 是两套命名，不能互相顶替，所以按档位映射到对应难度。
+       */
+      L.startRun(this.state, BOSS_TIER_DIFF[tierId] || 'wood');
       const run = this.state.run;
       run.enemies.length = 0;
       run.spawnQueue.length = 0;
@@ -1916,8 +2069,29 @@
       L.spawnBoss(this.state, run, tierId);
       global.EmberfieldUI.save(this.state);
       if (!hubLive) { this.scene.start('Run'); return; }
+      /*
+       * 渐黑必须**有人兜底**。
+       *
+       * PM 2026-11-13 报「进入第二个 boss 关卡在了渐黑」：fadeOut 之后
+       * 场景卡在黑屏，既不切场景也不恢复。渐黑靠相机的 update 推进，
+       * 完成事件才会来 —— 只要这台相机在 340ms 内被暂停/停掉/切走
+       * （背包或 ESC 菜单暂停场景、另一条路径先 scene.start 了、
+       * transitioning 还挂着把后续输入吞掉），事件就永远不来，
+       * 画面就永久停在黑场，而且玩家**没有任何操作能救回来**。
+       *
+       * 兜底：另起一个 420ms 的定时器（比 340ms 渐黑宽裕 80ms），
+       * 无论相机有没有跑完，到点都强制切场景并清掉标志。正常路径下
+       * 完成事件先到、定时器再跑时场景已经切走（scene.start 幂等保护），
+       * 所以这条不会造成"切两次"。这是**唯一**能保证玩家不会卡死的手段。
+       */
       this.cameras.main.fadeOut(340, 0, 0, 0);
-      this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('Run'));
+      const goRun = () => {
+        if (!this.scene.isActive()) return;        // 已经切走了
+        this.transitioning = false;
+        this.scene.start('Run');
+      };
+      this.cameras.main.once('camerafadeoutcomplete', goRun);
+      this.time.delayedCall(420, goRun);
     }
 
     update(time, delta) {
@@ -1984,8 +2158,15 @@
           // 农场是一个独立场景，不是弹出面板：
           // 渐黑 → 切换 → 渐亮，让"走进农田"有过渡感
           this.panelOpen = true;
+          // 与 startRun 同款兜底：相机一旦不跑 update，完成事件就永远不来，
+          // 玩家会卡在黑屏且无法自救（见 startRun 里的长注释）。
           this.cameras.main.fadeOut(340, 0, 0, 0);
-          this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('Farm'));
+          const goFarm = () => {
+            if (!this.scene.isActive()) return;
+            this.scene.start('Farm');
+          };
+          this.cameras.main.once('camerafadeoutcomplete', goFarm);
+          this.time.delayedCall(420, goFarm);
         } else {
           this.showPanel(zone);
         }
@@ -2001,6 +2182,17 @@
       this.state = CURRENT_STATE;
       this.input2 = createInput(this);
       this.enemyPool = [];
+      /*
+       * 场景实例会被 Phaser 复用（stop 之后再 start 拿到的是同一个对象），
+       * 但场景里的 GameObject 在上一次 shutdown 时已经被销毁。
+       * Boss 的贴图/阴影是"首次绘制时懒创建"并缓存在 this 上的，
+       * 若这里不复位，重开后 this.bossSprite 仍是**上一局的尸骸**（truthy），
+       * 懒创建分支被跳过，接着对死对象 setTexture 就抛
+       * `Cannot read properties of undefined (reading 'sys')` ——
+       * 堆栈全在 Phaser 内部，看不出是哪一行业务代码，实测排查花了很久。
+       */
+      this.bossSprite = null;
+      this.bossShadow = null;
 
       // Boss 局用专属地图风格：普通=荒野、困难=密林、地狱=熔岩。
       // 玩家一进场就该知道自己打的是哪一档。
@@ -2103,8 +2295,20 @@
       const uiE = global.EmberfieldUI;
       if (uiE && typeof uiE.isEscOpen === 'function' && uiE.isEscOpen()) return;
       if (hud.isOpen()) { hud.close(); return; }
+      /*
+       * 关闭时的 resume 挂在这里，**不能**只在 HubScene 的 setHost 里。
+       *
+       * setHost 是 HubScene 注册的，而背包是全局单例：从 Hub 打开、进关卡、
+       * 在关卡里再开背包时，onClose 回调里那句 `this.scene.resume()` 指向的
+       * 是 **Hub** 场景 —— 解冻的是基地，战斗场景还冻着（或反之）。
+       * 所以每个场景自己注册自己的 onClose，只 resume 自己的 scene。
+       * 与上面 this.scene.pause() 严格成对：谁暂停谁恢复。
+       */
       const okOpen = hud.open(this.state, {
         onChange: () => refreshHeroEquip(this.hero, this.state),
+        onClose: () => {
+          if (this.scene && this.scene.isPaused()) this.scene.resume();
+        },
       });
       if (!okOpen) return;
       // 战斗里开背包同样要有声音：两个场景各有一个 toggleBag，两边都要接，
@@ -2172,13 +2376,16 @@
       if (ui && typeof ui.closeEsc === 'function') ui.closeEsc();   // 顺带 resume
       if (ui && typeof ui.showHud === 'function') ui.showHud(false);
       if (ui && typeof ui.save === 'function') ui.save(st);
-      const finishedDiff = st.lastResult && st.lastResult.difficultyId;
+      /*
+       * 与结算路径同一口径：主动退出后重开也要复原「是什么局」。
+       * lastResult 现在带 isBossRun / bossTier（见 logic.js 的 endRun）。
+       */
+      const lr = st.lastResult || {};
+      const finishedDiff = lr.difficultyId;
+      const finishedBossTier = lr.isBossRun ? (lr.bossTier || 'normal') : null;
       if (ui && typeof ui.setAgainHandler === 'function') {
         ui.setAgainHandler(() => {
-          L.returnToFarm(st);
-          L.startRun(st, finishedDiff);
-          if (ui && typeof ui.save === 'function') ui.save(st);
-          this.scene.restart();
+          this.restartRun(finishedBossTier, finishedDiff);
         });
       }
       if (ui && typeof ui.showResult === 'function') {
@@ -2187,6 +2394,39 @@
           this.scene.start('Hub');
         });
       }
+    }
+
+    /*
+     * 「再来一局」的唯一入口 —— 两条结算路径（战败/通关、主动退出）
+     * 都走这里，避免两处各写一份、改一处漏一处（本文件已经因为这种
+     * 复制粘贴吃过亏：重开逻辑曾经在两处各写一遍，两处都错）。
+     *
+     * 三件事必须同时做对，缺一样玩家就会看到 PM 报的那种乱象：
+     *
+     *   1. 复原「是什么局」：Boss 局回 startBossRun(bossTier)，
+     *      普通局回 startRun(difficultyId)。只传 difficultyId 的话，
+     *      Boss 局会变成普通林地（缺陷 2a）。
+     *
+     *   2. 回到基地再开跑：先 returnToFarm + Hub 场景，再发起新一局。
+     *      原来直接 this.scene.restart()，而结算后 state.phase 是
+     *      'result'（不是 'run'），RunScene.update 第一行就 return，
+     *      屏幕上留下一个**冻结的战场**；玩家在里面走动按 J 会被
+     *      基地交互读成「去农场」，于是「人物在地图最左边、按 J 进了
+     *      农场」（缺陷 2b）。而且要记住 returnToFarm 会把 phase 置成
+     *      'farm'，必须由 startRun/startBossRun 再置回 'run'。
+     *
+     *   3. 切场景必须走完整路径：停掉 Run 场景（否则 Run 与 Hub 同时
+     *      active，两个 createInput 的 keydown 监听器会互相抵消 ——
+     *      一个开背包、另一个立刻关掉，表现为 Tab/ESC 完全没反应，
+     *      缺陷 3），然后从 Hub 用正常入口开新局（那里会处理渐黑过渡）。
+     */
+    restartRun(bossTier, difficultyId) {
+      const ui = global.EmberfieldUI;
+      L.returnToFarm(this.state);
+      if (ui && typeof ui.save === 'function') ui.save(this.state);
+      // 先离开 Run 场景，再进 Hub —— 顺序反了会短暂出现两个活动场景。
+      this.scene.stop();
+      this.scene.start('Hub', { autoRun: { bossTier: bossTier || null, difficultyId: difficultyId || null } });
     }
 
     getEnemySprite(i, kind) {
@@ -2470,6 +2710,17 @@
     }
 
     update(time, delta) {
+      /*
+       * 场景已停（scene.stop()，例如「再来一局」的切场景）时本帧可能还会跑：
+       * 此时 this.textures / this.add 等场景级对象已被卸掉，后面任何一处
+       * 绘制都会抛 `Cannot read properties of undefined (reading 'sys')`，
+       * 而这个异常是从 Phaser 内部抛的、堆栈看不出是哪一行业务代码。
+       * 一句状态判断就把这一类整批挡掉。
+       */
+      if (!this.sys || !this.sys.settings) return;
+      const st = this.sys.settings.status;
+      if (st !== 5 && st !== 6) return;      // 5=RUNNING 6=PAUSED
+
       const dt = Math.min(delta / 1000, 0.05);
       const run = this.state.run;
       if (!run || this.state.phase !== 'run') return;
@@ -2625,9 +2876,23 @@
         }
       }
 
+      /*
+       * 场景被停掉（scene.stop()，例如「再来一局」切场景）之后，
+       * 这一帧的 update 仍可能已经排好队并跑完 —— 此时 this.textures
+       * 已经被场景系统卸掉，`this.textures.exists(...)` 会在读取 `.sys`
+       * 时抛 `Cannot read properties of undefined (reading 'sys')`。
+       *
+       * 这类"update 跑在已停场景上"的抛错会打断整帧渲染，而且它是从
+       * Phaser 的 setTexture 里抛出来的，堆栈看起来完全在引擎内部，
+       * 很难定位。这里在进入绘制前先确认场景还活着。
+       */
+      if (!this.sys || !this.sys.settings || !this.textures) return;
+      const sceneAlive = this.sys.settings.status === 5 || this.sys.settings.status === 6;
+
       // Boss：用真实美术（三档难度各一对左右视图），按朝向切换
       run.enemies.forEach((e) => {
         if (!e.isBoss) return;
+        if (!sceneAlive) return;
         if (!this.bossSprite) {
           this.bossSprite = this.add.image(0, 0, 'boss_normal_right').setOrigin(0.5, 1);
           this.bossSprite.setVisible(false);
@@ -3161,13 +3426,28 @@
       if (this.state.phase === 'result') {
         global.EmberfieldUI.showHud(false);
         global.EmberfieldUI.save(this.state);
-        const finishedDiff = run.diff.id;
-        // restart：用同一难度重开一局。原文把 restart 列为游戏形态的必需项。
+        /*
+         * 「再来一局」：用**同一场局**重开。
+         *
+         * 2026-11-13 PM 报「不管在什么关卡死了点再来一局都回到了林地难度」。
+         * 原来这里只记 finishedDiff = run.diff.id，对 Boss 局来说那个值
+         * 是被 startBossRun 写死的 wood（见 BOSS_TIER_DIFF 的注释），
+         * 所以挑战地狱 Boss 失败后重开会变成普通林地。
+         *
+         * 现在按 isBossRun 分流：Boss 局重开走 startBossRun(bossTier)，
+         * 普通局走 startRun(difficultyId)。
+         */
+        /*
+         * 用 run.difficultyId 而不是 run.diff.id。
+         *
+         * run.diff.id 是难度定义里的 id，看起来一样，但它是**渲染层**
+         * 那份快照；run.difficultyId 才是逻辑层真正用的那个。两者当前
+         * 同值，但重开要靠它复原对局，取逻辑层的更不容易在以后分叉。
+         */
+        const finishedDiff = run.difficultyId || (run.diff && run.diff.id);
+        const finishedBossTier = run.isBossRun ? (run.bossTier || 'normal') : null;
         global.EmberfieldUI.setAgainHandler(() => {
-          L.returnToFarm(this.state);
-          L.startRun(this.state, finishedDiff);
-          global.EmberfieldUI.save(this.state);
-          this.scene.restart();
+          this.restartRun(finishedBossTier, finishedDiff);
         });
         global.EmberfieldUI.showResult(this.state, () => {
           L.returnToFarm(this.state);
@@ -3600,8 +3880,16 @@
       if (this.busy) return;
       this.busy = true;
       global.EmberfieldUI.save(this.state);
+      // 与 startRun 同款兜底：相机不跑 update 就没有完成事件，
+      // 玩家会卡在黑屏（见 HubScene.startRun 里的长注释）。
       this.cameras.main.fadeOut(320, 0, 0, 0);
-      this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('Hub'));
+      const goHub = () => {
+        if (!this.scene.isActive()) return;
+        this.busy = false;
+        this.scene.start('Hub');
+      };
+      this.cameras.main.once('camerafadeoutcomplete', goHub);
+      this.time.delayedCall(400, goHub);
     }
 
     update(time, delta) {

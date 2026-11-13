@@ -2253,21 +2253,21 @@ section('V18. 攻击连段与判定范围整体加长 5%');
 section('V18b. 贴住 Boss 时三段普攻都打得到（体型大的敌人不能被"贴身距离"卡住）');
 {
   /*
-   * 2026-11-13 PM 实测反馈：「前两下普攻打不到 boss」。
+   * 2026-11-13 PM 两次实测反馈：
+   *   第一次「前两下普攻打不到 boss」→ 三段射程 61/66/78 全都短于贴身间距 69。
+   *   第二次「要完全贴住 boss 才能打到，增大受击范围」→ 光靠加长射程解决不了，
+   *     因为射程一长，小怪那边也变成"远程揍人"，而且玩家仍要贴到 69px 才出手。
    *
-   * 机制：`stepBoss` 会把玩家推出一段"不穿模"的最小间距
-   *     minGap = BOSS.radius + PLAYER_W/2 + 6 = 46 + 17 + 6 = 69
-   * 而命中判据是 `dx < comboRange`。三段射程 61 / 66 / 78：
-   *     第 1 段 61 < 69  → 站在最近的合法位置也够不到（差 8px）
-   *     第 2 段 66 < 69  → 差 3px
-   *     第 3 段 78      → 只有重劈能打到
-   * 小怪 radius 只有 16~18，对应的 minGap 是 39~41，所以三段都打得到 ——
-   * 这个缺陷只在 Boss 身上暴露，也正是它一直被漏掉的原因。
+   * 最终模型：Boss 有**两个**半径（见 config.js 的注释）
+   *   bodyRadius = 46  → 推开距离 minGap = 46 + 17 + 6 = 69（玩家能站多近）
+   *   hitRadius  = 74  → 受击半径，命中判据变成 `dx < comboRange + hitRadius`
+   * 于是站在最近的合法位置上，有效距离 = comboRange + 74，三段都留出大量余量；
+   * 而小怪没有 hitRadius（undefined → 0），行为与以前逐位一致。
    *
-   * 断言写成"射程必须超过贴身间距"而不是"射程 = 73"：将来再调平衡，
+   * 断言写成"射程/受击半径必须覆盖贴身间距"而不是写死数值：将来再调平衡，
    * 只要两边同步改就不会打红一整片。
    */
-  const minGap = C.BOSS.radius + C.PLAYER_W / 2 + 6;
+  const minGap = (C.BOSS.bodyRadius || C.BOSS.radius) + C.PLAYER_W / 2 + 6;
   const need = minGap + 1;   // 判据是严格小于，所以要留 1px
 
   C.COMBO.steps.forEach(function (st, i) {
@@ -2312,7 +2312,10 @@ section('V18b. 贴住 Boss 时三段普攻都打得到（体型大的敌人不�
     run.enemies.length = 0;
     const boss = L.spawnBoss(s, run, 'normal');
     const p = run.player;
-    const far = C.COMBO.steps[2].range + 20;
+    // 反证要站在**受击半径也够不到**的地方：
+    // 有效距离 = range + hitRadius，所以 far 必须超过它，否则这条反证会把
+    // "少算了受击半径" 当成错误来报。
+    const far = C.COMBO.steps[2].range + C.BOSS.hitRadius + 30;
     p.x = boss.x - far;
     p.z = boss.z;
     p.facing = 1;
@@ -2323,9 +2326,141 @@ section('V18b. 贴住 Boss 时三段普攻都打得到（体型大的敌人不�
     const hp0 = boss.hp;
     L.step(s, Object.assign({}, INPUT, { attack: true }), DT);
     ok(boss.hp === hp0,
-       `站得太远照样打不到（${far}px > 第 3 段射程 ${C.COMBO.steps[2].range}）`,
+       `站得太远照样打不到（${far}px > 第 3 段射程 ${C.COMBO.steps[2].range} + 受击半径 ${C.BOSS.hitRadius}）`,
        `Boss 血量 ${boss.hp}`);
   }
+}
+
+// ---------------------------------------------------------------- V18c 再来一局的难度继承
+section('V18c. 「再来一局」必须记住打的是哪一局（难度 / Boss 档不能丢）');
+{
+  /*
+   * PM 报（2026-11-13）：「不管在什么关卡死了点再来一局都回到了林地难度」。
+   *
+   * 根因是三条叠加，任何一条单独看都不明显：
+   *  1. startBossRun 里 L.startRun(this.state, 'wood') 写死了 'wood'，
+   *     于是 Boss 局的 run.difficultyId 永远是 wood；
+   *  2. endRun 只把 difficultyId 抄进 lastResult，没抄 isBossRun / bossTier，
+   *     重开处理器手上只有"难度"这一条线索，Boss 局身份丢失；
+   *  3. C.difficultyById 对未知 id **静默回退到 wood**（实测 'hard'/'hell'/'' 全 → wood），
+   *     所以就算有人把 bossTier 当难度 id 传下去，也不会报错，只是安静地
+   *     开成林地 —— 缺陷因此没有任何报错可查。
+   *
+   * 这个用例同时钉住三件事：lastResult 记住身份、Boss 档与难度是两套命名、
+   * 未知 id 的回退行为本身（把它写成断言，将来谁改了回退策略会立刻知道）。
+   */
+  const TIER_DIFF = { normal: 'wood', hard: 'deep', hell: 'forge' };
+
+  Object.keys(TIER_DIFF).forEach((tier) => {
+    const s = L.createState(11);
+    // startBossRun 现在按档位取难度，这里复现它的调用
+    L.startRun(s, TIER_DIFF[tier]);
+    const run = s.run;
+    run.enemies.length = 0;
+    run.spawnQueue.length = 0;
+    run.isBossRun = true;
+    run.bossTier = tier;
+    L.spawnBoss(s, run, tier);
+    ok(run.difficultyId === TIER_DIFF[tier],
+       `档 ${tier} 开局难度是 ${TIER_DIFF[tier]}（不是写死的 wood）`,
+       run.difficultyId);
+
+    L.endRun(s, false, {});
+    ok(s.lastResult.isBossRun === true, `档 ${tier} 结算后记住这是 Boss 局`,
+       s.lastResult.isBossRun);
+    ok(s.lastResult.bossTier === tier, `档 ${tier} 结算后记住档位`,
+       s.lastResult.bossTier);
+    ok(s.lastResult.difficultyId === TIER_DIFF[tier],
+       `档 ${tier} 结算后难度仍是 ${TIER_DIFF[tier]}`, s.lastResult.difficultyId);
+
+    // 重开处理器读的就是这两样，复原出下一局该用什么
+    const againDiff = s.lastResult.isBossRun
+      ? TIER_DIFF[s.lastResult.bossTier]
+      : s.lastResult.difficultyId;
+    ok(againDiff === TIER_DIFF[tier],
+       `档 ${tier} 重开复原出 ${TIER_DIFF[tier]}（这是"回到林地"那条缺陷的正题）`,
+       againDiff);
+  });
+
+  // 普通局不能被误标成 Boss 局
+  {
+    const s = L.createState(11);
+    L.startRun(s, 'forge');
+    L.endRun(s, false, {});
+    ok(s.lastResult.isBossRun === false, '普通局 isBossRun=false', s.lastResult.isBossRun);
+    ok(s.lastResult.bossTier === null, '普通局 bossTier=null', s.lastResult.bossTier);
+    ok(s.lastResult.difficultyId === 'forge', '普通局难度保真', s.lastResult.difficultyId);
+  }
+
+  // 存档往返也要带着：重开前可能先读了一次档
+  {
+    const s = L.createState(11);
+    L.startRun(s, 'deep');
+    const run = s.run;
+    run.enemies.length = 0;
+    run.spawnQueue.length = 0;
+    run.isBossRun = true;
+    run.bossTier = 'hard';
+    L.spawnBoss(s, run, 'hard');
+    L.endRun(s, false, {});
+    const back = L.deserialize(L.serialize(s));
+    ok(back.lastResult.isBossRun === true, '读档后 isBossRun 还在', back.lastResult.isBossRun);
+    ok(back.lastResult.bossTier === 'hard', '读档后 bossTier 还在', back.lastResult.bossTier);
+  }
+
+  /*
+   * 反证（这一条是防"修了个假"）：
+   * 如果谁把 Boss 档直接当难度 id 传下去，必须能看出它是错的 ——
+   * 静默回退成 wood 正是缺陷能藏这么久的原因。这里把回退行为写死成断言，
+   * 而不是依赖它"看起来对"。
+   */
+  ok(C.difficultyById('hard').id === 'wood',
+     '（反证）bossTier 直接当难度 id 会静默回退成 wood —— 所以两套命名必须显式映射',
+     C.difficultyById('hard').id);
+  ok(C.difficultyById('hell').id === 'wood',
+     '（反证）hell 同样静默回退', C.difficultyById('hell').id);
+  Object.keys(TIER_DIFF).forEach((tier) => {
+    ok(C.difficultyById(TIER_DIFF[tier]).id === TIER_DIFF[tier],
+       `档 ${tier} 映射到的 ${TIER_DIFF[tier]} 是合法难度 id（回退不会生效）`,
+       C.difficultyById(TIER_DIFF[tier]).id);
+  });
+}
+
+// ---------------------------------------------------------------- V18d 重开的状态机
+section('V18d. 「再来一局」的状态机：phase 必须回到 run（否则战斗不跑）');
+{
+  /*
+   * PM 报（2026-11-13）：「点了再来一局进入战斗后按 tab 和 esc 都没有反应」、
+   * 「显示的是人物走到了关卡地图的最左边，按 J 却进入了农场」。
+   *
+   * 机制：结算后 phase='result'，重开处理器先调 returnToFarm()（把 phase 置成
+   * 'farm'），然后调 scene.restart()。但 RunScene.update 第一行是
+   * `if (!run || this.state.phase !== 'run') return;` —— phase 不是 'run'，
+   * 战斗循环根本不跑，屏幕上是**冻结的战场**。玩家在冻结画面上走动，
+   * 按键被 Hub 式的交互逻辑读到（zone.id === 'field'），于是"按 J 进了农场"。
+   *
+   * 这个用例钉住"重开必须把 phase 送回 run"，这是战斗能跑起来的必要条件。
+   */
+  const s = L.createState(11);
+  L.startRun(s, 'deep');
+  ok(s.phase === 'run', '开局 phase=run', s.phase);
+
+  L.endRun(s, false, {});
+  ok(s.phase === 'result', '结算后 phase=result', s.phase);
+
+  L.returnToFarm(s);
+  ok(s.phase === 'farm', 'returnToFarm 把 phase 置成 farm（这一步本身没错）', s.phase);
+
+  /*
+   * 正题：重开必须重新 startRun —— 只 returnToFarm 就 restart 的话
+   * phase 停在 'farm'，RunScene.update 会一直早退（这就是"战斗不跑、
+   * 按 J 进农场"的根因）。
+   */
+  const diff = s.lastResult.difficultyId;
+  L.startRun(s, diff);
+  ok(s.phase === 'run', '重开（startRun）后 phase 回到 run —— 战斗才跑得起来', s.phase);
+  ok(!!s.run, '重开后 run 对象存在', !!s.run);
+  ok(s.run.difficultyId === 'deep', '重开后难度还是 deep', s.run.difficultyId);
 }
 
 // ---------------------------------------------------------------- V10/V11 种子失效

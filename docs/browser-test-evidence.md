@@ -91,14 +91,18 @@ checked with `lsof` before and after).
 | `tests/check_textures.js` | 0 | _(prints counts, not assertions)_ | 62 textures generated, all 35 equipment sprites present, "全部纹理都已生成 ✓" |
 | `tests/test_audio.js` | 0 | 225 | |
 | `tests/test_bag.js` | 0 | 184 | |
-| `tests/test_game_logic.js` | 0 | 611 | |
+| `tests/test_game_logic.js` | 0 | 650 | |
 | `tests/test_game_meta.js` | 0 | 313 | |
 | `tests/test_game_page.js` | 0 | 195 | |
 | `tests/test_bosspose.js` | 0 | 96 | Boss 姿态纯函数（Task 25 新增，不启浏览器） |
-| `tests/browser/smoke.js` | 0 | 538 | Electron, ~63 s, real canvas |
+| `tests/browser/smoke.js` | 0 | 609 | Electron, ~90 s, real canvas |
 | `tests/test_product_app.js` | 0 | 70 | Phase 1 app; `analysis/build_report2.py` re-counts it live |
 
-225 + 184 + 611 + 313 + 195 + 96 + 538 = **2,162** assertions across the seven game suites, all exit 0
+225 + 184 + 650 + 313 + 195 + 96 + 609 = **2,272** assertions across the seven game suites, all exit 0
+
+(Two later passes grew them again. 2026-11-13: `test_game_logic` 619 -> 650 and
+`smoke` 538 -> 609, covering the boss hurtbox and the four "再来一局" defects —
+see the section below.)
 (Tasks 22-25 grew them again: `test_audio` 103 -> 225, `test_game_logic` 521 -> 611,
 `test_game_meta` 280 -> 313, `test_game_page` 162 -> 195, `smoke` 429 -> 538,
 plus the new `test_bosspose` at 96).
@@ -343,6 +347,7 @@ node tests/test_bag.js
 node tests/test_game_logic.js
 node tests/test_game_meta.js
 node tests/test_game_page.js
+node tests/test_bosspose.js
 node tests/browser/smoke.js                    # alone; owns 127.0.0.1:8123
 node tests/test_product_app.js
 ```
@@ -351,3 +356,120 @@ The screenshot and import drivers are one-off scripts (they live in `/tmp`, not 
 repository): an Electron `BrowserWindow` with `offscreen: true`, `capturePage()` to PNG, and
 `executeJavaScript` for the DOM reads. `tests/browser/_driver.js` is such a generated file and
 is git-ignored.
+
+## 2026-11-13 — boss hurtbox, and four defects in "再来一局"
+
+The PM played the deployed build and reported four things. Three of them were real defects in
+the restart path that **no test in this repository could have caught**, because every existing
+test started a run from scratch and never restarted one. That is the interesting part of this
+section; the fix list is short.
+
+### What was reported, and what the code actually did
+
+1. *"第一二段普攻确实打到了，但是要完全贴住 boss 才能打到"* — the boss is pushed apart from the
+   player by `minGap = C.BOSS.radius + C.PLAYER_W/2 + 6 = 69px`, and the hit test was
+   `dx < range` against the boss **centre**. Combo ranges were 73/78/90, so segment 1 only had
+   4px of margin. Small enemies (`radius` 16–18, `minGap` 39–41) cleared all three segments
+   comfortably, which is exactly why the defect survived every prior test: the tests fight
+   small enemies.
+2. *"不管在什么关卡死了点再来一局都回到了林地难度"* — `startBossRun` called
+   `L.startRun(this.state, 'wood')`, hard-coded. `endRun` recorded only `difficultyId`, so a
+   boss run recorded `wood`, and the restart handler read that value back. Compounding it,
+   `C.difficultyById` **silently falls back to wood** for an unknown id (`'hard'`, `'hell'`,
+   `''` all return wood), so passing a boss tier as a difficulty id does not throw — it just
+   quietly becomes 林地.
+3. *"显示的是人物走到了关卡地图的最左边，按 J 却进入了农场"* — after the restart handler ran
+   `L.returnToFarm(state)` (which sets `phase = 'farm'`) it called `this.scene.restart()`. But
+   `RunScene.update` bails on `state.phase !== 'run'`, so the battle never ran; the frozen
+   battlefield then read `J` through the Hub-style interaction path, matched `zone.id === 'field'`,
+   and went to the farm.
+4. *"进入第二个 boss 关卡在了渐黑"* — `startRun`/`startBossRun` waited for
+   `camerafadeoutcomplete` and nothing else. If the camera was not stepping, the event never
+   arrived and the screen stayed black forever.
+
+### The two checks that were added, and both were proved able to fail
+
+`test_game_logic.js` grew `V18c` (the restart must remember *which* run it was) and `V18d` (the
+phase state machine must return to `run`, or the battle does not run). 619 -> 650.
+
+Removing the two fields from `endRun` makes **10** of them go red:
+
+```
+FAIL  档 normal 结算后记住这是 Boss 局  -> got undefined
+FAIL  结算后记住档位                  -> got undefined
+FAIL  读档后 isBossRun 还在            -> got undefined
+失败 10 项，通过 640 项
+```
+
+`tests/browser/smoke.js` grew a `3f` section that, for each of the three boss tiers, starts the
+run, kills the player, clicks `#btn-again`, and then presses Tab twice and ESC once. 538 -> 609.
+Restoring the hard-coded `'wood'` makes **6** of them go red:
+
+```
+FAIL  档 hard 开局难度是 deep                            -> got "wood", want "deep"
+FAIL  档 hard 重开后难度仍是 deep（PM 报的"回到林地"就是这条）  -> got "wood", want "deep"
+FAIL  档 hell 重开后难度仍是 forge（PM 报的"回到林地"就是这条） -> got "wood", want "forge"
+失败 6 项，通过 603 项
+```
+
+### A false lead worth recording
+
+The first version of the smoke section failed on `hard` and `hell` with `got "wood"`, and my
+first explanation was that `startBossRun`'s `if (this.transitioning) return;` guard had not been
+reset. A separate probe disproved it: `transitioning` was `false` before every call, and all
+three tiers set their difficulty correctly when driven in isolation.
+
+The real cause was in **my own test**, not the product. The loop did not reset the previous
+iteration's scene state: after one restart the Run scene was already live and `phase` was `run`,
+so the next `startBossRun` took the `hubLive === false` short-circuit
+(`this.scene.start('Run')`) while `Run` was already running — the call was swallowed and the
+readings belonged to the previous tier. Fixed by explicitly stopping `Run`, restarting `Hub`
+and clearing `st.run`/`st.phase` at the top of each iteration.
+
+The lesson is the same one this file keeps recording from the other direction: a reading that
+looks like a product defect is worth one probe to attribute before it is written up as one.
+
+### Timing, and why the assertions read `sys.settings.status`
+
+`scene.pause()` / `scene.resume()` are **deferred** — reading `scene.isPaused()` immediately
+after the call returns the old value. The first version of these assertions did that and reported
+"the bag opened but the scene did not pause", which is a false red. They now read
+`scene.sys.settings.status` (5 = RUNNING, 6 = PAUSED) after a 350 ms settle. Instrumenting
+`pause`/`resume` on the scene confirmed the real sequence is correct:
+
+```
+pause@9120 status=5  ->  resume@9377 status=6
+```
+
+and the character moves 285 -> 435 after the bag is closed, which is the outcome that actually
+matters.
+
+### The engine error that took the longest
+
+After the restart, the console carried:
+
+```
+Uncaught TypeError: Cannot read properties of undefined (reading 'sys')
+    at initialize.setTexture (phaser.min.js:1:199027)
+    at app.js:2897
+    at Array.forEach
+    at RunScene.update (app.js:2882)
+```
+
+Phaser reuses scene instances across `stop()`/`start()`, but destroys their GameObjects. The boss
+sprite is lazily created and cached on `this`, so after a restart `this.bossSprite` was still the
+**previous run's corpse** — truthy, so the lazy-create branch was skipped, and `setTexture` was
+called on a destroyed object. Two plausible-looking fixes (`scene.sys.isActive()` in the input
+guard, `this.sys.isActive()` in `startRun`) changed nothing; capturing the real stack via a
+`window.addEventListener('error', ...)` hook is what located it. Fixed by nulling
+`this.bossSprite` / `this.bossShadow` in `RunScene.create()`.
+
+### Final counts
+
+```
+check_textures ok
+test_audio 225 | test_bag 184 | test_game_logic 650 | test_game_meta 313
+test_game_page 195 | test_bosspose 96 | smoke 609
+```
+
+2,272 assertions, all exit 0.
