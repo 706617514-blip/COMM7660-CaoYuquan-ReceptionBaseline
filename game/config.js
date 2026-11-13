@@ -39,16 +39,25 @@ const SPRINT_DEPTH_MULT = 1.35; // 深度轴上冲刺的倍率（比水平收敛
    *   第 1、2 段出手极快，用来贴上去压血；
    *   第 3 段是收招，伤害与击退都明显更高，但硬直长，打空就会被惩罚。
    * 连击窗口内再次按下才接续；超时则回到第 1 段。
+   *
+   * 射程下限由**体型最大的敌人**决定，不是由小怪决定：
+   * `stepBoss` 会把玩家推到 minGap = BOSS.radius + PLAYER_W/2 + 6 = 69px 之外
+   * （Boss radius 46，玩家半宽 17），而命中判据是 dx < range。
+   * 2026-11-13 之前三段是 61 / 66 / 78 —— 前两段都比 69 短，
+   * 于是玩家贴住 Boss 时只有第三段能打中，PM 实测报"前两下普攻打不到 boss"。
+   * 小怪的 minGap 只有 39~41，所以这个缺陷只在 Boss 身上暴露。
+   * 现在三段是 73 / 78 / 90，各自比贴身间距长 4 / 9 / 21px。
    */
   const COMBO = {
     steps: [
-      { damageMul: 1.00, cooldown: 0.26, range: 61, knockback: 120, stun: 0.10 },
-      { damageMul: 1.15, cooldown: 0.28, range: 66, knockback: 180, stun: 0.12 },
-      { damageMul: 1.85, cooldown: 0.62, range: 78, knockback: 460, stun: 0.34 },
+      { damageMul: 1.00, cooldown: 0.26, range: 73, knockback: 120, stun: 0.10 },
+      { damageMul: 1.15, cooldown: 0.28, range: 78, knockback: 180, stun: 0.12 },
+      { damageMul: 1.85, cooldown: 0.62, range: 90, knockback: 460, stun: 0.34 },
     ],
     window: 0.55,   // 两段之间允许的间隔
   };
-  const ATTACK_RANGE = 66;      // 前方攻击距离（V18：三段连段与判定整体 +5%，62×1.05=65.1 故取 66）
+  // V18 的 +5% 之后，2026-11-13 又整体 +12 以覆盖 Boss 的贴身间距（见 COMBO 注释）。
+  const ATTACK_RANGE = 78;      // 前方攻击距离（兜底值；出手后走 COMBO.steps[n].range）
   const ATTACK_DEPTH = 55;      // 深度容差：|z 差| 超过它就打不中（原 52，同比放大）
   const ATTACK_BACK = 15;       // 身后也能蹭到一点（原 14，同比放大）
   const INVULN_AFTER_HIT = 0.8;

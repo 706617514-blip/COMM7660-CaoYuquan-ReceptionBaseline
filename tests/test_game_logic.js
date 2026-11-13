@@ -707,9 +707,17 @@ section('14. 核心循环可以真的被打通');
     const t = live.reduce((a, b) => dist(a) <= dist(b) ? a : b);
     const dx = t.x - p.x, dz = t.z - p.z, d = Math.abs(dx);
     if (!dodging && Math.abs(dz) > 18) { if (dz > 0) i.up = true; else i.down = true; }
-    if (d > 52) { if (dx < 0) i.left = true; else i.right = true; }
-    else if (d < 34) { if (dx < 0) i.right = true; else i.left = true; }
-    if (d < C.ATTACK_RANGE && Math.abs(dz) <= C.ATTACK_DEPTH * 0.85) i.attack = true;
+    // 与 tests/bot.js 同一套逻辑：站位门限不按射程成比例缩放
+    // （按比例会让机器人在 52~61.6px 区间站桩，胜率被打崩），
+    // 只做"射程覆盖贴身间距"的下限保护；命中判据逐敌判断。
+    const rng = C.ATTACK_RANGE;
+    const standIn = Math.max(52, Math.min(rng - 6, 52 + 12));
+    const standBack = Math.min(34, standIn - 12);
+    if (d > standIn) { if (dx < 0) i.left = true; else i.right = true; }
+    else if (d < standBack) { if (dx < 0) i.right = true; else i.left = true; }
+    if (live.some(function (en) {
+      return Math.abs(en.x - p.x) < rng && Math.abs(en.z - p.z) <= C.ATTACK_DEPTH * 0.85;
+    })) i.attack = true;
     return i;
   }
 
@@ -2238,6 +2246,85 @@ section('V18. 攻击连段与判定范围整体加长 5%');
     ok(e.hp < hp0 || e.state === 'dead',
        `第 1 段真的能打到 ${gap.toFixed(1)}px 外的敌人（旧射程 ${base[0]}）`,
        e.hp);
+  }
+}
+
+// ---------------------------------------------------------------- V18b. Boss 近战够得到
+section('V18b. 贴住 Boss 时三段普攻都打得到（体型大的敌人不能被"贴身距离"卡住）');
+{
+  /*
+   * 2026-11-13 PM 实测反馈：「前两下普攻打不到 boss」。
+   *
+   * 机制：`stepBoss` 会把玩家推出一段"不穿模"的最小间距
+   *     minGap = BOSS.radius + PLAYER_W/2 + 6 = 46 + 17 + 6 = 69
+   * 而命中判据是 `dx < comboRange`。三段射程 61 / 66 / 78：
+   *     第 1 段 61 < 69  → 站在最近的合法位置也够不到（差 8px）
+   *     第 2 段 66 < 69  → 差 3px
+   *     第 3 段 78      → 只有重劈能打到
+   * 小怪 radius 只有 16~18，对应的 minGap 是 39~41，所以三段都打得到 ——
+   * 这个缺陷只在 Boss 身上暴露，也正是它一直被漏掉的原因。
+   *
+   * 断言写成"射程必须超过贴身间距"而不是"射程 = 73"：将来再调平衡，
+   * 只要两边同步改就不会打红一整片。
+   */
+  const minGap = C.BOSS.radius + C.PLAYER_W / 2 + 6;
+  const need = minGap + 1;   // 判据是严格小于，所以要留 1px
+
+  C.COMBO.steps.forEach(function (st, i) {
+    ok(st.range >= need,
+       `贴住 Boss 时第 ${i + 1} 段够得到（射程 ${st.range} 必须 ≥ 贴身间距 ${minGap} + 1）`,
+       `range=${st.range} need=${need}`);
+  });
+  ok(C.ATTACK_RANGE >= need,
+     `普攻基准射程也够得到 Boss（${C.ATTACK_RANGE} ≥ ${need}）`, C.ATTACK_RANGE);
+
+  // 行为层：真的造一个 Boss、把玩家放到最近的合法位置、挥一刀。
+  // 只断言配置等于没测 —— 配置对了但 resolveAttack 用别的判据照样漏。
+  function swingAtBoss(segIndex) {
+    const { s, run } = armedRunWithEquip({});
+    run.enemies.length = 0;
+    const boss = L.spawnBoss(s, run, 'normal');
+    const p = run.player;
+    p.x = boss.x - minGap;      // 玩家能站到的离 Boss 最近的位置
+    p.z = boss.z;
+    p.facing = 1;               // 面朝 Boss
+    p.hitIds = [];
+    p.comboStep = segIndex;
+    p.comboTimer = C.COMBO.window;
+    p.attackTimer = 0;
+    p.attackCd = 0;
+    const hp0 = boss.hp;
+    L.step(s, Object.assign({}, INPUT, { attack: true }), DT);
+    return { hit: boss.hp < hp0, dealt: hp0 - boss.hp, hp0: hp0 };
+  }
+
+  for (let i = 0; i < C.COMBO.steps.length; i++) {
+    const r = swingAtBoss(i);
+    ok(r.hit,
+       `第 ${i + 1} 段真的打中了贴身位置的 Boss（站位 ${minGap}px）`,
+       `Boss 血量 ${r.hp0} -> ${r.hp0 - r.dealt}`);
+  }
+
+  // 反证：不能靠"把判定改成恒真"蒙过上面三条。
+  // 站到射程之外必须打不到，否则"够得到"只是废话。
+  {
+    const { s, run } = armedRunWithEquip({});
+    run.enemies.length = 0;
+    const boss = L.spawnBoss(s, run, 'normal');
+    const p = run.player;
+    const far = C.COMBO.steps[2].range + 20;
+    p.x = boss.x - far;
+    p.z = boss.z;
+    p.facing = 1;
+    p.hitIds = [];
+    p.comboStep = 0;
+    p.attackTimer = 0;
+    p.attackCd = 0;
+    const hp0 = boss.hp;
+    L.step(s, Object.assign({}, INPUT, { attack: true }), DT);
+    ok(boss.hp === hp0,
+       `站得太远照样打不到（${far}px > 第 3 段射程 ${C.COMBO.steps[2].range}）`,
+       `Boss 血量 ${boss.hp}`);
   }
 }
 

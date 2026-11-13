@@ -72,9 +72,23 @@ function decide(state) {
   const t = live.reduce((a, b) => (dist(a) <= dist(b) ? a : b));
   const dx = t.x - p.x, dz = t.z - p.z, d = Math.abs(dx);
   if (!dodging && Math.abs(dz) > 18) { if (dz > 0) i.up = true; else i.down = true; }
-  if (d > 52) { if (dx < 0) i.left = true; else i.right = true; }
-  else if (d < 34) { if (dx < 0) i.right = true; else i.left = true; }
-  if (d < C.ATTACK_RANGE && Math.abs(dz) <= C.ATTACK_DEPTH * 0.85) i.attack = true;
+  // 站位门限：保持"逼近到攻击距离内"，但不按射程成比例缩放 ——
+  // 试过 rng*0.79 / rng*0.52（78 → 61.6 / 40.6），胜率被自己打崩：
+  // 机器人在 52~61.6px 区间里既不前进也不出手，等于站桩挨打，
+  // 零强化草丛从 100% 掉到 87%、林地 97% → 50%。射程该管的是"够不够得着"，
+  // 站位该管的是"贴到多近才停"，后者由敌人的推开距离决定，两者不该绑死。
+  // 所以这里只做下限保护：射程至少要覆盖贴身间距，否则机器人不会靠近。
+  const rng = C.ATTACK_RANGE;
+  const standIn = Math.max(52, Math.min(rng - 6, 52 + 12));
+  const standBack = Math.min(34, standIn - 12);
+  if (d > standIn) { if (dx < 0) i.left = true; else i.right = true; }
+  else if (d < standBack) { if (dx < 0) i.right = true; else i.left = true; }
+  // 命中判据必须逐敌判断，不能只看"最近的那个"：
+  // Boss 体型大（radius 46，贴身间距 69px），而 Boss 关里场上只有它，
+  // 用单一门限会得出"打不中 Boss"的错误结论（2026-11-13 的正是这个 bug）。
+  if (live.some(function (en) {
+    return Math.abs(en.x - p.x) < rng && Math.abs(en.z - p.z) <= C.ATTACK_DEPTH * 0.85;
+  })) i.attack = true;
   return i;
 }
 

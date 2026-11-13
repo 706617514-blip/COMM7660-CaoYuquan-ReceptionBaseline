@@ -31,8 +31,11 @@ const STRIDES = Math.max(1, parseInt(process.argv[3], 10) || 4);
 const STRIDE_SET = [137, 211, 977, 1231, 1777, 2011].slice(0, STRIDES);
 
 // V18 之前的定稿值（`game/config.js` 的 61/66/78、66/55/15 由它 ×1.05 得出）。
+// 2026-11-13：Boss 近战够不到（三段射程都短于贴身间距 69px），
+// 三段又整体 +12（61/66/78 -> 73/78/90）；下面的 NEW 跟着更新。
+// OLD 保持不动 —— 它代表「用户定稿 V18 之前」的口径。
 const OLD = { steps: [58, 62, 74], range: 62, depth: 52, back: 14 };
-const NEW = { steps: [61, 66, 78], range: 66, depth: 55, back: 15 };
+const NEW = { steps: [73, 78, 90], range: 78, depth: 55, back: 15 };
 
 const LEVELS = [['零强化', B.ZERO_UP], ['半满', B.HALF_UP], ['全满', B.FULL_UP]];
 const FLAG_PP = 8;   // 上升超过这个百分点数就要上报（用户定稿的启发式门槛）
