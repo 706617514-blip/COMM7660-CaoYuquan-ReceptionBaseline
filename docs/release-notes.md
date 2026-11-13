@@ -24,6 +24,7 @@ repository, not a description of intent.
 | Phase 2, release 1 | `v0.2-mvp` | 2026-11-10 | `55e0447` | Playable core loop: run → loot → farm → upgrade | https://706617514-blip.github.io/COMM7660-CaoYuquan-ReceptionBaseline/ | [run 42746488696](https://github.com/706617514-blip/COMM7660-CaoYuquan-ReceptionBaseline/actions/runs/42746488696) |
 | Phase 2, release 2 | `v0.2-equipment` | 2026-11-11 | `4f6e916` | Equipment system (35 items, 5 slots), the farm freeze fix, plus earlier untagged work now included | https://706617514-blip.github.io/COMM7660-CaoYuquan-ReceptionBaseline/ | [run 43045532080](https://github.com/706617514-blip/COMM7660-CaoYuquan-ReceptionBaseline/actions/runs/43045532080) |
 | Phase 2, release 2 (earlier tag, now out of date) | `v0.2-submission` | 2026-11-10 | `727e39b` | Revision driven by evidence collected after release 1. **Does not include the equipment system** — see the note under Release 2 | _same URL_ | [run 42792958880](https://github.com/706617514-blip/COMM7660-CaoYuquan-ReceptionBaseline/actions/runs/42792958880) |
+| Phase 2, current batch (unreleased) | _(no tag)_ | 2026-11-13 | `f3f7ed5` | Backpack panel (35 cells per page, six pages, paid expansion), batch sell, runtime-generated audio (21 SFX) with volume/music/ambient sliders, ESC menu, attack reach +5%, panel item art with tight-cropped sprites, forgewear slot tabs, potion-shop bag-page entry, rarity-tier sorting; plus the second batch: level-entry fade, seed spoilage above the plot count, footstep/victory/defeat and hub cricket ambience, shop renamed with farm-plot purchase (3000 each, 27 max) and farm paging, procedural six-segment vine arms driving the boss's idle/walk/windup/strike poses | _(未部署 — 分支已 push 但未合并，Pages 只部署 `main`)_ | [run 43290229494](https://github.com/706617514-blip/COMM7660-CaoYuquan-ReceptionBaseline/actions/runs/43290229494)（PR #2 的 5 项必需检查全 pass） |
 
 > The Phase 1 tag is **immutable**. Do not retag it, amend its commits, or move it to a later
 > commit. Phase 2 work happens in commits after it.
@@ -31,6 +32,13 @@ repository, not a description of intent.
 > The cells above were filled in from the repository and the Actions log rather than from
 > memory. A tag, a CI run and a deployment URL are execution facts; each one was read back
 > from the system that produced it before being written down here.
+>
+> The last row is the working branch at the time of writing, not a release. It has no tag and
+> it is not deployed — Pages only deploys `main`, and this branch is not merged. Its CI run
+> URL is [PR #2](https://github.com/706617514-blip/COMM7660-CaoYuquan-ReceptionBaseline/pull/2),
+> which read back five passing required checks. Its local evidence (seven suites, 1,671
+> assertions, screenshots, one old-save import) is recorded in
+> `docs/browser-test-evidence.md`.
 
 ---
 

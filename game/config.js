@@ -42,15 +42,15 @@ const SPRINT_DEPTH_MULT = 1.35; // 深度轴上冲刺的倍率（比水平收敛
    */
   const COMBO = {
     steps: [
-      { damageMul: 1.00, cooldown: 0.26, range: 58, knockback: 120, stun: 0.10 },
-      { damageMul: 1.15, cooldown: 0.28, range: 62, knockback: 180, stun: 0.12 },
-      { damageMul: 1.85, cooldown: 0.62, range: 74, knockback: 460, stun: 0.34 },
+      { damageMul: 1.00, cooldown: 0.26, range: 61, knockback: 120, stun: 0.10 },
+      { damageMul: 1.15, cooldown: 0.28, range: 66, knockback: 180, stun: 0.12 },
+      { damageMul: 1.85, cooldown: 0.62, range: 78, knockback: 460, stun: 0.34 },
     ],
     window: 0.55,   // 两段之间允许的间隔
   };
-  const ATTACK_RANGE = 62;      // 前方攻击距离
-  const ATTACK_DEPTH = 52;      // 深度容差：|z 差| 超过它就打不中
-  const ATTACK_BACK = 14;       // 身后也能蹭到一点
+  const ATTACK_RANGE = 66;      // 前方攻击距离（V18：三段连段与判定整体 +5%，62×1.05=65.1 故取 66）
+  const ATTACK_DEPTH = 55;      // 深度容差：|z 差| 超过它就打不中（原 52，同比放大）
+  const ATTACK_BACK = 15;       // 身后也能蹭到一点（原 14，同比放大）
   const INVULN_AFTER_HIT = 0.8;
   const WAVE_BREAK = 1.4;       // 清波后的间歇
 const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在数学上不可通关
@@ -207,9 +207,9 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
    * 能让铜币始终有去处，玩家的选择也始终有效。
    *
    * 三条效果刻意选在**不同维度**上，避免互相替代：
-   *   回春 = 立刻回血（换血量）
+   *   治疗 = 立刻回血（换血量）
    *   力量 = 15 秒增伤（换输出窗口）
-   *   坚壁 = 8 秒减伤（换容错）
+   *   护盾 = 8 秒减伤（换容错）
    * 前两个是"增量"，第三个是"抗压"，对应三种不同的翻盘场景。
    *
    * 键位 1/2/3 由 PM 指定（设计文档 4.5 曾把键位列为实现者决定，
@@ -217,21 +217,21 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
    */
   const POTIONS = {
     heal: {
-      key: '1', name: '回春药', short: '回春',
+      key: '1', name: '治疗药水', short: '治疗',
       desc: '立刻恢复 25 点生命',
       price: 60, carry: 3,
       kind: 'instant', heal: 25,
       color: 0x7fe08a,
     },
     strength: {
-      key: '2', name: '力量药', short: '力量',
+      key: '2', name: '力量药水', short: '力量',
       desc: '15 秒内伤害提升 25%',
       price: 80, carry: 2,
       kind: 'buff', duration: 15.0, damageMul: 1.25,
       color: 0xff9a6c,
     },
     wall: {
-      key: '3', name: '坚壁药', short: '坚壁',
+      key: '3', name: '护盾药水', short: '护盾',
       desc: '8 秒内受到的伤害减半',
       price: 90, carry: 2,
       kind: 'buff', duration: 8.0, hurtMul: 0.5,
@@ -273,7 +273,7 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
   /**
    * 基础装备 16 件：主要是属性倾向，视觉靠轮廓区分（§4.2）。
    * 扩到 16 件是为了让 5% 掉落能持续 10+ 局 —— 只做 4 件会被 2–3 局掉完，
-   * 掉落的价值立刻归零，"重复品折算 30%"也就没有了意义。
+   * 掉落的价值立刻归零（重复品进背包、由玩家自行出售，见 2026-11-12 设计文档）。
    *
    * 每件只给 1–2 条属性，且单件强度都低于一级强化，
    * 避免装备叠加后把难度阶梯压平。
@@ -410,10 +410,9 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
     },
   };
 
-  /** 掉落与折算（§4.3）。5% 是明确要求，重复品折 30% 是经济闭环的关键。 */
+  /** 掉落（§4.3）。5% 是明确要求；重复品不再折算，统一进背包由玩家自行处理。 */
   const EQUIP_DROP = {
     chance: 0.05,
-    refundRatio: 0.30,
     // 只掉基础装备：特效装备是"目标"，需要攒钱买，
     // 掉落会让它失去稀缺性，玩家也就不会再为它攒钱了。
     baseOnly: true,
@@ -474,6 +473,41 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
     yieldPerPlot: 9,        // 每块成熟田每局产出的铜币
     seedCost: 1,            // 每块田消耗 1 颗种子
     runDecayChance: 0,      // 预留：作物枯萎（当前关闭，避免惩罚过重）
+    /*
+     * 种子失效（设计 §3.5）：超过「自家播种量」（= 田地数）的那部分种子
+     * 每局腐烂这个比例。写在配置里而不是逻辑里，是为了和别的数值一样可调。
+     * 为什么需要它：meta.seeds 是单一整数，玩家没有上限地囤种子，
+     * 而田地有限，囤积没有任何用途 —— 只是数字变大。
+     */
+    seedSpoilRate: 0.25,
+    /*
+     * 开垦新田地（Task 24 / 设计 §3.6）。
+     *
+     * 一页 9 块（3×3 的透视布局不随块数变化），最多 3 页 = 27 块。
+     * 页数不单独存：由 plots.length 推导（ceil(块数 / perPage)），
+     * 这样"田地被加了一块"和"多了一页"永远是同一个事实，不会漂移。
+     * 单价固定 3000：一块地每局 +9，约 334 局回本 —— 是长线目标，
+     * 不是随手可买的小道具，和背包页的价格曲线同一量级再陡一档。
+     */
+    plotPrice: 3000,
+    perPage: 9,
+    maxPlots: 27,
+  };
+
+  /**
+   * 背包分页与扩容（设计 §4.7）。
+   *
+   * 5×7 = 35 格一页，起手 1 页、最多 6 页，所以容量是 35 → 210。
+   * pagePrices[N] 是「从第 N 页扩到第 N+1 页」的价格，
+   * 于是买页 2 收 pagePrices[1]。价位刻意做陡：扩容是长线投入，
+   * 不该和买装备抢同一笔钱的决策权重。
+   * 数值只写在这里 —— CI 会检查逻辑层不许内联写死数值。
+   */
+  const BAG = {
+    cols: 5, rows: 7,
+    cellsPerPage: 35,
+    maxPages: 6,
+    pagePrices: [0, 200, 500, 1000, 2000, 5000],
   };
 
   /**
@@ -528,6 +562,42 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
         windup: 1.40, cd: 23.0,
         desc: '全屏枯萎，1.4 秒前摇后爆发；前摇期间闪现离开原地可躲开' },
     ],
+
+    // ---- 程序化手臂与姿态（Task 25）----
+    // Boss 本体是一张 PNG（191×321 / 193×407 / 196×403，三档各一对左右视图），
+    // 只在做 setPosition：位置变了图没变，所以看起来像"一张贴图在平移"。
+    // 修法是保留 PNG 当躯干，在独立 Graphics 层上按状态画两条分节藤蔓手臂
+    // + 呼吸/起伏/倾角（game/bosspose.js 算姿态，app.js 只负责画）。
+    // 下面这些数都是按贴图归一化坐标量的，**必须乘 scale 再画**：
+    // 三档贴图高度不同（321/407/403），都缩到 185px 高，不乘 scale 手臂会
+    // 一档长一档短。
+    armSegRatio: [1.0, 0.86, 0.74, 0.63, 0.54, 0.46],  // 六节长度比，累加 ≈4.23
+    armBaseLen: 0.085,        // 第 1 节 = 0.085 × 贴图高；× 4.23 ≈ 0.36 × 贴图高
+    // 线宽的取舍（比任务书原定的 7 / 2.5 粗一档，2026-11-13 03:2x 调）：
+    // 7/2.5 乘 scale（三档约 0.50~0.58）落屏只有 3.6→1.3 CSS px，
+    // 比躯干自己那团藤蔓还细，1x 下 idle / walk 基本读不出手臂 —— 那就等于
+    // 花了一整天做动画没人看得见。10/4 落屏 5.2→2.1 px，仍明显细于躯干，
+    // 不会变成"两根香肠"。实测四张截图（idle/walk/windup/strike）都读得出。
+    armWidthRoot: 10,         // 根节线宽（贴图像素），乘 scale
+    armWidthTip: 4,           // 尖节线宽
+    // 颜色必须比本体亮。本体主要色域实测在 0x4a4038 一带（很深），
+    // 手臂若用同色系，在一团深色藤蔓上完全看不见 —— 那就白做了。
+    armColorRoot: 0x7a6a55,
+    armColorTip: 0x5c4c3e,
+    // 锚点：PIL 逐行扫 alpha 边界量出来的。这张图左右几乎没有留白，
+    // 从高度 0.30 到 0.78 轮廓都顶到画幅边缘，所以锚点只能取在轮廓**内部**
+    // （±0.36 落在 y=0.42 那一行的身体里），根部被藤蔓盖住，
+    // 看起来是"从这团藤蔓里又伸出来两条"。改成 0.62 会变成长在屁股上。
+    armAnchorX: 0.36,         // 相对贴图宽的一半（±）
+    armAnchorY: 0.42,         // 相对贴图高，从上边算
+    armSpread: 0.42,          // 两条手臂下垂时向外张开的角度（弧度）。
+                              // 0.42 rad ≈ 24°：实测 0.22 时手臂整条落在
+                              // 躯干轮廓（191px 贴图里占 176px 宽）里面，肉眼看不见。
+    stepPeriod: 0.62,         // 步态周期（秒）。26 u/s 的巨物，0.62 一步读得出重量
+    // 走路判据的阈值。注意：pose 的位移输入必须**折算到 poseRefFrame 这一个参考帧**，
+    // 否则 60fps 下 Boss 每帧水平只走 26/60 = 0.433，永远跨不过 0.5。
+    poseWalkThreshold: 0.5,
+    poseRefFrame: 1 / 30,
   };
 
   // 战利品：每只小怪的基础掉落，再乘难度 lootMul
@@ -554,6 +624,200 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
     burstGap: 2.6,          // 批与批之间的停顿（秒）
   };
 
+  /**
+   * 音效（Task 12）：自建 AudioContext 合成，不借 Phaser 的音频系统。
+   *
+   * 为什么参数在数据层
+   * ------------------
+   * 音色是**手感**的一部分，和伤害数值一样会被反复调。把它写成数据表，
+   * 调音只改这里，audio.js 里没有任何一个音效专属的分支。
+   *
+   * 声部（voice）字段
+   * -----------------
+   *   wave    sine / triangle / square / sawtooth / noise
+   *   at      相对起奏的秒数（和弦、双音靠这个错开）
+   *   dur     声部时长（约等于包络衰减到静音的时间）
+   *   gain    峰值增益（相对 masterGain，全部汇总后仍 < 1，不会削波）
+   *   f0/f1   频率起点/终点；给了 f1 就做指数滑动（下滑=打击，上扬=蓄力）
+   *   attack  起音时间，太长会糊、太短会"啪"（默认 4ms）
+   *   filter  噪声成形（{type,f0,f1,q}）；噪声声部没有滤波器就是一片白噪
+   *   am      振幅调制（{rate,depth}），做气泡/颤音的质感
+   *
+   * 音量与静音存在 meta.settings.volume / muted（logic.js 的 createState 里
+   * 已经留好了这两个字段），跨会话保留。
+   */
+  const AUDIO = {
+    volume: 0.30,           // 总音量（masterGain），首次进入的默认值
+    throttle: 0.025,        // 同一音效 25ms 内只响一次（连段同帧三下会爆音）
+    // ---- 脚步（Task 23 / 设计 §3.2）----
+    // 按位移触发，不是按时间：走满 stepStride 个世界单位才响一步。
+    // 冲刺时步距更短（脚步更密），这是"跑起来"的听感来源，不是提高音量。
+    stepStride: 26,
+    stepStrideSprint: 22,
+    stepVolume: 0.12,       // 脚步总峰值上限：必须明显低于挥击（0.30），否则走两步就吵
+    // ---- 环境音（Task 23 / 设计 §3.8）----
+    // 营地虫鸣：一条独立通道（ambientGain），只受"环境音"滑块控制，
+    // 与总音量相乘而不受"音乐"滑块影响（那条没有声源）。
+    ambient: {
+      name: 'cricket',
+      volume: 0.30,         // 首次进入的默认值（与总音量默认值一致）
+      bufferSeconds: 8,     // 循环缓冲长度：8 秒内听不出接缝
+      cricketCount: 26,     // 8 秒内的蟋蟀叫声次数（稀疏背景，不是 26 只同时叫）
+      cricketHz: [4200, 6800],  // 蟋蟀频段：4.2~6.8kHz 的窄带"吱"
+      windHz: 60,           // 夜风底噪：60Hz 极低音，只提供"在场感"
+      seed: 20261113,       // 固定种子：每次进基地是同一套虫鸣（不换样本）
+      // 起步/收尾的淡入淡出秒数。8 秒循环缓冲在任何相位被硬起/硬停都是一声爆音，
+      // 营地 ↔ 关卡来回切时尤其明显。0 = 退回硬起停。
+      fade: 0.25,
+    },
+    sfx: {
+      // ---- 战斗 ----
+      slash: { voices: [
+        // 刀刃破风：带通噪声从 3.2kHz 扫到 1.1kHz，高频先起、快速衰减
+        { wave: 'noise', dur: 0.075, gain: 0.30,
+          filter: { type: 'bandpass', f0: 3200, f1: 1100, q: 1.2 } },
+        // 加一条很轻的锯波下滑，给"挥"一个音高感，不然只是沙沙声
+        { wave: 'sawtooth', dur: 0.055, gain: 0.06, f0: 420, f1: 180 },
+      ] },
+      hit: { voices: [
+        // 入肉：低频正弦 180→70Hz 的短促下坠（身体能感到的那一下）
+        { wave: 'sine', dur: 0.06, gain: 0.32, f0: 180, f1: 70 },
+        // 叠一点低通噪声做"噗"，纯正弦会像木鱼
+        { wave: 'noise', dur: 0.045, gain: 0.16,
+          filter: { type: 'lowpass', f0: 1500, f1: 500, q: 0.8 } },
+      ] },
+      crit: { voices: [
+        // 重劈：高频泛音（1046→1568 上扬）+ 三角波，短促 150ms
+        { wave: 'triangle', dur: 0.14, gain: 0.22, f0: 1046, f1: 1568 },
+        { wave: 'sine', dur: 0.10, gain: 0.20, f0: 2093 },
+        // 一点高通噪声当"金属划痕"，让重击和普通命中区分得开
+        { wave: 'noise', dur: 0.09, gain: 0.14,
+          filter: { type: 'highpass', f0: 2600, f1: 5200, q: 0.7 } },
+      ] },
+      hurt: { voices: [
+        // 玩家受伤：方波 220→90Hz 闷哼，低通压住高频（不能比命中还亮）
+        { wave: 'square', dur: 0.20, gain: 0.20, f0: 220, f1: 90,
+          filter: { type: 'lowpass', f0: 900, f1: 500, q: 0.9 } },
+        { wave: 'sine', dur: 0.16, gain: 0.18, f0: 110, f1: 70 },
+      ] },
+      // ---- 战利品 ----
+      coin: { voices: [
+        // 铜币：两枚先后落在 1046 / 1568Hz，60ms 一颗，干净的正弦
+        { wave: 'sine', dur: 0.06, gain: 0.22, f0: 1046 },
+        { wave: 'sine', at: 0.045, dur: 0.07, gain: 0.18, f0: 1568 },
+      ] },
+      seed: { voices: [
+        // 种子：比铜币更高更薄（1568→2093），三角波，音量更小
+        { wave: 'triangle', dur: 0.05, gain: 0.16, f0: 1568, f1: 2093 },
+      ] },
+      dropNew: { voices: [
+        // 掉落新件：C-E-G 三连上行（523/659/784），每音 90ms，庆祝但克制
+        { wave: 'triangle', dur: 0.11, gain: 0.18, f0: 523 },
+        { wave: 'triangle', at: 0.055, dur: 0.11, gain: 0.18, f0: 659 },
+        { wave: 'triangle', at: 0.11, dur: 0.12, gain: 0.20, f0: 784 },
+      ] },
+      dropDup: { voices: [
+        // 重复件：两个下行短音（392→294），方波但音量低，避免听着像惩罚
+        { wave: 'square', dur: 0.07, gain: 0.10, f0: 392,
+          filter: { type: 'lowpass', f0: 1800, f1: 1200, q: 0.8 } },
+        { wave: 'square', at: 0.07, dur: 0.08, gain: 0.10, f0: 294,
+          filter: { type: 'lowpass', f0: 1600, f1: 1000, q: 0.8 } },
+      ] },
+      // ---- 系统动作 ----
+      potion: { voices: [
+        // 喝药：150→210Hz 低频 + 22Hz 振幅调制 = 咕嘟气泡；0.28s 收住
+        { wave: 'sine', dur: 0.28, gain: 0.26, f0: 150, f1: 210,
+          am: { rate: 22, depth: 0.85 } },
+        { wave: 'noise', at: 0.06, dur: 0.18, gain: 0.07,
+          filter: { type: 'lowpass', f0: 700, f1: 400, q: 1.4 } },
+      ] },
+      skill: { voices: [
+        // 技能：锯波 300→1200 上扬（蓄力），尾部接带通噪声"释放"
+        { wave: 'sawtooth', dur: 0.18, gain: 0.14, f0: 300, f1: 1200,
+          filter: { type: 'lowpass', f0: 2400, f1: 4000, q: 0.9 } },
+        { wave: 'noise', at: 0.10, dur: 0.16, gain: 0.12,
+          filter: { type: 'bandpass', f0: 1200, f1: 3000, q: 1.1 } },
+      ] },
+      special: { voices: [
+        // 专属技：110→220 锯波 + 55Hz 方波低音 + 2.6kHz 三角尾，厚且沉
+        { wave: 'sawtooth', dur: 0.28, gain: 0.16, f0: 110, f1: 220,
+          filter: { type: 'lowpass', f0: 1600, f1: 2600, q: 1.0 } },
+        { wave: 'square', dur: 0.30, gain: 0.14, f0: 55,
+          filter: { type: 'lowpass', f0: 400, f1: 300, q: 0.9 } },
+        { wave: 'triangle', at: 0.02, dur: 0.34, gain: 0.10, f0: 2600, f1: 1400 },
+      ] },
+      upgrade: { voices: [
+        // 购买/穿戴/升级/播种成功：两声上行确认（1318→1760），短、轻、不烦
+        { wave: 'sine', dur: 0.07, gain: 0.18, f0: 1318 },
+        { wave: 'sine', at: 0.06, dur: 0.10, gain: 0.16, f0: 1760 },
+      ] },
+      sell: { voices: [
+        // 出售：1568→2093 两个方波短音（收银机叮），音量压得很低
+        { wave: 'square', dur: 0.05, gain: 0.07, f0: 1568,
+          filter: { type: 'highpass', f0: 800, f1: 1200, q: 0.7 } },
+        { wave: 'square', at: 0.05, dur: 0.07, gain: 0.07, f0: 2093,
+          filter: { type: 'highpass', f0: 900, f1: 1400, q: 0.7 } },
+      ] },
+      bagOpen: { voices: [
+        // 开背包：带通噪声 400→3000Hz 的"唰"（拉链/布料），0.14s
+        { wave: 'noise', dur: 0.14, gain: 0.16,
+          filter: { type: 'bandpass', f0: 400, f1: 3000, q: 0.9 } },
+        { wave: 'triangle', at: 0.02, dur: 0.10, gain: 0.08, f0: 660, f1: 990 },
+      ] },
+      // ---- 进程 ----
+      wave: { voices: [
+        // 新一波：G-B-D（196/247/294）三音和声，22ms 错开成"号角"
+        { wave: 'sawtooth', dur: 0.22, gain: 0.10, f0: 196,
+          filter: { type: 'lowpass', f0: 1800, f1: 1200, q: 0.8 } },
+        { wave: 'sawtooth', at: 0.01, dur: 0.22, gain: 0.09, f0: 247,
+          filter: { type: 'lowpass', f0: 1800, f1: 1200, q: 0.8 } },
+        { wave: 'sawtooth', at: 0.02, dur: 0.24, gain: 0.09, f0: 294,
+          filter: { type: 'lowpass', f0: 2000, f1: 1300, q: 0.8 } },
+      ] },
+      boss: { voices: [
+        // Boss 出场：55→38Hz 正弦超低 + 300Hz 低通噪声，0.5s 的地面震动
+        { wave: 'sine', dur: 0.50, gain: 0.34, f0: 55, f1: 38 },
+        { wave: 'noise', dur: 0.35, gain: 0.18,
+          filter: { type: 'lowpass', f0: 320, f1: 180, q: 0.9 } },
+        { wave: 'sawtooth', at: 0.04, dur: 0.40, gain: 0.08, f0: 82, f1: 55,
+          filter: { type: 'lowpass', f0: 600, f1: 300, q: 1.0 } },
+      ] },
+      // 玩家倒下：392 / 294 / 196 下行三音，每音 0.3s 指数衰减，收得干净。
+      // Task 23 改名为 defeat（victory 的镜像），总长 0.55s 落在 0.3~0.8s 里。
+      defeat: { voices: [
+        { wave: 'triangle', dur: 0.30, gain: 0.18, f0: 392 },
+        { wave: 'triangle', at: 0.11, dur: 0.30, gain: 0.18, f0: 294 },
+        { wave: 'triangle', at: 0.22, dur: 0.33, gain: 0.20, f0: 196 },
+      ] },
+      // 通关：392/523/784 上行三音（G-C-G 的开放感），总长 0.62s。
+      // 与 defeat 音色一致、方向相反 —— 玩家闭着眼也分得清赢了还是输了。
+      victory: { voices: [
+        { wave: 'triangle', dur: 0.18, gain: 0.16, f0: 392 },
+        { wave: 'triangle', at: 0.12, dur: 0.20, gain: 0.18, f0: 523 },
+        { wave: 'triangle', at: 0.20, dur: 0.42, gain: 0.20, f0: 784 },
+      ] },
+      // ---- 脚步（Task 23 / 设计 §3.2）----
+      // 三声一轮换。相对增益合计约 1.0，播放时再乘 AUDIO.stepVolume，
+      // 所以"脚步有多响"只有 config 里那一个地方说了算。
+      // 音色差异靠噪声带通中心频率 + 低频身体，三声不能像同一块地板。
+      step1: { voices: [
+        { wave: 'noise', dur: 0.045, gain: 0.55,
+          filter: { type: 'lowpass', f0: 900, q: 0.9 } },
+        { wave: 'sine', dur: 0.035, gain: 0.45, f0: 120, f1: 80 },
+      ] },
+      step2: { voices: [
+        { wave: 'noise', dur: 0.040, gain: 0.50,
+          filter: { type: 'lowpass', f0: 1120, q: 1.1 } },
+        { wave: 'sine', dur: 0.032, gain: 0.50, f0: 140, f1: 92 },
+      ] },
+      step3: { voices: [
+        { wave: 'noise', dur: 0.050, gain: 0.60,
+          filter: { type: 'lowpass', f0: 780, q: 0.8 } },
+        { wave: 'sine', dur: 0.030, gain: 0.40, f0: 104, f1: 70 },
+      ] },
+    },
+  };
+
   const API = {
     FIELD_W, FIELD_D, GROUND_Y,
     PLAYER_W, PLAYER_H, PLAYER_SPEED, PLAYER_DEPTH_SPEED,
@@ -562,10 +826,11 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
     ATTACK_DURATION, ATTACK_COOLDOWN, ATTACK_RANGE, ATTACK_DEPTH, ATTACK_BACK, COMBO,
     INVULN_AFTER_HIT, WAVE_BREAK, WAVE_HEAL,
     BASE_HP, BASE_DAMAGE, BASE_ATTACK_SPEED,
-    DIFFICULTIES, ENEMIES, UPGRADES, FARM, LOOT, SKILLS, SKILL_ORDER, SPAWN, BOSS,
+    DIFFICULTIES, ENEMIES, UPGRADES, FARM, BAG, LOOT, SKILLS, SKILL_ORDER, SPAWN, BOSS,
     POTIONS, POTION_ORDER,
     EQUIP_SLOTS, EQUIP_SLOT_NAMES, EQUIPMENT, EQUIP_FX, ALL_EQUIPMENT,
     SPECIAL_SKILLS, EQUIP_DROP, EQUIP_LEVEL,
+    AUDIO,
     equipDef, equipPrice, equipMaxLevel, equipEffectMul,
     waveComposition,
     difficultyById: function (id) {

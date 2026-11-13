@@ -24,6 +24,27 @@
   const H = global.GameHub;
   const P = global.GameProfile;
 
+  /*
+   * 音效层（Task 12）。audio.js 必须在本文件之前加载。
+   *
+   * 这里取一个本地常量而不是每处写 global.GameAudio，有两个原因：
+   *   1. 每个触发点都写一次 global.GameAudio 的判空会让噪音盖过意图；
+   *   2. audio.js 万一没加载（例如有人只引 app.js 做静态分析），
+   *      这里退回空实现，游戏照常跑，而不是每一次挥击都抛
+   *      TypeError: Cannot read properties of undefined。
+   */
+  const GameAudio = global.GameAudio || { play: function () { return false; } };
+
+  /*
+   * Boss 姿态纯函数（Task 25）。bosspose.js 必须在本文件之前加载。
+   *
+   * 和 GameAudio 同样的处理：拿不到就退回 null，update 里跳过手臂绘制，
+   * 而不是每帧抛 TypeError（Boss 战整段渲染都会断）。
+   * 注意这是**降级**而不是正确行为 —— tests/test_game_page.js 钉了
+   * "BossPose 已挂在全局、compute/segments 是函数"，漏引脚本那里就红。
+   */
+  const BossPose = global.BossPose || null;
+
   const W = 960, HGT = 600;
   const GROUND_Y = C.GROUND_Y;
   // 每单位 z 对应的屏幕竖直位移。
@@ -44,6 +65,30 @@
     sy: GROUND_Y - z * Z_TO_Y - h,
     sc: 1 - (z / C.FIELD_D) * Z_SCALE,
   });
+
+  /*
+   * 两个颜色按 t 线性混合（0 → c0，1 → c1）。
+   * 不用 Phaser.Display.Color.Interpolate：Node 里的 Phaser 桩没那么全，
+   * 而这里只需要三通道整数插值，自己算的结果在两边完全一致。
+   */
+  function mixColor(c0, c1, t) {
+    const k = t < 0 ? 0 : (t > 1 ? 1 : t);
+    const r = Math.round(((c0 >> 16) & 255) + (((c1 >> 16) & 255) - ((c0 >> 16) & 255)) * k);
+    const g = Math.round(((c0 >> 8) & 255) + (((c1 >> 8) & 255) - ((c0 >> 8) & 255)) * k);
+    const b = Math.round((c0 & 255) + ((c1 & 255) - (c0 & 255)) * k);
+    return (r << 16) | (g << 8) | b;
+  }
+
+  /*
+   * 每只怪一个稳定的 0..1 种子（手臂摆动相位错开一点，几只 Boss 不会同步得像队列）。
+   * 用 id 的字符和，而不是 Math.random()：后者每帧都变，手臂会抖成故障。
+   */
+  function rndSeed(e) {
+    const id = String(e.id == null ? 'boss' : e.id);
+    let h = 0;
+    for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) & 0xffff;
+    return (h % 100) / 100;
+  }
 
   // ================================================================ 主角装备分层
   /**
@@ -92,6 +137,38 @@
       return c;
     };
     return c.setDepth(depth);
+  }
+
+  /**
+   * 头顶键帽：26x26 灰底圆角方块 + 一个黑色 J，贴在角色右上方。
+   *
+   * 为什么不是继续在地面写字：长文案（「按 J · 名字（提示）」）正好压在角色
+   * 与设施的脚边，走到跟前就被自己挡住；而且名字越长那行字越宽，六处点位
+   * 各写一行，画面上到处是黄字。键帽是一个固定的、离角色最近的提示符号。
+   *
+   * 尺寸写死 26x26、不随景深缩放：键帽是 UI，缩到 23px 反而糊。
+   * 透明度从 0 开始（create 之后由 update 根据需要淡入），配合 setVisible
+   * 让"没靠近"时它连绘制都省掉。
+   */
+  function makeKeycap(scene) {
+    const c = scene.add.container(0, 0);
+    const g = scene.add.graphics();
+    g.fillStyle(0x5b616b, 1);                        // 键帽本体（灰）
+    g.fillRoundedRect(-13, -13, 26, 26, 7);
+    g.fillStyle(0x767e8b, 1);                        // 顶面高光：上半截更亮
+    g.fillRoundedRect(-11, -11, 22, 12, 5);
+    g.lineStyle(1.5, 0x22262c, 1);                   // 压边：从草地里拎出来
+    g.strokeRoundedRect(-13, -13, 26, 26, 7);
+    c.add(g);
+    c.add(scene.add.text(0, 1, 'J', {
+      fontFamily: 'monospace', fontSize: '15px', fontStyle: 'bold',
+      color: '#11131a',
+    }).setOrigin(0.5, 0.5));
+    // 容器自己不带尺寸，getBounds() 只量得到里面那个 J 字（10x17），
+    // 量不出键帽本体 —— 显式声明 26x26，测试与后续布局才有一个可读的尺寸。
+    c.setSize(26, 26);
+    // 角色 depth 是 1000 - hub.z（≈895），键帽必须高于它，否则被自己脑袋挡住
+    return c.setDepth(1500).setVisible(false).setAlpha(0);
   }
 
   /**
@@ -437,6 +514,106 @@
       d.fillStyle(0xc9a6ff, 1); d.fillRoundedRect(10, 49, 21, 3, 2);
     });
 
+    /*
+     * ---- 面板图标（Task 17 / 设计 §5.7）----
+     *
+     * 铁匠铺三个强化项要在面板行首各贴一张小图：锋刃=斜置的剑、耐力=红心、
+     * 轻步=靴子加速度线。它们和装备贴图一样**预烘成静态纹理**，然后由
+     * SpriteLib 转成 dataURL 塞进 <img> —— 不在 DOM 里画矢量：那要另写一套
+     * 坐标系，而且每次 refreshPanel 重画 3~35 个图标会在切页签时卡一下。
+     *
+     * 为什么不复用 equipLayer：那个助手写死 40×60，还假设"底边是脚、有朝向"；
+     * 图标是方形、没有朝向概念，两者放一起会让任何一个改尺寸都互相绊住。
+     */
+    const upgradeIcon = (key, draw) => {
+      g.clear();
+      draw(g);
+      g.generateTexture(key, 28, 28);
+    };
+
+    /*
+     * 斜置的剑（45°指向右上）。
+     *
+     * 一个 28px 的图标只能靠剪影取胜，所以三件东西必须都画出来：
+     *   剑身 = 三角形（尖端到两个底角，天然带收窄的尖）
+     *   护手 = 横跨剑身的一道，**比剑身宽一倍** —— 这一道是"剑"与"刀/笔"
+     *          的分界，画短了整张图看起来像支笔
+     *   柄   = 从护手往左下伸的一小段 + 一颗圆头
+     * 坐标都是按 45° 轴算的：剑身轴方向 u=(-0.707,0.707)，横向 p=(0.707,0.707)。
+     */
+    upgradeIcon('ic-damage', (d) => {
+      const px = 0.7071;
+      const tipX = 25, tipY = 3;          // 剑尖（右上）
+      const baseX = 9, baseY = 19;        // 剑身根部中心
+      const halfW = 4.2;                  // 剑身半宽：28px 里要够粗才看得出是"剑"
+      // 剑身：尖端 + 两个底角（三角形，天然收窄成锋）
+      d.fillStyle(0xb8c6d4, 1);
+      d.beginPath();
+      d.moveTo(tipX, tipY);
+      d.lineTo(baseX + halfW * px, baseY + halfW * px);
+      d.lineTo(baseX - halfW * px, baseY - halfW * px);
+      d.closePath(); d.fillPath();
+      // 剑脊：沿轴线的一道高光（一条描边，不会被斜边锯齿吃掉）
+      d.lineStyle(1.8, 0xe8f2fa, 1);
+      d.beginPath();
+      d.moveTo(tipX - 2.4, tipY + 2.4); d.lineTo(baseX + 0.6, baseY - 0.6);
+      d.strokePath();
+      d.lineStyle(0, 0x000000, 0);        // 复位描边，别带进下一个图标
+      // 护手：横跨剑身、向两侧各伸出半个剑身宽的一道。
+      // 这一道是"剑"与"笔 / 凿子"的唯一分界，画短了整张图就认不出来。
+      d.fillStyle(0x2b2016, 1);
+      d.beginPath();
+      d.moveTo(baseX + 6.9, baseY + 3.3);
+      d.lineTo(baseX - 2.3, baseY - 7.9);
+      d.lineTo(baseX - 4.8, baseY - 5.4);
+      d.lineTo(baseX + 4.4, baseY + 5.8);
+      d.closePath(); d.fillPath();
+      // 柄：从护手继续往左下，末端一颗圆头
+      d.fillStyle(0x6b5138, 1);
+      d.beginPath();
+      d.moveTo(baseX + 1.0, baseY + 1.0);
+      d.lineTo(baseX - 3.6, baseY + 5.6);
+      d.lineTo(baseX - 5.9, baseY + 3.3);
+      d.lineTo(baseX - 1.7, baseY - 0.9);
+      d.closePath(); d.fillPath();
+      d.fillStyle(0x2b2016, 1);
+      d.fillCircle(baseX - 5.2, baseY + 6.4, 2.1);
+    });
+
+    // 红心：两个圆 + 一个三角，深色描边把它从米色面板上拉出来
+    upgradeIcon('ic-maxHp', (d) => {
+      d.fillStyle(0x2b2016, 1);
+      d.fillCircle(9, 11, 7.5); d.fillCircle(19, 11, 7.5);
+      d.fillTriangle(2, 13, 26, 13, 14, 27);
+      d.fillStyle(0xc94f4f, 1);
+      d.fillCircle(9, 11, 5.6); d.fillCircle(19, 11, 5.6);
+      d.fillTriangle(4, 13, 24, 13, 14, 24);
+      // 高光：左上那一点，让心看起来是立体的而不是一个红块
+      d.fillStyle(0xe8f2fa, 1);
+      d.fillCircle(7, 9, 2.2);
+    });
+
+    /*
+     * 靴子 + 速度线。
+     *
+     * 剪影靠三块：靴筒（竖）、脚面（横，指向右）、鞋底（深色一条）。
+     * 只画"竖块+横块"会看成一个 L 形积木，所以鞋底用最深的颜色压在最下面，
+     * 靴口再加一道亮边 —— 这两笔把"这是只鞋"定住。左边三道横线是"快"的
+     * 唯一线索，少了它这张图就只是只靴子，和"移速"没有关系。
+     */
+    upgradeIcon('ic-speed', (d) => {
+      d.fillStyle(0xb8c6d4, 1);
+      d.fillRect(1, 9, 6, 2); d.fillRect(0, 14, 8, 2); d.fillRect(2, 19, 5, 2);
+      d.fillStyle(0x6b5138, 1);
+      d.fillRoundedRect(12, 6, 8, 13, 3);          // 靴筒
+      d.fillRoundedRect(9, 16, 17, 8, 3);          // 脚面（向右伸出）
+      d.fillStyle(0xb8c6d4, 1);
+      d.fillRoundedRect(11.5, 5.4, 9, 2.6, 1.2);   // 靴口亮边
+      d.fillStyle(0x2b2016, 1);
+      d.fillRect(9, 22.6, 17, 2.6);                // 鞋底
+      d.fillRect(9, 19, 4, 4);                     // 鞋跟
+    });
+
 
     // ---- 爬虫：六足 + 甲壳分层 ----
     g.clear();
@@ -724,7 +901,7 @@
     g.generateTexture('altar', 64, 54);
 
     /**
-     * 药水铺：摊位 + 条纹雨棚 + 三个药瓶。
+     * 商店（原药水铺）：摊位 + 条纹雨棚 + 三个药瓶。
      *
      * 轮廓上必须和铁匠铺（矮、方、石头）完全不同 ——
      * 玩家是靠剪影找建筑的，颜色接近的两堆方块在景深压缩后会糊成一团。
@@ -763,7 +940,7 @@
 
     /*
      * 兵器架（装备商店）。
-     * 剪影必须和铁匠铺（矮方石头）、药水铺（尖顶帐篷）都不同 ——
+     * 剪影必须和铁匠铺（矮方石头）、商店（尖顶帐篷）都不同 ——
      * 这里用"横向长架上斜插的几把武器"，是全身唯一带**多根细长斜线**
      * 的建筑，远景压缩后靠这个轮廓区分，不靠颜色。
      */
@@ -865,13 +1042,43 @@
       Digit1: 'potion1', Digit2: 'potion2', Digit3: 'potion3',
       Numpad1: 'potion1', Numpad2: 'potion2', Numpad3: 'potion3',
       Escape: 'esc',
+      // Tab：开/关背包（Task 9）。
+      // 它**不能**像别的键那样只写进 down 表等 update() 去读：背包打开后
+      // scene.pause() 会停掉该场景的 update()，第二次按 Tab 就再也没人处理，
+      // 背包永远关不掉（自锁）。所以下面 onDown 里立刻调用 scene.toggleBag()。
+      Tab: 'bag',
     };
 
     const onDown = (ev) => {
       const name = CODES[ev.code];
       if (!name) return;
-      // 阻止空格滚动页面、Shift 触发浏览器快捷键
-      if (ev.code === 'Space' || ev.code.startsWith('Shift')) ev.preventDefault();
+      // 阻止空格滚动页面、Shift 触发浏览器快捷键；
+      // Tab 必须一起拦：不拦的话浏览器会把焦点跳到 DOM 按钮上，
+      // 之后的按键全被那个按钮吃掉，游戏像死了一样（实测）。
+      if (ev.code === 'Space' || ev.code.startsWith('Shift') || ev.code === 'Tab') ev.preventDefault();
+      if (name === 'bag') {
+        // 边沿动作，当场执行，不进 down 表 —— 开启后本场景 update() 已停，
+        // 读按键表的那条路径走不到。window 监听不受 scene.pause() 影响，
+        // 所以"再按一次 Tab 关掉"始终有效。
+        if (typeof scene.toggleBag === 'function') scene.toggleBag();
+        return;
+      }
+      /**
+       * ESC：和 Tab 同样的边沿处理（Task 13）。
+       *
+       * 三个约束一起决定了它必须写在这里：
+       *  1. 不能放 update() 里判 justPressed('esc')：菜单一开就 scene.pause()，
+       *     pause 之后 update 不再执行，就再也没人能把菜单关掉（实测永久冻结）。
+       *  2. 不能无条件拦下：FarmScene 没有 toggleEscMenu，那边的 ESC 仍然是
+       *     "退出田地回基地"，靠 down.esc 走 justPressed —— 所以要 typeof 守卫，
+       *     场景没这个能力就让它落到下面的 down 表。
+       *  3. 必须 return 在 down[name] = true 之前：ESC 不进按键表，避免
+       *     同一帧里既开了菜单又被 FarmScene 的 justPressed 读到。
+       */
+      if (name === 'esc' && typeof scene.toggleEscMenu === 'function') {
+        scene.toggleEscMenu();
+        return;
+      }
       down[name] = true;
       down['confirm'] = down['confirm'] || name === 'attack';
     };
@@ -904,7 +1111,7 @@
       return now && !was;
     };
 
-    // 药水是**边沿触发**：长按 1 不能把三瓶回春一次喝光。
+    // 药水是**边沿触发**：长按 1 不能把三瓶治疗一次喝光。
     // 这里在 read() 内部消费边沿，read() 每帧只调一次，语义与"按一下喝一瓶"一致。
     const potionEdge = (name) => {
       const now = !!down[name];
@@ -1331,13 +1538,24 @@
       this.state = CURRENT_STATE;
       this.input2 = createInput(this);
       this.panelOpen = false;
+      // 场景实例会被复用，这个标志必须每次进场复位：
+      // Hub → Run → Hub 回来时若还留着 true，startRun 会永久早退（点不出关卡）。
+      this.transitioning = false;
 
       paintBackdrop(this, 'hub');
 
       // 区域美术：每个设施加一圈地面灯光，把视线聚过去；细节各自补足
       this.zoneArt = {};
       H.ZONES.forEach((z) => {
-        const y = GROUND_Y - (H.HUB_D / 2) * Z_TO_Y;
+        /*
+         * 每个设施自己站在哪一行，由它自己的纵深 z 决定（88 靠前 / 122 靠后）。
+         * 以前这里写死 GROUND_Y - (HUB_D / 2) * Z_TO_Y，六个设施共用同一个 y，
+         * 画面上就是一条直线；而 ZONES 里加了 z 之后，绘制端必须跟着数据走 ——
+         * 只改数据不改这里，改的是"判定"而不是"画面"，两边会各说各话。
+         * 缩放也取同一个 toScreen：靠后的设施略小一点，才像站在远处。
+         */
+        const seat = toScreen(z.x, z.z, 0);
+        const y = seat.sy;
 
         // 地面光池（ADD 混合，成本极低但质感提升明显）
         // 光池：给设施一个暖色地面反光。缩放与透明度都要克制，
@@ -1417,13 +1635,23 @@
             duration: 1200, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
         }
         img.setDepth(10);
+        // 景深缩放：z 越大站得越远，整体略小一点（0.90 ~ 0.92，肉眼刚好能感觉到）
+        img.setScale(seat.sc);
         this.zoneArt[z.id] = img;
 
-        // 标签做成胶囊，比裸文字清楚
-        const label = this.add.text(z.x, y + 14, z.name, {
+        // 标签做成胶囊，比裸文字清楚。
+        // 位置挂在**这座设施自己包围盒的顶边之上**，不写死 y、也不写死高度表：
+        // 容器 getBounds() 已经含缩放，六个设施高度差别很大，手写一张高度表
+        // 只要改一次美术就整批失准。
+        // 为什么不放设施底边下方（原实现是 y + 14）：角色走到设施**前方**时，
+        // 胶囊正好落在脑袋高度，被头盔切成两片残字，看起来像乱码 —— 而且沿画面
+        // 最前排走动时每个点位都有这么一条带，离得越近越难看。
+        // 原点改 (0.5, 1)：文字从顶边往上长，胶囊底边永远贴着自己的美术。
+        const artBounds = img.getBounds();
+        const label = this.add.text(z.x, artBounds.top - 6, z.name, {
           fontSize: '12px', color: '#e6eef6', fontFamily: 'sans-serif',
           backgroundColor: '#0b1117cc', padding: { x: 9, y: 4 },
-        }).setOrigin(0.5, 0).setDepth(20).setAlpha(0.92);
+        }).setOrigin(0.5, 1).setDepth(20).setAlpha(0.92);
         label.setStroke('#00000088', 2);
       });
 
@@ -1433,23 +1661,145 @@
 
       this.shadow = this.add.image(0, 0, 'shadow').setScale(0.8).setDepth(1);
       this.hero = makeHero(this, 100);
-      this.prompt = this.add.text(0, 0, '', {
-        fontSize: '14px', color: '#ffe07a', backgroundColor: '#00000088',
-        padding: { x: 8, y: 4 }, fontFamily: 'sans-serif',
-      }).setOrigin(0.5, 1).setDepth(500).setVisible(false);
+
+      /*
+       * 把背包接到本场景（Task 8）。
+       *
+       * 为什么必须显式接：update() 的第一行是 if (this.panelOpen) return;
+       * 背包一打开，整个 update 就早退，里面那句 refreshHeroEquip 再也执行不到 ——
+       * 玩家在背包里换装，主角贴图会一直停在旧样子，要关掉面板才更新。
+       * 所以背包每次改完装备都**回调**这里，而不是等下一帧顺手刷到。
+       * （store 面板是同一个坑，它靠 showPanel 里就地刷一次解决了；背包是
+       * 独立浮层，没有 showPanel 那个位置可挂，只能反向注册。）
+       *
+       * 开合也要通知：背包自己不暂停 canvas，只靠 panelOpen 冻结角色的
+       * 移动与攻击输入；scene.pause() 统一留到 Task 9。
+       */
+      if (global.BagHud && typeof global.BagHud.setHost === 'function') {
+        global.BagHud.setHost({
+          onChange: () => refreshHeroEquip(this.hero, this.state),
+          // 记下原本的开合状态：商店面板开着时再开背包，关背包不能顺手把商店也解冻
+          onOpen: () => {
+            this.bagPrevPanelOpen = this.panelOpen;
+            this.panelOpen = true;
+          },
+          onClose: () => {
+            this.panelOpen = !!this.bagPrevPanelOpen;
+            this.bagPrevPanelOpen = false;
+            // 与 toggleBag 里的 scene.pause() 成对恢复。三件事要一起说清：
+            // 1) 必须在这里而不是只在 toggleBag 里：✕ 按钮（和 Esc 提示）直接调
+            //    BagHud.close()，绕过 Tab；只写在 toggleBag 里游戏会一直冻住。
+            // 2) 必须先问 isPaused()：场景可能已经被别的来源暂停（例如 ESC 菜单），
+            //    无条件 resume() 会把别人的暂停吞掉。
+            // 3) 重复 close() 不会再通知（baghud 只在真的"开 -> 关"那一跳回调），
+            //    所以这里不会出现"关两次恢复两次"。
+            if (this.scene && this.scene.isPaused()) this.scene.resume();
+          },
+        });
+      }
+
+      /*
+       * 头顶键帽（取代原来的地面长提示）。
+       *
+       * 老做法是在角色脚下写一行「按 J · 名字（提示）」。问题有两个：
+       *   1. 那行字压在角色与设施的脚边，走到跟前正好被自己挡住；
+       *   2. 它是"按当前判定现写一行字"，名字一长就横穿整个画布。
+       * 换成一个贴着头顶的 26x26 键帽：靠近才出现，扫一眼就知道按什么键。
+       */
+      this.keycap = makeKeycap(this);
+      this.keycapNear = false;
 
       this.cameras.main.setBackgroundColor('#141a22');
       this.events.on('wake', () => { this.panelOpen = false; this.refreshPlots(); });
+
+      /*
+       * 营地环境音（Task 23 / 设计 §3.8）：虫鸣只在营地。
+       *
+       * 为什么调 startAmbient 而不是直接播一个音效：
+       *   - 它是**循环**的底噪，不是一次性事件；
+       *   - 它有独立通道，只受「环境音」滑块控制（总音量仍然管得住它）；
+       *   - 页面加载时音频还没解锁（自动播放策略），这一层只记下意图，
+       *     真正的源在首个手势里补建 —— 场景不该为此写状态机。
+       *
+       * shutdown 时必须关：进关卡后营地虫鸣还在响，等于"人走了虫还在耳边"。
+       * 注意不是调成 0 —— 调成 0 只是听不见，音源还在跑（白耗 CPU）。
+       */
+      const ambientName = (C.AUDIO && C.AUDIO.ambient && C.AUDIO.ambient.name) || 'cricket';
+      GameAudio.startAmbient(ambientName);
+      this.events.once('shutdown', () => { GameAudio.stopAmbient(); });
       // 调试钩子：无头探针需要能驱动场景（见 /tmp/probe.js）
       global.EmberfieldApp.__scene = this;
       global.EmberfieldApp.__state = this.state;
+    }
+
+    /*
+     * Tab 开 / 关背包（Task 9）。
+     *
+     * 方向只问 BagHud.isOpen()，不另存一份开关状态 —— 两份状态一旦漂移，
+     * 就会出现"按 Tab 关不掉"或者"面板关了场景还在暂停"。
+     * 调用点只有一个：createInput 的 window keydown 监听（Tab 分支）。
+     */
+    toggleBag() {
+      const hud = global.BagHud;
+      if (!hud || typeof hud.open !== 'function') return;
+      // ESC 菜单开着时不接 Tab：两层都会暂停场景，而抽屉那层的 resume 只解一层，
+      // 结果是"菜单还显示着、游戏却已经在跑"。让玩家先按 ESC 出来。
+      const uiE = global.EmberfieldUI;
+      if (uiE && typeof uiE.isEscOpen === 'function' && uiE.isEscOpen()) return;
+      if (hud.isOpen()) { hud.close(); return; }   // 恢复在 onClose 里，成对
+      // 先开面板再暂停：反过来的话一暂停就轮不到渲染，玩家会看到半张面板。
+      const okOpen = hud.open(this.state, {
+        onChange: () => refreshHeroEquip(this.hero, this.state),
+      });
+      // 面板建不出来（没有 DOM / 贴图缺失）就不要暂停，否则游戏冻住还没有出口
+      if (!okOpen) return;
+      // 开背包音（Task 12）。只在**真的开了**之后响；关闭不响 ——
+      // 关闭是回到游戏，安静的返回比再来一声"唰"更不打扰。
+      GameAudio.play('bagOpen');
+      this.scene.pause();
+    }
+
+    /**
+     * ESC 菜单（Task 13 / 设计 §5.6）：基地只有「设置」一行。
+     *
+     * 调用点只有一个：createInput 的 onDown（ESC 分支）。**不要**改成
+     * update() 里判 justPressed('esc') —— 下面的 scene.pause() 会把 update 停掉，
+     * 再按一次就没人处理，菜单永远关不掉（Tab 踩过同一个坑）。
+     */
+    toggleEscMenu() {
+      const ui = global.EmberfieldUI;
+      if (!ui || typeof ui.openEsc !== 'function') return;
+      if (typeof ui.isEscOpen === 'function' && ui.isEscOpen()) {
+        // 已经开着：设置页先退回菜单页，菜单页再按一次才关（少一层误触）
+        if (typeof ui.isEscSettings === 'function' && ui.isEscSettings()) {
+          ui.escBack();
+          return;
+        }
+        ui.closeEsc();                 // 恢复在 onClose 里，成对
+        return;
+      }
+      // 背包开着时 ESC 先关背包：两层暂停叠在一起时，关掉上面那层的 resume
+      // 只解掉一层，玩家会被冻在"游戏看起来在跑、实际一动不动"的状态。
+      const hud = global.BagHud;
+      if (hud && typeof hud.isOpen === 'function' && hud.isOpen()) {
+        hud.close();
+        return;
+      }
+      const okOpen = ui.openEsc(L.escMenuRows(this.state), {
+        state: this.state,
+        onClose: () => { if (this.scene && this.scene.isPaused()) this.scene.resume(); },
+      });
+      if (!okOpen) return;             // 菜单建不出来就别暂停，否则游戏冻住还没出口
+      this.scene.pause();
     }
 
     refreshPlots() {
       this.plotSprites.forEach((s) => s.destroy());
       this.plotSprites = [];
       const field = H.ZONES.find((z) => z.id === 'field');
-      const y = GROUND_Y - (H.HUB_D / 2) * Z_TO_Y;
+      // 作物必须落在田地的土上：田地改到 z=88 之后，这里还按 HUB_D/2 算就会把
+      // 苗画在土面以上 17px，看起来像悬空。
+      const y = toScreen(field.x, field.z, 0).sy;
       this.state.farm.plots.forEach((plot, i) => {
         if (plot.state === 'empty') return;
         const col = i % 3, row = Math.floor(i / 3);
@@ -1496,23 +1846,65 @@
          * 换上头盔，主角毫无变化，要关掉面板才更新 —— 换装这个动作
          * 等于没有反馈。所以这里在动作成功后就地刷一次。
          */
-        if (r && r.ok) refreshHeroEquip(this.hero, this.state);
+        if (r && r.ok) {
+          // 成功音（Task 12）：购买 / 穿戴 / 升级 / 播种 / 卸下都走这里。
+          // 一个"确认"音比五种不同的音更省心 —— 玩家要的是"成了"，
+          // 具体是哪一种已经写在 toast 里。
+          GameAudio.play('upgrade');
+          refreshHeroEquip(this.hero, this.state);
+        }
         global.EmberfieldUI.refreshPanel(zone, this.state);
         this.refreshPlots();
         global.EmberfieldUI.save(this.state);
-        global.EmberfieldUI.toast(r.ok ? (isPlant ? '已播种' : '已购买') : (r.reason || '无法执行'),
-                                  r.ok);
+        // toast 要说出"这次点了什么"。兵器架的动作自带 verb，直接沿用
+        // （已购买 / 已穿戴 / 已升级 / 已卸掉）；没有 verb 的老动作退回"已购买"。
+        const verb = action.verb;
+        const okText = isPlant ? '已播种'
+          : (verb ? (verb.charAt(0) === '已' ? verb : '已' + verb) : '已购买');
+        global.EmberfieldUI.toast(r.ok ? okText : (r.reason || '无法执行'), r.ok);
       });
     }
 
     startRun(difficultyId) {
+      /*
+       * 进关卡要渐黑，照抄农场那套（设计 §3.4）：硬切是"瞬移"，
+       * 340ms 黑场把基地与战场接起来，RunScene.create 里再 420ms 渐亮。
+       *
+       * transitioning 是防连点：渐黑期间再按一次 J / 再点一次出发，
+       * once('camerafadeoutcomplete') 会注册第二个回调、scene.start 跑两次，
+       * 玩家刚进场就被重开一局。所以标志必须在任何副作用之前置位，
+       * 而且要放在 create() 里复位 —— 场景实例是复用的，Hub → Run → Hub
+       * 回来时如果还留着 true，基地从此再也进不了关卡。
+       *
+       * 但它只管"基地正在渐黑"这一种情况。Hub 已经停掉的时候（战斗里重开、
+       * 测试直接拿 Hub 场景调），标志停在最后一次渐黑留下的 true —— 那是过期
+       * 状态，不能拿它把调用吞掉，否则"再来一局"会点了没反应。
+       */
+      const hubLive = this.sys.isActive();
+      if (hubLive) {
+        if (this.transitioning) return;
+        this.transitioning = true;
+      }
+      // 状态必须先写好：回调在 340ms 后才跑，这期间别的地方读 state
+      // （HUD、存档、测试）看到的应该已经是"新的一局"。
       L.startRun(this.state, difficultyId);
       global.EmberfieldUI.save(this.state);
-      this.scene.start('Run');
+      /*
+       * 兜底：Hub 没激活时（战斗里重开、无头测试直接调），它的相机不跑 update，
+       * fadeOut 的完成事件永远不会来 —— 那样就成了"点了没反应"。立刻切，不摆渐黑。
+       */
+      if (!hubLive) { this.scene.start('Run'); return; }
+      this.cameras.main.fadeOut(340, 0, 0, 0);
+      this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('Run'));
     }
 
     /** Boss 挑战：清空普通波次，只放一只 Boss。 */
     startBossRun(tierId) {
+      const hubLive = this.sys.isActive();
+      if (hubLive) {
+        if (this.transitioning) return;
+        this.transitioning = true;
+      }
       L.startRun(this.state, 'wood');
       const run = this.state.run;
       run.enemies.length = 0;
@@ -1523,15 +1915,28 @@
       run.bossTier = tierId;
       L.spawnBoss(this.state, run, tierId);
       global.EmberfieldUI.save(this.state);
-      this.scene.start('Run');
+      if (!hubLive) { this.scene.start('Run'); return; }
+      this.cameras.main.fadeOut(340, 0, 0, 0);
+      this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('Run'));
     }
 
     update(time, delta) {
-      if (this.panelOpen) return;
+      // 渐黑期间整帧早退：角色不会在过渡里继续走，也不会再响应 J
+      // （否则 340ms 内按两下就会把 once 注册两次）。
+      if (this.panelOpen || this.transitioning) return;
       const dt = Math.min(delta / 1000, 0.05);
       const input = this.input2.read();
       // 基地里同样支持 Shift 冲刺
+      const beforeX = this.state.hub.x;
+      const beforeZ = this.state.hub.z;
       H.moveHub(this.state, input, dt, input.sprint ? C.SPRINT_MULT : 1);
+      // 脚步按"这一帧真的移动了多远"触发（设计 §3.2），不是按时间。
+      // 站着不动 → 位移 0 → 一声都不响；冲刺 → 步距更短 → 更密。
+      const stepDx = this.state.hub.x - beforeX;
+      const stepDz = this.state.hub.z - beforeZ;
+      if (stepDx !== 0 || stepDz !== 0) {
+        GameAudio.footstep(Math.sqrt(stepDx * stepDx + stepDz * stepDz), input.sprint);
+      }
 
       updateGrass(this, dt);
 
@@ -1546,12 +1951,32 @@
       this.shadow.setPosition(s.sx, s.sy + 2).setDepth(1000 - hub.z - 1);
 
       const zone = H.zoneAt(this.state);
-      if (zone) {
-        this.prompt.setVisible(true).setText('按 J · ' + zone.name + '（' + zone.hint + '）');
-        this.prompt.setPosition(s.sx, s.sy - 70 * s.sc);
+      /*
+       * 键帽：靠近才出现，150ms 淡入 / 淡出。
+       *
+       * 只在"状态翻转的那一帧"动 tween，不是每帧都加 —— 每帧重新 add 一个
+       * tween 会把上一条掐死在半路，alpha 永远涨不上去（表现为一直闪在 0.1）。
+       * 淡出结束后才 setVisible(false)：直接隐藏会缺最后那一下"缩回去"的过程。
+       */
+      const near = !!zone;
+      if (near !== this.keycapNear) {
+        this.keycapNear = near;
+        this.tweens.killTweensOf(this.keycap);
+        if (near) {
+          this.keycap.setVisible(true);
+          this.tweens.add({ targets: this.keycap, alpha: 1, duration: 150 });
+        } else {
+          this.tweens.add({
+            targets: this.keycap, alpha: 0, duration: 150,
+            onComplete: () => this.keycap.setVisible(false),
+          });
+        }
+      }
+      if (near) {
+        // 头顶右上方：角色贴图 40x60、origin (0.5, 1)，容器缩放 = s.sc * HERO_SCALE，
+        // 所以头顶在 sy - 71 * s.sc 附近；键帽中心再往上 7px、往右让 20px。
+        this.keycap.setPosition(s.sx + 20 * s.sc, s.sy - 78 * s.sc);
         this.shadow.setScale(s.sc * 0.8);
-      } else {
-        this.prompt.setVisible(false);
       }
 
       if (this.input2.justPressed('attack') && zone) {
@@ -1584,12 +2009,41 @@
       const tier = st && st.run && st.run.bossTier;
       const themeMap = { normal: 'bossNormal', hard: 'bossHard', hell: 'bossHell' };
       paintBackdrop(this, isBossRun ? (themeMap[tier] || 'run') : 'run');
+      /*
+       * 渐亮（与 FarmScene 同参数）：Hub 在 startRun 里渐黑 340ms 才切场景，
+       * 黑场直接切到亮场景会"闪一下"，420ms 渐亮才接得上。
+       * 从"再来一局"重开时同样是黑的，这里也适用。
+       */
+      this.cameras.main.fadeIn(420, 0, 0, 0);
 
       this.effectGfx = this.add.graphics().setDepth(1050);
       // 蓄力光点单独一层：它必须盖在 Boss 上面，否则 Boss 身体一挡就看不见。
       // Boss 的 depth 是 1000 - z，z 在 0..210 之间，所以 1000 - z 在 790..1000。
       // 1400 高于所有 Boss 可能的深度，保证光点永远在最上层。
       this.bossGfx = this.add.graphics().setDepth(1400);
+
+      /*
+       * Boss 的藤蔓手臂层（Task 25）。
+       *
+       * 单独一层 Graphics，depth 跟着 boss 的 z 每帧重设（1000 - z + 1）：
+       * 比本体高一层，否则会被自己的躯干挡掉一半；但不能高过 effectGfx(1050)，
+       * 蓄力光点还得盖在手臂上。
+       *
+       * 姿态数值全部来自 game/bosspose.js（纯函数，Node 里测得到）。
+       * 这一层只负责把数值变成像素。
+       */
+      this.bossArmGfx = this.add.graphics().setDepth(1400);
+      // 上一帧的 boss 位置：本帧位移是 walk 判据的输入。
+      this.bossPrevPos = null;
+      // 上一帧的相位：compute() 是纯函数，相位由这里保存并回传。
+      this.bossPosePhase = 0;
+      // 本帧姿态（smoke 测试读 __bossPose.state 用；也是调试时的唯一读数）。
+      this.__bossPose = null;
+      // 手臂线段计数：证明"每帧真的重画了"，而不是画一次就停。
+      this.__armDebug = { frames: 0, segments: 0 };
+      // 脚下扬尘（footfall 时撒 3~5 个点，200ms 淡出）。
+      // 必须自己维护生命周期：Graphics 每帧 clear，浮点存在数组里才能活过一帧。
+      this.bossDust = [];
 
       this.shadow = this.add.image(0, 0, 'shadow').setDepth(1).setScale(0.8);
       this.hero = makeHero(this, 100);
@@ -1602,10 +2056,137 @@
       this.lastEnemyHp = {};
       this.lastShake = 0;
 
+      /*
+       * 音效用的"上一帧快照"（Task 12）。
+       *
+       * 全都只在场景里活着，不进 logic、不进存档 —— 声音是表现层的事。
+       * 初值一律 null 而不是 0：第一次 update 只负责记录基线，
+       * 不能把"进入场景"误读成"刚挥了一刀 / 刚掉了一件装备"。
+       */
+      this.sfxPrev = {
+        swingId: null, playerHp: null, loot: null, potions: null,
+        cooldowns: null, specialCd: null, waveIndex: null, status: null,
+      };
+      this.sfxBossSeen = false;
+
       this.events.on('wake', () => { this.state = CURRENT_STATE; });
+
+      /*
+       * 背包在远征里也能开（Tab），打开时同样暂停本场景 —— 战斗中翻背包
+       * 不能继续挨打。
+       *
+       * onChange 必须接：update() 一暂停，里面每帧那句 refreshHeroEquip
+       * 就执行不到，玩家在背包里换了武器，场上的主角会一直是旧贴图。
+       * 暂停 / 恢复本身由 toggleBag 与这里的 onClose 配对负责。
+       */
+      if (global.BagHud && typeof global.BagHud.setHost === 'function') {
+        global.BagHud.setHost({
+          onChange: () => refreshHeroEquip(this.hero, this.state),
+          onClose: () => {
+            // 同 Hub：只恢复自己暂停的那一次，别的来源（ESC 菜单）暂停的不碰。
+            // 也不能只看 toggleBag —— ✕ 按钮直接调 BagHud.close()。
+            if (this.scene && this.scene.isPaused()) this.scene.resume();
+          },
+        });
+      }
+
       global.EmberfieldUI.showHud(true, this.state);
       global.EmberfieldApp.__scene = this;
       global.EmberfieldApp.__state = this.state;
+    }
+
+    // Tab 开 / 关背包（Task 9）。只动本场景的 this.scene，不影响 Hub。
+    toggleBag() {
+      const hud = global.BagHud;
+      if (!hud || typeof hud.open !== 'function') return;
+      // 同 HubScene：ESC 菜单开着时不让 Tab 再叠一层暂停（关背包时的 resume 只解一层）
+      const uiE = global.EmberfieldUI;
+      if (uiE && typeof uiE.isEscOpen === 'function' && uiE.isEscOpen()) return;
+      if (hud.isOpen()) { hud.close(); return; }
+      const okOpen = hud.open(this.state, {
+        onChange: () => refreshHeroEquip(this.hero, this.state),
+      });
+      if (!okOpen) return;
+      // 战斗里开背包同样要有声音：两个场景各有一个 toggleBag，两边都要接，
+      // 否则玩家会以为"战斗里 Tab 没生效"。
+      GameAudio.play('bagOpen');
+      this.scene.pause();
+    }
+
+    /**
+     * ESC 菜单（Task 13 / 设计 §5.6）：战斗里两行「设置」「退出战斗」。
+     *
+     * 和 HubScene 的同名方法结构一致，唯一的差别是传了 onQuit ——
+     * 基地里没有"退出战斗"这一行，所以那边不给这个回调。
+     * 同样只能从 createInput 的 onDown 调用（见那边的注释）。
+     */
+    toggleEscMenu() {
+      const ui = global.EmberfieldUI;
+      if (!ui || typeof ui.openEsc !== 'function') return;
+      if (typeof ui.isEscOpen === 'function' && ui.isEscOpen()) {
+        if (typeof ui.isEscSettings === 'function' && ui.isEscSettings()) {
+          ui.escBack();
+          return;
+        }
+        ui.closeEsc();
+        return;
+      }
+      // 背包与菜单都会暂停场景，两层叠着关不干净：先关背包，让玩家再按一次 ESC。
+      const hud = global.BagHud;
+      if (hud && typeof hud.isOpen === 'function' && hud.isOpen()) {
+        hud.close();
+        return;
+      }
+      // 结算卡已经弹出来时不接 ESC：那一层自己有「再来一局 / 回基地」两个出口，
+      // 再叠一个暂停菜单只会让玩家分不清现在该点哪里。
+      if (this.state.phase === 'result') return;
+      const okOpen = ui.openEsc(L.escMenuRows(this.state), {
+        state: this.state,
+        onQuit: () => this.quitRun(),
+        onClose: () => { if (this.scene && this.scene.isPaused()) this.scene.resume(); },
+      });
+      if (!okOpen) return;
+      // 战斗里菜单一开就全暂停：怪不许在菜单后面继续咬人（设计 §5.6）
+      this.scene.pause();
+      GameAudio.play('bagOpen');
+    }
+
+    /**
+     * 「退出战斗」（Task 13）：按战败入账，但保留率按剩余血量折扣（设计 §3.4）。
+     *
+     * 结算本身全在 L.exitRun 里（Node 测试直接测它）；这里只做三件事：
+     * 关菜单 → 恢复场景（否则结算面板在暂停的场景后面）→ 走原有的 showResult。
+     * 重复退出 / 已经结算过的局由 L.exitRun 拒绝，这里只把原因说出来。
+     */
+    quitRun() {
+      const ui = global.EmberfieldUI;
+      const st = this.state;
+      const res = L.exitRun(st);
+      if (!res || !res.ok) {
+        if (ui && typeof ui.toast === 'function') {
+          ui.toast((res && res.reason) || '现在不能退出', false);
+        }
+        // 拒绝之后菜单还开着，玩家得能自己出去 —— 别顺手关掉当成"退成功了"
+        return;
+      }
+      if (ui && typeof ui.closeEsc === 'function') ui.closeEsc();   // 顺带 resume
+      if (ui && typeof ui.showHud === 'function') ui.showHud(false);
+      if (ui && typeof ui.save === 'function') ui.save(st);
+      const finishedDiff = st.lastResult && st.lastResult.difficultyId;
+      if (ui && typeof ui.setAgainHandler === 'function') {
+        ui.setAgainHandler(() => {
+          L.returnToFarm(st);
+          L.startRun(st, finishedDiff);
+          if (ui && typeof ui.save === 'function') ui.save(st);
+          this.scene.restart();
+        });
+      }
+      if (ui && typeof ui.showResult === 'function') {
+        ui.showResult(st, () => {
+          L.returnToFarm(st);
+          this.scene.start('Hub');
+        });
+      }
     }
 
     getEnemySprite(i, kind) {
@@ -1624,13 +2205,290 @@
       return sp;
     }
 
+    /**
+     * 远征中的音效触发（Task 12）。
+     *
+     * 为什么全部靠"快照对比"而不是让 logic 回调
+     * -----------------------------------------
+     * 逻辑层刻意不认识渲染层（测试在 Node 里跑 logic，不该碰 AudioContext）。
+     * 而状态本身就带着足够的信息：挥击 id、血量、战利品、冷却、波次、status。
+     * 每帧把它们和上一帧比一下，谁变了就响谁的音 —— 同一个变化只会被观察到
+     * 一次，天然不会重复触发，也不需要改一行 logic。
+     *
+     * 注意每一条都是"下降/上升"而不是"不相等"：药水被喝是下降，
+     * 清波回血会让 hp 上升（那不该响受伤声），冷却在倒计时所以是持续变化，
+     * 只有"从 0 跳到 >0"才代表这次真的放出去了。
+     */
+    playRunSfx(run, input) {
+      const prev = this.sfxPrev;
+      const p = run.player;
+      if (!p) return;
+
+      // ① 挥击出手：logic 每次出手 p.swingId += 1
+      if (prev.swingId !== null && p.swingId > prev.swingId) GameAudio.play('slash');
+      prev.swingId = p.swingId;
+
+      // ② 玩家受伤：只在血量下降时响（回血不响）
+      if (prev.playerHp !== null && p.hp < prev.playerHp) GameAudio.play('hurt');
+      prev.playerHp = p.hp;
+
+      // ③ 战利品入账：铜币与种子分开两个音，玩家能听出"这波值不值"
+      const loot = run.loot || { coins: 0, seeds: 0 };
+      if (prev.loot) {
+        if (loot.coins > prev.loot.coins) GameAudio.play('coin');
+        if (loot.seeds > prev.loot.seeds) GameAudio.play('seed');
+      }
+      prev.loot = { coins: loot.coins, seeds: loot.seeds };
+
+      /*
+       * ③b 装备掉落：equipDrops 是本帧新填进来、下面那段提示会立刻排空的。
+       * 在这里读它而不是写在提示循环里，是因为提示循环已经被 test_bag 单独
+       * 抽出来求值（那段代码不该为了"响一声"而依赖 audio 层）。
+       * 同帧掉多件时只响一声：只要有一件是新的就响 dropNew，全重复才响 dropDup。
+       */
+      const drops = run.equipDrops;
+      if (drops && drops.length) {
+        // 同帧掉多件只响一声：有一件新的就算新件，全是重复才响重复音。
+        GameAudio.play(drops.every((d) => d.duplicate) ? 'dropDup' : 'dropNew');
+      }
+
+      // ④ 喝药：药水数量下降才算"真的喝掉了"（库存为 0 时按键不该有声音）
+      if (prev.potions) {
+        for (let i = 0; i < C.POTION_ORDER.length; i += 1) {
+          const id = C.POTION_ORDER[i];
+          if ((run.potions[id] || 0) < (prev.potions[id] || 0)) {
+            GameAudio.play('potion');
+            break;
+          }
+        }
+      }
+      const potions = {};
+      C.POTION_ORDER.forEach((id) => { potions[id] = run.potions[id] || 0; });
+      prev.potions = potions;
+
+      // ⑤ 技能：冷却从 0 跳到 >0 才是"这次真的放出去了"。
+      // 只看按键边沿不够 —— 冷却期间按键同样有边沿，但不该出声。
+      if (prev.cooldowns) {
+        for (let i = 0; i < C.SKILL_ORDER.length; i += 1) {
+          const k = C.SKILL_ORDER[i];
+          if (prev.cooldowns[k] === 0 && p.cooldowns[k] > 0) {
+            GameAudio.play('skill');
+            break;
+          }
+        }
+      }
+      const cooldowns = {};
+      C.SKILL_ORDER.forEach((k) => { cooldowns[k] = p.cooldowns[k] || 0; });
+      prev.cooldowns = cooldowns;
+
+      // ⑥ 专属技（V）：同一个判据 —— 冷却从 0 起跳
+      if (prev.specialCd !== null && prev.specialCd === 0 && p.specialCd > 0) {
+        GameAudio.play('special');
+      }
+      prev.specialCd = p.specialCd;
+
+      // ⑦ 新一波：waveIndex 前进（buildWave 已经换了刷怪表，这里只是报信）
+      if (prev.waveIndex !== null && run.waveIndex > prev.waveIndex) GameAudio.play('wave');
+      prev.waveIndex = run.waveIndex;
+
+      /*
+       * ⑧ 结局：status 由进行中变为 won / lost 时各响一次（V7）。
+       *
+       * local run 在 endRun 之后仍指向那个对象，所以即使 state.run 已被置空，
+       * 这里也读得到。prev.status 记的是上一帧，因此"只响一次"是结构保证的 ——
+       * 不是靠时间窗口去猜（那会在掉帧时漏掉或重放）。
+       *
+       * 主动退出（ESC → 退出战斗）按战败入账，但它**不是**倒下：
+       * 玩家自己按了退出，再补一声"你死了"的低沉下行是错的反馈。
+       */
+      if (prev.status !== null && run.status !== prev.status) {
+        if (run.status === 'won') {
+          GameAudio.play('victory');
+        } else if (run.status === 'lost') {
+          const exited = !!(this.state.lastResult && this.state.lastResult.exited);
+          if (!exited) GameAudio.play('defeat');
+        }
+      }
+      prev.status = run.status;
+
+      // ⑨ Boss 出场：场上第一次出现 isBoss。Boss 局是预先生成的，
+      // 普通局则由 spawnBoss 在波次里塞进来 —— 两种都走这一条。
+      if (!this.sfxBossSeen && run.enemies.some((e) => e.isBoss)) {
+        this.sfxBossSeen = true;
+        GameAudio.play('boss');
+      }
+    }
+
+    /*
+     * 画 Boss 的两条藤蔓手臂（Task 25，设计文档 §3.1）。
+     *
+     * 为什么不画进 bossSprite：贴图是死的 191×321 PNG，躯干和腿都在里面。
+     * 手臂要随状态连续变化（站着微摆、走路甩、蓄力抬起、下砸落手），
+     * 逐帧图做不到（一张立绘 8 帧就要 8 张图），所以在独立 Graphics 层
+     * 每帧重画：躯干继续用 PNG，手臂是参数化的藤蔓。
+     *
+     * 坐标系：一切都相对"这一帧最终画出来的那具躯干"。
+     *   原点 = 贴图底边中点（origin 0.5,1）的当前位置 bodySx/bodySy
+     *   anchorX/anchorY 是 PIL 从 PNG 上逐像素量出的**贴图归一化**坐标，
+     *   所以要乘贴图尺寸、再乘当前缩放（含 squash 带来的 sx/sq）。
+     *   漏乘 scale 的话手臂会是贴图尺寸的 1/2.4 长，缩在躯干中间。
+     */
+    drawBossArms(e, pose, o) {
+      const g = this.bossArmGfx;
+      if (!g || !BossPose) return;
+      const B = C.BOSS;
+
+      // z 每帧都在变：走远要变小、也要排到更靠后的小怪后面。
+      // 比躯干高一层（+1），保证手臂压在自己身上而不是被吞掉。
+      g.setDepth(1000 - e.z + 1);
+
+      const texH = o.texH, texW = o.texW;
+      const SX = o.scale * o.sx;          // 贴图 x 方向的实际像素倍率
+      const SY = o.scale * o.sq;
+      // 六节基长 0.085×贴图高，累加（比 1+0.86+0.74+0.63+0.54+0.46=4.23 倍）
+      // 约 0.36×贴图高 —— 长度的量法：手臂比躯干窄，长度约到躯干 1/3 高。
+      const baseLen = B.armBaseLen * texH * o.scale;
+      const ratio = B.armSegRatio;
+      const n = ratio.length;
+      // 下垂时两臂向外张开（不然整条手臂落在躯干轮廓里面，等于没画）。
+      // 抬起来时张开收敛，两手在头顶附近汇合。
+      // 注意：这里的"外"是屏幕意义上的左右，所以张开角不能乘 facing ——
+      // 一开始乘了，实测朝左走时两条手臂一起向内偏，右手臂横穿身体。
+      const spread = (B.armSpread || 0.42) * (1 - pose.armRaise);
+      const seed = rndSeed(e);            // 每只怪一个固定抖动种子，别每帧乱跳
+      let segs = 0;
+
+      for (let a = 0; a < 2; a++) {
+        const side = a === 0 ? 1 : -1;    // +1 前臂，-1 后臂
+        // 锚点（贴图归一化 → 相对躯干原点的像素）
+        const ax = side;
+        const lx0 = ax * B.armAnchorX * texW * SX;
+        const ly0 = -(1 - B.armAnchorY) * texH * SY;
+        // 躯干有 lean（倾斜）时，锚点必须绕 origin 一起转，
+        // 否则转身时手臂会从肩膀"滑"出去。
+        const cs = Math.cos(o.rot), sn = Math.sin(o.rot);
+        let x = o.bodySx + lx0 * cs - ly0 * sn;
+        let y = o.bodySy + lx0 * sn + ly0 * cs;
+
+        // 基角：PI/2 = 竖直向下，0 = 朝前。armRaise 从 0→1 把手抬到头顶上方。
+        // 两侧用同一个基角，靠下面的 mx 做镜像 —— 这样抬起时两臂对称向外张开，
+        // 不会一条向左一条也向左（那会让一条手臂横穿躯干）。
+        const base = Math.PI / 2 - pose.armRaise * (Math.PI * 0.92) - spread;
+        const mx = side > 0 ? 1 : -1;     // 镜像轴：屏幕竖直中线
+        // 后臂相位错 PI：两条手臂左右摆反相，像走路时的手
+        const angles = BossPose.segments(base, pose.armSwing,
+          pose.armPhase + (side < 0 ? Math.PI : 0) + seed * side * 0.12, n);
+
+        // 先把六节的折点算出来，再分两遍画：一遍深色描边、一遍亮色主线。
+        // 不能逐节"描边+主线"交替画 —— 下一节的描边会盖住上一节的亮色，
+        // 关节处会出现一圈黑牙。
+        const px = [x], py = [y];
+        for (let i = 0; i < n; i++) {
+          const len = baseLen * (ratio[i] || 1);
+          x = x + mx * Math.cos(angles[i]) * len;
+          y = y + Math.sin(angles[i]) * len;
+          px.push(x); py.push(y);
+        }
+        // 肩关节：根部一颗小圆，否则六节直线像凭空从胸口长出来的一根棍子。
+        const jr = Math.max(1.6, B.armWidthRoot * 0.72 * o.scale);
+        g.fillStyle(0x14100b, 0.55);
+        g.fillCircle(px[0], py[0], jr + 1.2 * o.scale);
+        g.fillStyle(mixColor(B.armColorRoot, 0x9a8868, 0.35), 0.96);
+        g.fillCircle(px[0], py[0], jr);
+        // 描边：躯干本身就是一大团同色藤蔓（贴图平均色 0x433b30），
+        // 亮色的 6 节线直接压上去会和背景糊成一片。加一圈近黑描边，
+        // 手臂才"读"得出来 —— 实测不加时 idle/walk 两张图肉眼几乎看不出手臂。
+        for (let i = 0; i < n; i++) {
+          const t0 = i / (n - 1);
+          const w = (B.armWidthRoot + (B.armWidthTip - B.armWidthRoot) * t0) * o.scale;
+          g.lineStyle(Math.max(1, w + 2.2 * o.scale), 0x14100b, 0.55);
+          g.lineBetween(px[i], py[i], px[i + 1], py[i + 1]);
+        }
+        // 主线：根部粗、尖端细；根部亮（0x7a6a55）到尖端暗（0x5c4c3e）。
+        // 这两个色都比躯干的 0x4a4038 亮 —— 手臂要能从身上"读"出来。
+        for (let i = 0; i < n; i++) {
+          const t0 = i / (n - 1);
+          const w = (B.armWidthRoot + (B.armWidthTip - B.armWidthRoot) * t0) * o.scale;
+          const col = mixColor(B.armColorRoot, B.armColorTip, t0);
+          g.lineStyle(Math.max(1, w), col, 0.98 - 0.14 * t0);
+          g.lineBetween(px[i], py[i], px[i + 1], py[i + 1]);
+          segs++;
+        }
+
+        // 尖端两片藤叶：只有两节粗线的末端会显得像电线杆。
+        const leafA = angles[n - 1];
+        const LL = 0.05 * texH * o.scale;
+        for (let k = -1; k <= 1; k += 2) {
+          const a2 = leafA + k * 0.8;
+          const apx = x + mx * Math.cos(a2) * LL;
+          const apy = y + Math.sin(a2) * LL;
+          const b1x = x + mx * Math.cos(a2 + 0.3) * LL * 0.5;
+          const b1y = y + Math.sin(a2 + 0.3) * LL * 0.5;
+          const b2x = x + mx * Math.cos(a2 - 0.3) * LL * 0.5;
+          const b2y = y + Math.sin(a2 - 0.3) * LL * 0.5;
+          g.fillStyle(mixColor(B.armColorTip, 0x9c8a63, 0.55), 0.92);
+          g.fillTriangle(b1x, b1y, apx, apy, b2x, b2y);
+        }
+      }
+
+      // ---- 脚下扬尘：只在 footfall 那一帧撒 3~5 个点 ----
+      // 关键是"那一帧"：每帧都撒的话 60fps 下会变成一条烟柱。
+      if (pose.footfall) {
+        const feet = toScreen(e.x, e.z, 0);
+        const cnt = 3 + Math.floor(Math.random() * 3);      // 3..5
+        for (let i = 0; i < cnt; i++) {
+          const ang = -Math.PI * (0.12 + Math.random() * 0.76);
+          const sp = (0.5 + Math.random() * 0.9) * 46 * o.scale;
+          this.bossDust.push({
+            x: feet.sx + (Math.random() - 0.5) * 40 * o.scale,
+            y: feet.sy - Math.random() * 6,
+            vx: Math.cos(ang) * sp * (0.4 + Math.random() * 0.6),
+            vy: Math.sin(ang) * sp,
+            life: 0,
+            ttl: 0.20 + Math.random() * 0.08,               // 200ms 左右
+            r: (1.5 + Math.random() * 1.5) * o.scale,
+          });
+        }
+      }
+      // 扬尘逐帧推进；Graphics 每帧被 clear，粒子状态必须存在数组里。
+      for (let i = this.bossDust.length - 1; i >= 0; i--) {
+        const d = this.bossDust[i];
+        d.life += o.dt;
+        if (d.life >= d.ttl) { this.bossDust.splice(i, 1); continue; }
+        d.x += d.vx * o.dt;
+        d.y += d.vy * o.dt;
+        d.vx *= 0.93;
+        d.vy *= 0.93;
+        const k = d.life / d.ttl;
+        g.fillStyle(0x9d927c, (1 - k) * 0.5);
+        g.fillCircle(d.x, d.y, d.r * (1 + k * 1.6));
+      }
+
+      // 调试读数：smoke 靠它确认"这一帧真的画了手"（不是靠像素）。
+      this.__armDebug.segments = segs;
+      this.__armDebug.frames += 1;
+    }
+
     update(time, delta) {
       const dt = Math.min(delta / 1000, 0.05);
       const run = this.state.run;
       if (!run || this.state.phase !== 'run') return;
 
       const input = this.input2.read();
+      const stepX0 = run.player.x;
+      const stepZ0 = run.player.z;
       L.step(this.state, input, dt);
+      // 脚步（Task 23 / 设计 §3.2）：位移驱动，不是定时器。
+      // step 之内可能已经结算（run 被置空），所以只在"这一局还在打"时踩。
+      const stepDx = run.player.x - stepX0;
+      const stepDz = run.player.z - stepZ0;
+      if (this.state.run && (stepDx !== 0 || stepDz !== 0)) {
+        GameAudio.footstep(Math.sqrt(stepDx * stepDx + stepDz * stepDz), input.sprint);
+      }
+
+      // 音效要在 step 之后、任何渲染之前触发：声音跟规则走，不跟画面走。
+      // （命中声不在这里 —— 它需要"掉了多少血"，由下面的伤害数字块负责。）
+      this.playRunSfx(run, input);
 
       updateGrass(this, dt);
 
@@ -1639,6 +2497,11 @@
       // 屏幕上会出现莫名其妙的色块和长条（真实踩过这个坑）。
       this.effectGfx.clear();
       this.bossGfx.clear();
+      // 手臂层同样每帧清：Boss 会死、会回基地、会重开一局。
+      // 不清的话玩家会在空地上看到两条浮空的藤蔓（这是个很容易漏的坑：
+      // bossSprite 在场景里是复用的，隐藏 sprite 不会顺手清掉另一层的图形）。
+      this.bossArmGfx.clear();
+      this.bossArmDrawn = false;
 
       /*
        * 灼烧 / 冰霜地面区。
@@ -1655,16 +2518,27 @@
        *
        * 掉落率只有 5%，一局往往一件都不掉，掉了也一闪而过很难注意到。
        * logic 会把每件掉落追加进 run.equipDrops，这里逐帧取走并弹提示
-       * （取走即清空，所以不会每帧重复弹同一条）。重复件已经折算成铜币，
-       * 提示里要说清楚——否则玩家会以为"掉了但没进背包"。
+       * （取走即清空，所以不会每帧重复弹同一条）。重复件也已经进背包了，
+       * 只是提示里标注一下——否则玩家分不清是新件还是重复件。
        */
       if (run.equipDrops && run.equipDrops.length) {
         run.equipDrops.forEach((d) => {
           const def = C.equipDef(d.id);
           const label = def ? def.name : d.id;
+          if (d.bagFull && d.overwrote) {
+            // 满包时新件顶掉了最后一格。这里**必须说出被顶掉的是哪一件** ——
+            // 只说"已进背包"的话，玩家背包里凭空少一件却毫无提示，
+            // 会以为是自己看错了或者游戏吞了装备。
+            const gone = C.equipDef(d.overwrote.id);
+            const goneLabel = gone ? gone.name : d.overwrote.id;
+            global.EmberfieldUI.toast(
+              '背包已满 · 「' + label + '」顶替了「' + goneLabel + '」',
+              true);
+            return;
+          }
           global.EmberfieldUI.toast(
             d.duplicate
-              ? ('掉落重复件「' + label + '」· 折算 ' + d.refund + ' 铜币')
+              ? ('拾得「' + label + '」（重复）· 已进背包')
               : ('掉落装备「' + label + '」· 已进背包'),
             true);
         });
@@ -1791,38 +2665,51 @@
           .setSize(150 * scale, 34 * scale)
           .setDepth(1000 - e.z - 1);
 
-        // ================= Boss 动作动画 =================
-        // 按 game-feel 技能的做法：**tween + squash & stretch**，而不是逐帧图。
+        // ================= Boss 动作（Task 25）=================
+        // 姿态改成**纯函数**算：game/bosspose.js 的 compute() 按状态给出
+        // bob / squash / lean / armRaise / armSwing / armPhase / footfall，
+        // 这里只负责把数值变成像素。
         //
-        // 为什么不用逐帧：一张立绘做 8 帧动画需要 8 张图，而 Boss 只有一张。
-        // 形变驱动的好处是**随状态实时变化** —— 蓄力时抖动、受击时后仰、
-        // 出手时前倾，这些都能从战斗状态直接算出来，不需要额外的美术。
+        // 为什么不再写 Math.sin：以前呼吸一套、蓄力抖动一套、走路起伏一套，
+        // 三套正弦互相叠加（蓄力时既后仰又抖 = 抽搐），而且 Node 里测不到，
+        // 姿态错了只能靠肉眼看截图 —— 一天看不了几张。现在 9 条不变量在
+        // tests/test_bosspose.js 里钉着，改坏了立刻红。
         //
-        // 每个动作遵循同一套规则：
-        //   瞬间形变（快）→ 缓动回正（慢），且都带一点过冲。
-        //   这就是 game-feel 里说的"juice is transient, not a new resting state"。
+        // 位移必须先过 refMove()：60fps 下 26 u/s 的 Boss 每帧水平只走 0.43，
+        // 原始位移永远够不到 0.5 的走路阈值（bosspose.js 文件头有实测勘误）。
+        if (!this.bossPrevPos) this.bossPrevPos = { x: e.x, z: e.z };
+        const moved = BossPose.refMove(e.x - this.bossPrevPos.x,
+                                       e.z - this.bossPrevPos.z, dt);
+        this.bossPrevPos.x = e.x;
+        this.bossPrevPos.z = e.z;
+        const chargeNow = e.casting
+          ? Math.max(0, Math.min(1, 1 - (e.casting.timer / e.casting.windup)))
+          : 0;
+        const pose = BossPose.compute({
+          dx: moved.dx, dz: moved.dz,
+          casting: e.casting || null,
+          facing: e.facing >= 0 ? 1 : -1,
+          phase: this.bossPosePhase,
+          dt: dt, time: time,
+          charge: chargeNow,
+        });
+        this.bossPosePhase = pose.phase;
+        this.__bossPose = pose;          // smoke / 调试读它
+        this.bossArmDrawn = true;
 
-        // 用 time 驱动的正弦做"呼吸"，让静止时也不是死的
-        const breathe = Math.sin(time / 620) * 0.014;
-        let sx = 1 + breathe, sy = 1 - breathe;      // 体积守恒：一轴胀一轴缩
-        let rot = 0;                                  // 倾斜（弧度）
-        let dyOff = 0;                                // 垂直偏移
+        // 姿态 → 形变。sx 由 squash 反推（体积守恒：压扁就必须变宽）。
+        // pose.bob 的单位是**贴图未缩放像素**，所以乘 scale 才是屏幕位移。
+        let sq = pose.squash;
+        let rot = pose.lean;
         let dxOff = 0;
+        const bobOff = pose.bob * scale;
+        let sxMul = 1;
         let tint = 0xffffff;
 
         if (e.casting) {
-          // ---- 蓄力：粒子光芒汇聚 + 身体后仰抖动 ----
+          // ---- 蓄力：粒子光芒汇聚（后仰/压扁已由 pose 给出，抖动删除）----
           const t = time / 1000;
-          const charge = 1 - (e.casting.timer / e.casting.windup);   // 0 → 1
-          // 蓄力越深，抖动越快越明显
-          const shakeAmp = 1.5 + charge * 4.5;
-          dxOff = Math.sin(t * (18 + charge * 26)) * shakeAmp;
-          dyOff = Math.cos(t * (23 + charge * 30)) * shakeAmp * 0.5;
-          // 身体被"压缩蓄势"：越接近释放越扁
-          sy = 1 - charge * 0.10;
-          sx = 1 + charge * 0.08;
-          // 微微后仰
-          rot = -0.045 * charge * (e.facing >= 0 ? 1 : -1);
+          const charge = chargeNow;                                  // 0 → 1
           tint = charge > 0.6 ? 0xffd0c0 : 0xffffff;
 
           // 粒子光芒汇聚（第二版）。
@@ -1898,11 +2785,16 @@
           }
         } else if (e.attackCd > (C.BOSS.attackCooldown / (C.BOSS.tiers[tier].speedMul || 1)) - 0.28) {
           // ---- 近身出手：前倾横扫（用 attackCd 刚被重置的窗口判断"刚出手"）----
-          const t = time / 1000;
-          const k = 1 - ((C.BOSS.attackCooldown / (C.BOSS.tiers[tier].speedMul || 1)) - (C.BOSS.attackCooldown / (C.BOSS.tiers[tier].speedMul || 1)) + (e.attackCd - ((C.BOSS.attackCooldown / (C.BOSS.tiers[tier].speedMul || 1)) - 0.28))) / 0.28;
+          // 这是**瞬时反应**，不是姿态，所以叠在 pose 上（+=/*=），不替换它。
+          // 夹在 [0,1]：正常的 attackCd 永远落在窗口内（3.1~4.43），但只要有
+          // 任何东西把它推高（调试、以后的减速/狂暴字段），k 会变成 -200，
+          // dxOff 就是 ±3200 —— 贴图直接被甩出屏幕、scaleX 变成 11 倍。
+          // 实测过：一次探针把 attackCd 设成 60，Boss 就飞到了 x=-2128。
+          const k = Math.max(0, Math.min(1,
+            1 - ((e.attackCd - ((C.BOSS.attackCooldown / (C.BOSS.tiers[tier].speedMul || 1)) - 0.28)) / 0.28)));
           dxOff = e.facing * 16 * (1 - k);
-          rot = e.facing * 0.10 * (1 - k);
-          sx = 1 + 0.06 * (1 - k);
+          rot += e.facing * 0.10 * (1 - k);
+          sxMul *= 1 + 0.06 * (1 - k);
         }
 
         if (e.hitFlash > 0) {
@@ -1910,32 +2802,41 @@
           // 用 hitFlash（0.12s）作为窗口，短暂但明确
           const k = e.hitFlash / 0.12;
           dxOff -= e.facing * 10 * k;                // 被击退的方向
-          sy = 1 - 0.06 * k;
-          sx = 1 + 0.05 * k;
-          rot = -e.facing * 0.05 * k;
+          sq *= 1 - 0.06 * k;
+          sxMul *= 1 + 0.05 * k;
+          rot += -e.facing * 0.05 * k;
           tint = 0xffc0b0;
         }
 
         if (e.stun > 0) {
           // ---- 僵直：低头、压扁、不动 ----
-          sy *= 0.94;
-          sx *= 1.04;
+          sq *= 0.94;
+          sxMul *= 1.04;
           rot += 0.06 * (e.facing >= 0 ? 1 : -1);
           tint = 0xd8d8d8;
         }
 
-        // 走路：缓慢的上下起伏 + 轻微左右摇摆。
-        // Boss 移速只有 26，所以摆动要慢而重，像庞然大物在挪动。
-        if (!e.casting && e.stun <= 0 && e.hitFlash <= 0) {
-          const walk = Math.sin(time / 480);
-          dyOff += Math.abs(walk) * 3 * scale;
-          rot += walk * 0.022 * (e.facing >= 0 ? 1 : -1);
-        }
+        // 走路的上下起伏 / 左右摇摆现在由 pose.bob 与 pose.lean 给出
+        // （以前这里是第三条手写正弦，和呼吸、蓄力抖动叠在一起）。
 
-        this.bossSprite.setScale(scale * sx, scale * sy);
+        const sx = (1 + (1 - sq)) * sxMul;
+        this.bossSprite.setScale(scale * sx, scale * sq);
         this.bossSprite.setRotation(rot);
-        this.bossSprite.setPosition(bs.sx + dxOff, gy + dyOff);
+        this.bossSprite.setPosition(bs.sx + dxOff, gy + bobOff);
         this.bossSprite.setTint(tint);
+
+        // ---- 两条藤蔓手臂 ----
+        // 必须画在躯干之后（同一帧里后画的盖在上面），并且单独一层：
+        // 手臂要从躯干"长出来"而不是被躯干挡掉一半。
+        this.drawBossArms(e, pose, {
+          scale: scale,
+          texW: this.bossSprite.width,
+          texH: texH,
+          bodySx: bs.sx + dxOff,
+          bodySy: gy + bobOff,
+          sx: sx, sq: sq, rot: rot,
+          dt: dt,
+        });
 
         // ---- 光环与技能特效 ----
         // 作用有二：盖住抠图残留的灰边；强化"异界入侵"的压迫感。
@@ -2015,6 +2916,16 @@
           }
         }
       });
+
+      // 这一帧**没有** Boss（还没刷 / 已经打死 / 开局回基地）：
+      // 手臂层必须是空的。bossSprite 是复用的精灵，隐藏它不会顺手清掉
+      // 另一个 Graphics 层上的图形 —— 漏掉这一步，玩家会在空地上看到两条浮空的藤蔓。
+      if (!this.bossArmDrawn) {
+        this.bossArmGfx.clear();
+        this.bossDust.length = 0;
+        this.bossPrevPos = null;
+        this.__bossPose = null;   // 免得调试/smoke 读到已死 Boss 的姿态
+      }
 
       // 小怪
       run.enemies.forEach((e, i) => {
@@ -2186,6 +3097,17 @@
         const prev = this.lastEnemyHp[e.id];
         if (prev !== undefined && e.hp < prev) {
           const dmg = Math.round(prev - e.hp);
+          /*
+           * 命中音（Task 12）。这是整个渲染层里唯一"知道打中了谁、掉了多少"
+           * 的地方，所以命中声在这里，而不是在 playRunSfx 的通用快照里。
+           *
+           * 重击的分流依据是连段第三段（C.COMBO.steps 里 1.85 倍的那一下）：
+           * 本游戏**没有暴击机制**（全仓没有 crit 字段，伤害也没有随机浮动），
+           * 所以"crit 音"落在玩家能感知的"重劈"上，而不是虚构一个不存在的暴击。
+           *
+           * 同帧多只怪被一刀扫到时会连着调多次 —— 25ms 节流让它们合成一声。
+           */
+          GameAudio.play(p.comboSwingStep === 3 ? 'crit' : 'hit');
           const es = toScreen(e.x, e.z, e.h);
           let tb = this.dmgPool.pop();
           if (!tb) tb = this.add.text(0, 0, '', {
@@ -2287,8 +3209,10 @@
       const baseY = 452;
 
       // 几何来自 hub.farmLayout —— 同一份代码既用于绘制也用于命中判定，
-      // 且能被 Node 测试覆盖（见 tests/test_game_meta.js）
-      this.plotGeo = H.farmLayout(W, baseY);
+      // 且能被 Node 测试覆盖（见 tests/test_game_meta.js）。
+      // Task 24 起多一个 startIdx：翻页只换索引区间，位置不变。
+      this.baseY = baseY;
+      this.plotGeo = H.farmLayout(W, baseY, this.curPage() * C.FARM.perPage);
 
       // 田地边框（木栅栏，环绕整块田）
       const fence = this.add.graphics().setDepth(5);
@@ -2319,14 +3243,24 @@
       }).setDepth(900);
       this.refreshHud();
 
-      this.add.text(W - 24, 26, '点击空田播种　·　成熟后每局自动产出，无需收取　·　ESC 回基地', {
+      this.add.text(W - 24, 26, '点击空田播种　·　两侧箭头翻页　·　成熟后每局自动产出，无需收取　·　ESC 回基地', {
         fontSize: '12px', color: '#8fa3b8', fontFamily: 'sans-serif',
         backgroundColor: '#0b1117aa', padding: { x: 10, y: 6 },
       }).setOrigin(1, 0).setDepth(900);
 
+      // ---- 翻页箭头（Task 24 / 设计 §3.7）----
+      // 画在屏幕左右缘、垂直居中：田块占 245..715，箭头在 34 / 926，
+      // 与田块的点击矩形完全不重叠 —— 点箭头绝不会落成播种。
+      this.buildArrows();
+      this.refreshArrows();
+
       // ---- 点击播种 ----
       this.input.on('pointerdown', (pointer) => {
         if (this.busy) return;
+        // 箭头先判：命中箭头就只翻页，不再往下走田地命中，
+        // 于是"箭头压在田块上"的最坏情况下也不会误播种。
+        const dir = this.hitArrow(pointer.x, pointer.y);
+        if (dir !== 0) { this.turnPage(dir); return; }
         const idx = this.hitPlot(pointer.x, pointer.y);
         if (idx >= 0) this.tryPlant(idx);
       });
@@ -2339,6 +3273,102 @@
       return H.farmHitPlot(this.plotGeo, px, py);
     }
 
+    /**
+     * 当前页（0 基）。
+     *
+     * 存档里的 farm.page 是脏的（v6 老档没有它、存档码又是可注入的），
+     * 这里只负责**读**出一个合法值，不顺手改存档 —— 读路径改状态会让
+     * "打开农场就把页码写成 0"这种事悄悄发生。
+     */
+    curPage() {
+      const pages = L.farmPageCount(this.state);
+      const raw = Math.floor(Number(this.state.farm && this.state.farm.page));
+      if (!Number.isFinite(raw) || raw < 0) return 0;
+      return Math.min(raw, pages - 1);
+    }
+
+    /**
+     * 左右翻页箭头。44×44，屏幕左右缘、垂直居中，depth 860：
+     * 高于田块（10/20/30）与前景栅栏（700），低于 HUD（900）。
+     */
+    buildArrows() {
+      const size = 44;
+      const y = HGT / 2;
+      const mk = (x, dir) => {
+        const c = this.add.container(x, y).setDepth(860);
+        c.setSize(size, size);
+        const g = this.add.graphics();
+        g.fillStyle(0x0b1117, 0.62);
+        g.fillCircle(0, 0, size / 2);
+        g.lineStyle(2, 0xe8b04b, 0.75);
+        g.strokeCircle(0, 0, size / 2 - 1);
+        g.fillStyle(0xe8b04b, 0.95);
+        // dir = -1 指向左，+1 指向右
+        g.fillTriangle(dir * 9, 0, -dir * 5, -9, -dir * 5, 9);
+        c.add(g);
+        return c;
+      };
+      this.arrowLeft = mk(34, -1);
+      this.arrowRight = mk(W - 34, 1);
+    }
+
+    /**
+     * 翻页箭头的显隐与"到边"状态（设计 §3.7 / §3.7.1 补记）。
+     *
+     * 用户的原话是「非第一页的农场页面需要同时存在左箭头和右箭头」，
+     * 所以末页**也要有右箭头**，只是半透明表示这一侧没有下一页了 ——
+     * 而不是让它凭空消失。原实现写的是"末页只有左箭头"，9 块田时
+     * 第 2 页就是末页，玩家一翻页就看见右箭头没了；而农场自己的提示
+     * 文案还写着「两侧箭头翻页」，等于界面在承诺一件它没做的事。
+     *
+     * 左箭头仍然只在第 2 页起出现：第一页左边本来就没有页，
+     * 画出来纯属噪音（也会让"我在第几页"变得更难读）。
+     *
+     * 灰箭头照样可以被 hitArrow 命中：命中就 return，不会落到田地命中上，
+     * 所以它挡的那一小块不会误播种；点了什么都不发生（turnPage 越界返回
+     * false），这正是"到头了"该有的反馈。
+     */
+    refreshArrows() {
+      if (!this.arrowLeft || !this.arrowRight) return;
+      const page = this.curPage();
+      const pages = L.farmPageCount(this.state);
+      const canRight = page < pages - 1;
+      this.arrowLeft.setVisible(page > 0).setAlpha(1);
+      this.arrowRight.setVisible(true).setAlpha(canRight ? 1 : 0.32);
+    }
+
+    /** 命中哪个箭头：-1 左、+1 右、0 没命中。只认看得见的箭头。 */
+    hitArrow(px, py) {
+      const hit = (a) => !!a && a.visible &&
+        Math.abs(px - a.x) <= a.width / 2 + 6 &&
+        Math.abs(py - a.y) <= a.height / 2 + 6;
+      if (hit(this.arrowLeft)) return -1;
+      if (hit(this.arrowRight)) return 1;
+      return 0;
+    }
+
+    /**
+     * 翻一页。越界不做事（返回 false），翻成功才写存档并重画。
+     * 返回 boolean 是为了调用方（点击、探针）能区分"翻成了"和"到边了"。
+     */
+    turnPage(dir) {
+      if (this.busy) return false;
+      const d = dir < 0 ? -1 : 1;
+      const pages = L.farmPageCount(this.state);
+      const page = this.curPage();
+      const next = page + d;
+      if (next < 0 || next > pages - 1) return false;
+      this.state.farm.page = next;
+      global.EmberfieldUI.save(this.state);
+      // 索引区间跟着页走；位置（cx/cy/w/h）完全不变 —— 玩家看到的
+      // 还是那块田，只是换了"第几页"的十位。
+      this.plotGeo = H.farmLayout(W, this.baseY, next * C.FARM.perPage);
+      this.redrawField();
+      this.refreshArrows();
+      this.refreshHud();
+      return true;
+    }
+
     redrawField() {
       const g = this.soilGfx;
       g.clear();
@@ -2348,6 +3378,17 @@
       this.plotGeo.forEach((geo) => {
         const plot = this.state.farm.plots[geo.idx];
         const dark = 0.06 + geo.depth * 0.16;
+
+        // 本页末尾的空位：这一页没填满（比如 10 块地 → 第 2 页只有 1 块）。
+        // 画一个更暗的凹槽而不是直接跳过 —— 跳过会让整页缺一块，
+        // 看起来像渲染坏了；凹槽让"这里还没开垦"也说得通。
+        if (!plot) {
+          g.fillStyle(0x14100b, 0.9);
+          g.fillRoundedRect(geo.cx - geo.w / 2, geo.cy - geo.h / 2, geo.w, geo.h, 5);
+          g.lineStyle(1.5, 0x2a1f15, 0.8);
+          g.strokeRoundedRect(geo.cx - geo.w / 2, geo.cy - geo.h / 2, geo.w, geo.h, 6);
+          return;
+        }
 
         // 土块：深棕底，犁沟做明暗配对（暗沟 + 亮脊），才像翻耕过的地
         g.fillStyle(0x2a1f15, 1);
@@ -2541,9 +3582,15 @@
 
     refreshHud() {
       const s = this.state;
+      const pages = L.farmPageCount(s);
+      // 只有一页时不写页码：写「第 1/1 页」等于告诉玩家"这一页也是全部"，
+      // 反而让人以为还有别处看不到的地。
+      const pageLine = pages > 1
+        ? '第 ' + (this.curPage() + 1) + '/' + pages + ' 页　　' : '';
       this.hudText.setText(
         '铜币  ' + s.meta.coins + '　　种子  ' + s.meta.seeds + '\n' +
-        '成熟田  ' + L.maturePlots(s) + ' / 9　　每局被动  +' + L.passiveIncome(s) + '\n' +
+        pageLine + '成熟田  ' + L.maturePlots(s) + ' / ' + s.farm.plots.length +
+        '　　每局被动  +' + L.passiveIncome(s) + '\n' +
         '作物需要 ' + C.FARM.runsToMature + ' 局成熟（输掉也算）\n' +
         '成熟后每局结算自动产出，不需要手动收取'
       );
@@ -2598,6 +3645,16 @@
 
   function boot(state, parentId) {
     CURRENT_STATE = state;
+    /*
+     * 音效音量/静音从存档接过来（Task 12）。
+     *
+     * 放在 boot 里而不是 RunScene.create：换档案、回基地都不该丢设置，
+     * 而 boot 正好是"这份 state 成为当前档案"的唯一入口（建档与切换都走它）。
+     * syncSettings 会补上旧存档缺失的字段，所以没有 settings 的老档也不会哑掉。
+     */
+    if (global.GameAudio && typeof global.GameAudio.syncSettings === 'function') {
+      global.GameAudio.syncSettings(state);
+    }
     // 场景数组的第一项会被自动启动 —— BootScene 必须先跑，否则纹理还没生成
     const game = new Phaser.Game({
       type: Phaser.AUTO,

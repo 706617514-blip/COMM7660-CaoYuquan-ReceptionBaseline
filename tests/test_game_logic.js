@@ -15,6 +15,8 @@
 const path = require('path');
 const C = require(path.join(__dirname, '..', 'game', 'config.js'));
 const L = require(path.join(__dirname, '..', 'game', 'logic.js'));
+// 基地点位（ZONES / zoneAt）在 hub.js，不在 logic.js —— 命名空间别搞错。
+const H = require(path.join(__dirname, '..', 'game', 'hub.js'));
 
 let pass = 0, fail = 0;
 const failures = [];
@@ -252,10 +254,13 @@ section('7. 胜利全额、失败减半');
 {
   const s1 = L.createState(1);
   L.startRun(s1, 'wood');
-  s1.run.loot.coins = 100; s1.run.loot.seeds = 10;
+  // 种子只捡 4 颗：3 + 4 = 7 <= 9 块田，不触发 V10 的腐烂。
+  // 这一节只回答"胜利是否全额 / 失败是否减半"；超额腐烂单独在 V10 里测，
+  // 否则两个规则搅在一起，失败时分不清是哪条坏了。
+  s1.run.loot.coins = 100; s1.run.loot.seeds = 4;
   L.endRun(s1, true);
   eq(s1.meta.coins, 100, '胜利保留全部铜币');
-  eq(s1.meta.seeds, 3 + 10, '胜利保留全部种子');
+  eq(s1.meta.seeds, 3 + 4, '胜利保留全部种子（未超田地数）');
 
   const s2 = L.createState(1);
   L.startRun(s2, 'wood');
@@ -356,6 +361,242 @@ section('10. 存档往返');
   }));
   ok(bare.meta.skills && bare.meta.upgrades, '残缺存档补齐了 skills 与 upgrades');
   eq(bare.farm.plots.length, 9, '残缺存档补齐了农田');
+
+  // ---- 版本链：v2 → v6（背包改成条目数组后多了 5→6 一跳）----
+  // 断言 STATE_VERSION 本身，而不是只断言"等于 L.STATE_VERSION"——
+  // 后者在版本号忘了加时依然绿，等于没测。
+  eq(L.STATE_VERSION, 6, 'STATE_VERSION 升到 6');
+  const v2s = JSON.stringify({ version: 2, meta: { coins: 10 }, hub: null });
+  const mig = L.deserialize(v2s);
+  eq(mig.version, L.STATE_VERSION, 'v2 老档能迁移到当前版本');
+  eq(mig.meta.bagPages, 1, '迁移补出 bagPages = 1');
+  ok(Array.isArray(mig.meta.bag), '迁移补出 bag 数组');
+  ok(!mig.meta.inventory && !mig.meta.inventoryLevels, '迁移后旧的 inventory 结构消失');
+  ok(mig.meta.settings && mig.meta.settings.volume === 0.30 && mig.meta.settings.muted === false,
+    '迁移补出 settings（Task 12 读它，不补就 TypeError）',
+    JSON.stringify(mig.meta.settings));
+
+  // v5 存档里的 inventory 要转成 bag 条目
+  const v5s = JSON.stringify({
+    version: 5, meta: { coins: 5, inventory: ['longCloak', 'windBoots'],
+                        inventoryLevels: { longCloak: 3 }, skills: {}, potions: {},
+                        upgrades: {}, equipment: {} }, hub: null,
+  });
+  const m5 = L.deserialize(v5s);
+  eq(m5.version, 6, 'v5 → v6');
+  eq(m5.meta.bag && m5.meta.bag.length, 2, 'v5 的两件库存转成两个条目');
+  const bag5 = (m5.meta.bag || []);
+  const lc = bag5.filter((e) => e.id === 'longCloak')[0];
+  eq(lc && lc.level, 3, '条目保留原等级');
+  eq(bag5.filter((e) => e.id === 'longCloak').length, 1, '按 id 去重，不凭空造件');
+  ok(bag5.length > 0 && bag5.every((e) => typeof e.uid === 'string' && e.uid.length > 0),
+    '每个条目都有 uid', JSON.stringify(bag5));
+  eq(bag5[1] && bag5[1].level, 1, '没有等级记录的条目默认 1 级');
+
+  // v4 存档要把整条链自己走完（4→5→6），不能靠兜底块
+  let m4 = null, e4 = null;
+  try {
+    m4 = L.deserialize(JSON.stringify({
+      version: 4, meta: { coins: 7, skills: {}, potions: {} }, hub: null,
+    }));
+  } catch (err) { e4 = err.message; }
+  ok(!e4, 'v4 老档能读出（4→5→6 链跑完）', e4 || '');
+  eq(m4 && m4.version, 6, 'v4 → 6');
+  ok(m4 && Array.isArray(m4.meta.bag) && m4.meta.bag.length === 0, 'v4 迁移得到空背包');
+
+  // 乱版本号仍然必须硬抛（迁移没覆盖到它）
+  let bogusThrew = false;
+  try { L.deserialize(JSON.stringify({ version: 999, meta: {} })); } catch (err) { bogusThrew = true; }
+  ok(bogusThrew, '未知版本号依然被拒绝（迁移只认已知版本）');
+}
+
+// ---------------------------------------------------------------- 10b. 背包条目
+section('10b. 背包条目（容量 / 落位 / uid）');
+{
+  ok(typeof L.bagAdd === 'function', 'logic 导出 bagAdd', typeof L.bagAdd);
+  const s = L.createState(1);
+  ok(s.meta.settings && s.meta.settings.volume === 0.30 && s.meta.settings.muted === false,
+    '新档自带 settings.volume = 0.30 / muted = false（缺了 Task 12 一读就崩）',
+    JSON.stringify(s.meta.settings));
+  ok(!s.meta.inventory && !s.meta.inventoryLevels, '新档没有旧的 inventory 字段');
+
+  // uid 必须存档往返后仍然不撞
+  // 未实现时 bagAdd 是 undefined，会在这里抛 TypeError 而不是记一条失败 ——
+  // 用 ok() 包一层，红的时候看到的是"哪个 API 缺了"，不是一个栈。
+  const hasBag = typeof L.bagAdd === 'function' && Array.isArray(s.meta.bag);
+  const a1 = hasBag ? L.bagAdd(s, 'longCloak', 2) : -99;
+  eq(a1, 0, '首件落在下标 0');
+  eq(s.meta.bag && s.meta.bag[0] && s.meta.bag[0].level, 2, '落位保留传入等级');
+  const uidA = (s.meta.bag && s.meta.bag[0] && s.meta.bag[0].uid) || '';
+  const phones = L.deserialize(L.serialize(s));
+  const pbag = phones.meta.bag || [];
+  eq(pbag[0] && pbag[0].uid, uidA, 'uid 跨序列化保留（否则读档后新条目会撞旧 uid）');
+  const idx2 = typeof L.bagAdd === 'function' ? L.bagAdd(phones, 'longCloak', 1) : -99;
+  ok(pbag[idx2] && pbag[idx2].uid !== uidA, '读档后再加同 id，uid 不重复',
+    (pbag[idx2] && pbag[idx2].uid) + ' vs ' + uidA);
+
+  // 容量 = 页数 × 35
+  eq(L.bagCapacity ? L.bagCapacity(s) : -1, 35, '一页容量 35');
+  s.meta.bagPages = 2;
+  eq(L.bagCapacity ? L.bagCapacity(s) : -1, 70, '两页容量 70');
+  s.meta.bagPages = 1;
+
+  eq(L.bagCount ? L.bagCount(s) : -1, 1, 'bagCount 计数');
+  eq(L.bagIndexOfUid ? L.bagIndexOfUid(s, uidA) : -2, 0, '按 uid 查下标');
+  eq(L.bagIndexOfUid ? L.bagIndexOfUid(s, '不存在') : -2, -1, '查不到返回 -1');
+  ok(L.bagAt ? L.bagAt(s, 50) === null : false, '越界取格返回 null，不是 undefined');
+
+  // 满了返回 -1，不越界、不静默丢弃内容
+  const full = L.createState(2);
+  const fbag = full.meta.bag || [];
+  for (let i = 0; i < 35; i++) if (L.bagAdd) L.bagAdd(full, 'strawShoes', 1);
+  eq(fbag.length, 35, '容量内加满 35 件');
+  eq(L.bagAdd ? L.bagAdd(full, 'strawShoes', 1) : 0, -1, '满页后 bagAdd 返回 -1');
+  eq(fbag.length, 35, '满页后长度没有被撑爆');
+
+  const rm = L.bagRemove ? L.bagRemove(s, 0) : { ok: false };
+  ok(rm.ok, '能移除条目');
+  eq((s.meta.bag || []).length, 0, '移除后少一件');
+  eq(L.bagRemove ? L.bagRemove(s, 0).ok : true, false, '空格子上移除失败');
+
+  // 掉落接进背包：满包时落在末格并标记 bagFull（设计 §4.7：不丢装备）
+  const dropFull = L.createState(3);
+  for (let i = 0; i < 35; i++) if (L.bagAdd) L.bagAdd(dropFull, 'strawShoes', 1);
+  const dfbag = dropFull.meta.bag || [];
+  const lastUid = (dfbag[34] || {}).uid;
+  const d = L.rollEquipDrop(dropFull);
+  ok(d && d.bagFull === true, '满包掉落标记 bagFull', JSON.stringify(d));
+  eq(dfbag.length, 35, '满包掉落不越界（仍是 35 件）');
+  eq(dfbag[34] && dfbag[34].id, d && d.id, '满包掉落写在末格（不丢装备）');
+  ok(dfbag[34] && dfbag[34].uid !== lastUid,
+    '末格换成了新条目（带新 uid）');
+
+  const d2 = L.rollEquipDrop(L.createState(4));
+  ok(d2.bagFull === false, '有空位时 bagFull 为 false', JSON.stringify(d2));
+}
+
+// ---------------------------------------------------------------- 10c. 同 id 多件的 uid 指向
+section('10c. 装备函数接受可选 uid（同 id 多件时指哪一件）');
+{
+  // 背包里两件同 id：不带 uid 作用于第一件，带 uid 作用于指定的那件。
+  // 修复前 upgradeEquipment 完全忽略第三参，永远升第一件 —— 玩家点的是 u2，
+  // 被升的却是 u1，且按 u1 的等级报价（白付钱、升错件）。
+  const s2 = L.createState(12);
+  L.bagAdd(s2, 'longCloak', 1);
+  L.bagAdd(s2, 'longCloak', 1);
+  s2.meta.coins = 99999;
+  const uidB = s2.meta.bag[1].uid;
+  ok(s2.meta.bag[0].level === 1 && s2.meta.bag[1].level === 1, '初始两件都是 Lv1');
+  L.upgradeEquipment(s2, 'longCloak', uidB);
+  ok(s2.meta.bag[0].level === 1, '没有 uid 的那件没被动过',
+    'bag[0].level = ' + s2.meta.bag[0].level);
+  ok(s2.meta.bag[1].level === 2, '指定 uid 的那件被升级',
+    'bag[1].level = ' + s2.meta.bag[1].level);
+
+  // 报价也要按 uid 指定的那件算，否则玩家会被按错件收费。
+  // 注：brief 原稿此处用 longCloak（基础装备，满级 3）并断言报价等于
+  // equipPrice('longCloak', 4) —— 满级装备没有"下一级"，正确值是 null，
+  // 610 不可能实现（见 task-3-report.md 缺陷 A）。改用血滴护符（特效装备，
+  // 满级 5）才能让"Lv3 那件的下一级(Lv4)"这个报价有定义。
+  const s3 = L.createState(13);
+  L.bagAdd(s3, 'bloodCharm', 1);
+  L.bagAdd(s3, 'bloodCharm', 3);
+  s3.meta.coins = 99999;
+  const uidHi = s3.meta.bag[1].uid;
+  const costHi = L.equipUpgradeCost(s3, 'bloodCharm', uidHi);
+  const costLo = L.equipUpgradeCost(s3, 'bloodCharm');
+  ok(costHi !== costLo, '按 uid 与不按 uid 的报价不同（等级不同，价就不同）',
+    'costHi = ' + costHi + ', costLo = ' + costLo);
+  ok(costHi === C.equipPrice('bloodCharm', 4), '按 Lv3 那件报价 = 下一级(4)的价',
+    'got ' + costHi + ', want ' + C.equipPrice('bloodCharm', 4));
+  ok(costLo === C.equipPrice('bloodCharm', 2), '不带 uid 按第一件(Lv1)报价 = 2 级的价',
+    'got ' + costLo + ', want ' + C.equipPrice('bloodCharm', 2));
+
+  // 穿戴也要能指定：穿背包里第 2 件，且穿走的是它的等级。
+  // 注：brief 原稿此处 bagAdd(...,4) 断言 equipment.back.level===4，但 longCloak
+  // 满级 3，把超上限的等级当正常态写进断言与上限不变量冲突（缺陷 B）。
+  // 改成长期有效等级 3（满级），仍然证明"穿的是 uid 指定那件的等级"。
+  const s4 = L.createState(14);
+  L.bagAdd(s4, 'longCloak', 1);
+  L.bagAdd(s4, 'longCloak', 3);
+  const uidWear = s4.meta.bag[1].uid;
+  L.equipItem(s4, 'longCloak', uidWear);
+  eq(s4.meta.equipment.back.level, 3, '穿上的是 uid 指定那件（等级 3）');
+  eq(s4.meta.bag[0].level, 1, '另一件留在背包里，等级没变');
+
+  // 三处判定都不能选错：已穿戴优先于背包（Review Focus #3）。
+  // 注：brief 原稿此处没给 s5 铜币，createState 默认 coins=0，buyEquipment 会因
+  // "铜币不够"直接失败，后面的断言因无关原因挂掉（缺陷 C）。补上铜币。
+  const s5 = L.createState(15);
+  s5.meta.coins = 99999;
+  L.buyEquipment(s5, 'longCloak');
+  L.equipItem(s5, 'longCloak');
+  L.bagAdd(s5, 'longCloak', 3);
+  ok(L.equipOwned(s5, 'longCloak') === 'equipped', '已穿戴优先');
+  ok(s5.meta.bag.length === 1 && s5.meta.bag[0].level === 3, '背包里那件仍是 Lv3',
+    JSON.stringify(s5.meta.bag));
+
+  // 两参数调用必须与从前完全一致（向后兼容）：不带 uid 仍作用于第一件。
+  const s6 = L.createState(16);
+  L.bagAdd(s6, 'longCloak', 1);
+  L.bagAdd(s6, 'longCloak', 1);
+  s6.meta.coins = 99999;
+  eq(L.equipUpgradeCost(s6, 'longCloak'), C.equipPrice('longCloak', 2),
+    '两参数报价仍是第一件的下一级');
+  ok(L.upgradeEquipment(s6, 'longCloak').ok, '两参数升级成功');
+  ok(s6.meta.bag[0].level === 2 && s6.meta.bag[1].level === 1,
+    '两参数升级仍只作用于第一件', JSON.stringify(s6.meta.bag.map(e => e.level)));
+
+  // uid 给了但背包里没有那一件，要退回按 id 找第一件，而不是整件事失败。
+  const s7 = L.createState(17);
+  L.bagAdd(s7, 'longCloak', 2);
+  s7.meta.coins = 99999;
+  ok(L.upgradeEquipment(s7, 'longCloak', '不存在的uid').ok,
+    'uid 找不到时退回按 id 升级第一件');
+  ok(s7.meta.bag[0].level === 3, '退回后升的是第一件');
+}
+
+// ---------------------------------------------------------------- 10d. 环境音默认值
+section('10d. 设置：环境音默认值兜底（Task 23 / V22）');
+{
+  const s = L.createState(7);
+  eq(s.meta.settings && s.meta.settings.ambient, 0.30,
+    '新档自带 settings.ambient = 0.30（Task 23 的第三条滑块要读它）',
+    JSON.stringify(s.meta.settings));
+
+  // 老档：version 6 已经有 settings，但里面没有 ambient。
+  // 只写 `if (!meta.settings)` 的兜底在这条路径上根本不会触发 —— 必须按字段补。
+  const old = JSON.parse(L.serialize(L.createState(8)));
+  eq(old.version, 6, '仍是不升版本的 v6 存档');
+  delete old.meta.settings.ambient;
+  const back = L.deserialize(JSON.stringify(old));
+  eq(back.meta.settings.ambient, 0.30,
+    'v6 老档缺少 ambient 时读出 0.30（不是 undefined/NaN）',
+    String(back.meta.settings.ambient));
+
+  // 脏值：非数字、NaN、越界值都不能让虫鸣变成 NaN 增益
+  const dirty = JSON.parse(L.serialize(L.createState(9)));
+  dirty.meta.settings.ambient = '0.5';
+  eq(L.deserialize(JSON.stringify(dirty)).meta.settings.ambient, 0.30,
+    '字符串 ambient 退回默认值');
+  dirty.meta.settings.ambient = null;
+  eq(L.deserialize(JSON.stringify(dirty)).meta.settings.ambient, 0.30,
+    'null ambient 退回默认值');
+  dirty.meta.settings.ambient = 5;
+  eq(L.deserialize(JSON.stringify(dirty)).meta.settings.ambient, 1, '越界值夹到 1');
+  dirty.meta.settings.ambient = -2;
+  eq(L.deserialize(JSON.stringify(dirty)).meta.settings.ambient, 0, '负值夹到 0');
+
+  // 玩家真的调过之后要保留，不能被默认值覆盖
+  const custom = L.createState(10);
+  custom.meta.settings.ambient = 0.65;
+  eq(L.deserialize(L.serialize(custom)).meta.settings.ambient, 0.65,
+    '自定义环境音音量跨序列化保留');
+
+  // 完全缺 settings 的老档（v2 之前）也要补出 ambient
+  const bare = L.deserialize(JSON.stringify({ version: 2, meta: { coins: 10 } }));
+  eq(bare.meta.settings && bare.meta.settings.ambient, 0.30,
+    '迁移路径也补出 ambient 默认值', JSON.stringify(bare.meta.settings));
 }
 
 // ---------------------------------------------------------------- 11. 边界
@@ -468,7 +709,7 @@ section('14. 核心循环可以真的被打通');
     if (!dodging && Math.abs(dz) > 18) { if (dz > 0) i.up = true; else i.down = true; }
     if (d > 52) { if (dx < 0) i.left = true; else i.right = true; }
     else if (d < 34) { if (dx < 0) i.right = true; else i.left = true; }
-    if (d < 62 && Math.abs(dz) <= C.ATTACK_DEPTH * 0.85) i.attack = true;
+    if (d < C.ATTACK_RANGE && Math.abs(dz) <= C.ATTACK_DEPTH * 0.85) i.attack = true;
     return i;
   }
 
@@ -552,12 +793,41 @@ section('15. 难度梯度（测量全部四个档位，并断言阶梯单调）'
   // 终局状态 = 强化满 **且** 穿齐一套基础装备。只量强化会把终局强度
   // 低估一大截（实测 70% vs 92%），于是"游戏能不能打通"这个问题
   // 被一个玩家永远不会处于的状态回答。
-  const forgeEndgame = B.winRate('forge', B.FULL_UP, N, 137, B.FULL_SET).rate;
+  //
+  // 测量口径：原先这里是 winRate('forge', FULL_UP, 30, 137, FULL_SET)。
+  // 固定种子 + 确定性机器人下 n=30 时 **1 局 = 3.33 个百分点**，颗粒度根本
+  // 区分不了 95% 与 100%：它既会把没变坏的实现判红（运气好就 30/30），
+  // 也会把真变坏的实现放过。改用仓库权威口径（tests/balance_report.js 的
+  // 同一套种子步长）：n=200 × 4 个步长 = 800 局，颗粒度 0.125pp
+  // （比 n=30 细 26.7 倍；不是为了让这条过，是因为被测的余量比 160 局的
+  // 颗粒度 0.625pp 还薄，粗尺子量细余量只会随机跳红跳绿 —— 见下面刀尖位置）。
+  //
+  // 这条线的**刀尖位置**（改数值时先看这里，别被它吓到）：
+  //   旧配置 58/62/74  n=200×4 = 772/800 = 96.50%（±1.27pp，95%CI）
+  //   新配置 61/66/78  n=200×4 = 782/800 = 97.75%（±1.03pp，95%CI）
+  //   阈值 0.98 → 余量只有 **0.25pp**，落在 800 局抽样噪声（±1.03pp）之内。
+  // 若将来再提高玩家输出，这条先红是正常的：先看真实损失局数（下面那条
+  // 「800 局里至少输过 1 局」），再决定是调数值还是调这条线。
+  // 阈值本身不动 —— 0.98 是设计意图（终局不能变成必胜）。
+  const ENDGAME_STRIDES = [137, 211, 977, 1231];
+  const ENDGAME_N = 200;
+  let endgameWins = 0;
+  ENDGAME_STRIDES.forEach(function (st) {
+    endgameWins += B.winRate('forge', B.FULL_UP, ENDGAME_N, st, B.FULL_SET).wins;
+  });
+  const endgameGames = ENDGAME_N * ENDGAME_STRIDES.length;
+  const forgeEndgame = endgameWins / endgameGames;
   ok(forgeEndgame >= 0.75,
      '强化满 + 穿齐基础套装后可以稳定通关（游戏有"打通"状态）',
      `强化 ${(forgeUp * 100).toFixed(0)}% -> 强化+装备 ${(forgeEndgame * 100).toFixed(0)}%`);
   // 有上限：终局也不能变成必胜，最高难度要一直是赌局
   ok(forgeEndgame <= 0.98, '终局也不是必胜（最高难度仍有风险）', forgeEndgame);
+  // 上面那条卡在噪声里（余量 0.25pp、噪声 ±1.03pp），所以再补一条**不依赖
+  // 任何阈值**的意图断言：同一批 800 局里到底输过几局。"有风险"不等于"胜率
+  // 低于 0.98 这个特定小数"，而是"真的还会输"。改前改后各 800 局都输过
+  // （改后 18 局），离 1 局有 18 倍余量，不会因为抽样噪声翻脸。
+  const forgeLosses = endgameGames - endgameWins;
+  ok(forgeLosses >= 1, '终局 800 局里至少输过 1 局（否则就是事实必胜）', forgeLosses);
 }
 
 // ---------------------------------------------------------------- 16. 远程敌人与弹道
@@ -983,7 +1253,7 @@ section('22. 药水（消耗品）');
   const ids = Object.keys(P);
   ok(ids.length === 3, '配置了 3 种药水', ids.join(','));
   ok(ids.indexOf('heal') >= 0 && ids.indexOf('strength') >= 0 && ids.indexOf('wall') >= 0,
-    '三种药水分别是回春/力量/坚壁');
+    '三种药水分别是治疗/力量/护盾');
 
   // 键位：用户明确指定 1/2/3
   const keys = ids.map(k => P[k].key);
@@ -998,18 +1268,34 @@ section('22. 药水（消耗品）');
   ok(hp_.carry === 3 && sp_.carry === 2 && wp_.carry === 2,
     '携带上限为 3 / 2 / 2', [hp_.carry, sp_.carry, wp_.carry].join('/'));
 
-  // ---- 回春药：立刻回血 ----
+  /*
+   * 三件药水的**显示名**统一成"…药水"（V14）。
+   *
+   * 只改 name / short，绝不改 key（heal / strength / wall）：
+   * 存档里的药水栏是按 key 记的（meta.potions.heal 之类），
+   * 改 key 等于把所有旧存档的药水栏清空 —— 那不是改名，那是删档。
+   */
+  ok(hp_.name === '治疗药水', '治疗药水显示名统一成"治疗药水"', hp_.name);
+  ok(hp_.short === '治疗', '治疗药水短名是"治疗"', hp_.short);
+  ok(sp_.name === '力量药水', '力量药水显示名统一成"力量药水"', sp_.name);
+  ok(sp_.short === '力量', '力量药水短名是"力量"', sp_.short);
+  ok(wp_.name === '护盾药水', '护盾药水显示名统一成"护盾药水"', wp_.name);
+  ok(wp_.short === '护盾', '护盾药水短名是"护盾"', wp_.short);
+  ok(C.POTION_ORDER.join(',') === 'heal,strength,wall',
+    '药水 key 与顺序一个字都没改（旧存档的药水栏才不空）', C.POTION_ORDER.join(','));
+
+  // ---- 治疗药水：立刻回血 ----
   const a = armedRunWithPotions({ heal: 1 });
   a.run.player.hp = 30;
   L.usePotion(a.s, 'heal');
-  ok(a.run.player.hp === 55, '回春药立刻回 25 血', `30 -> ${a.run.player.hp}`);
-  ok(a.run.potions.heal === 0, '回春药用掉后本局携带数减 1', String(a.run.potions.heal));
+  ok(a.run.player.hp === 55, '治疗药水立刻回 25 血', `30 -> ${a.run.player.hp}`);
+  ok(a.run.potions.heal === 0, '治疗药水用掉后本局携带数减 1', String(a.run.potions.heal));
 
   // 回血不得超过上限
   const b = armedRunWithPotions({ heal: 1 });
   b.run.player.hp = b.run.player.maxHp - 5;
   L.usePotion(b.s, 'heal');
-  ok(b.run.player.hp === b.run.player.maxHp, '回春药不会超过血量上限', String(b.run.player.hp));
+  ok(b.run.player.hp === b.run.player.maxHp, '治疗药水不会超过血量上限', String(b.run.player.hp));
 
   // ---- 力量药：限时增伤 ----
   const c = armedRunWithPotions({ strength: 1 });
@@ -1020,13 +1306,13 @@ section('22. 药水（消耗品）');
   ok(c.run.player.potionBuff.timer > 14 && c.run.player.potionBuff.timer <= 15.01,
     '力量药持续 15 秒', String(c.run.player.potionBuff.timer));
 
-  // ---- 坚壁药：限时减伤 ----
+  // ---- 护盾药水：限时减伤 ----
   const d = armedRunWithPotions({ wall: 1 });
   L.usePotion(d.s, 'wall');
   ok(d.run.player.potionBuff && d.run.player.potionBuff.hurtMul < 1,
-    '坚壁药设置减伤倍率', JSON.stringify(d.run.player.potionBuff));
+    '护盾药水设置减伤倍率', JSON.stringify(d.run.player.potionBuff));
   ok(d.run.player.potionBuff.timer > 7 && d.run.player.potionBuff.timer <= 8.01,
-    '坚壁药持续 8 秒', String(d.run.player.potionBuff.timer));
+    '护盾药水持续 8 秒', String(d.run.player.potionBuff.timer));
 
   // ---- 用掉就没了：没有携带时按了不生效 ----
   const e = armedRunWithPotions({});
@@ -1043,8 +1329,8 @@ section('22. 药水（消耗品）');
   const f = armedRunWithPotions({ heal: 1, strength: 1, wall: 1 });
   f.run.player.hp = 40;
   L.step(f.s, { left: false, right: false, up: false, down: false, potion1: true }, 1 / 60);
-  ok(f.run.player.hp === 65, '按 1 喝回春药', `40 -> ${f.run.player.hp}`);
-  ok(f.run.potions.heal === 0, '按 1 后本局回春药减少');
+  ok(f.run.player.hp === 65, '按 1 喝治疗药水', `40 -> ${f.run.player.hp}`);
+  ok(f.run.potions.heal === 0, '按 1 后本局治疗药水减少');
 
   const g = armedRunWithPotions({ heal: 1, strength: 1, wall: 1 });
   L.step(g.s, { left: false, right: false, up: false, down: false, potion2: true }, 1 / 60);
@@ -1054,7 +1340,7 @@ section('22. 药水（消耗品）');
   const h = armedRunWithPotions({ heal: 1, strength: 1, wall: 1 });
   L.step(h.s, { left: false, right: false, up: false, down: false, potion3: true }, 1 / 60);
   ok(h.run.potions.wall === 0 && h.run.player.potionBuff,
-    '按 3 喝坚壁药');
+    '按 3 喝护盾药水');
 
   // ---- 持续药水到期后效果消失 ----
   const i2 = armedRunWithPotions({ strength: 1 });
@@ -1076,7 +1362,7 @@ section('22. 药水（消耗品）');
   let migrated = null, loadErr = null;
   try { migrated = L.deserialize(oldJson); } catch (err) { loadErr = err.message; }
   ok(!loadErr, 'v3 旧档能读出（不抛错误）', loadErr || '');
-  ok(migrated && migrated.version === 5, 'v3 旧档读取后升到 v5（跨两级迁移）',
+  ok(migrated && migrated.version === L.STATE_VERSION, 'v3 旧档读取后升到当前版本（跨三级迁移）',
     migrated ? String(migrated.version) : 'null');
   ok(migrated && migrated.meta.potions && migrated.meta.potions.heal === 0,
     '旧档补齐 potions 且默认是 0（不白送）',
@@ -1084,8 +1370,8 @@ section('22. 药水（消耗品）');
   ok(migrated && migrated.meta.equipment && migrated.meta.equipment.weapon === null,
     '旧档补齐五个空装备位（不白送装备）',
     JSON.stringify(migrated && migrated.meta.equipment));
-  ok(migrated && Array.isArray(migrated.meta.inventory)
-     && migrated.meta.inventory.length === 0, '旧档补齐空背包');
+  ok(migrated && Array.isArray(migrated.meta.bag)
+     && migrated.meta.bag.length === 0, '旧档得到空背包（v6 条目数组）');
   ok(migrated && migrated.meta.coins === 10 && migrated.meta.bestWave === 2,
     '迁移不丢原有数据');
 
@@ -1101,7 +1387,8 @@ section('22. 药水（消耗品）');
   let m4 = null, e4 = null;
   try { m4 = L.deserialize(v4Json); } catch (err) { e4 = err.message; }
   ok(!e4, 'v4 旧档能读出', e4 || '');
-  ok(m4 && m4.version === 5, 'v4 → v5', m4 ? String(m4.version) : 'null');
+  ok(m4 && m4.version === L.STATE_VERSION, 'v4 → 当前版本',
+    m4 ? String(m4.version) : 'null');
   ok(m4 && m4.meta.potions.heal === 2, 'v4 迁移保留已有药水（不清零）',
     JSON.stringify(m4 && m4.meta.potions));
   ok(m4 && m4.meta.upgrades.damage === 1 && m4.meta.skills.whirl === 2,
@@ -1119,11 +1406,11 @@ section('22. 药水（消耗品）');
   L.usePotion(k2.s, 'heal');
   L.usePotion(k2.s, 'strength');
   L.endRun(k2.s, false);
-  ok(k2.s.meta.potions.heal === 2, '结算后 meta 回写剩余回春药', String(k2.s.meta.potions.heal));
+  ok(k2.s.meta.potions.heal === 2, '结算后 meta 回写剩余治疗药水', String(k2.s.meta.potions.heal));
   ok(k2.s.meta.potions.strength === 0, '喝掉的力量药不会退回', String(k2.s.meta.potions.strength));
   ok(k2.s.meta.potions.wall === 2, '没喝的药水原样保留', String(k2.s.meta.potions.wall));
 
-  // ---- 坚壁药真的减半伤害 ----
+  // ---- 护盾药水真的减半伤害 ----
   const plain = armedRunWithPotions({});
   L.hurtPlayer(plain.s, plain.s.run, plain.run.player, 40);
   const plainHp = plain.run.player.hp;
@@ -1132,9 +1419,9 @@ section('22. 药水（消耗品）');
   L.usePotion(tank.s, 'wall');
   L.hurtPlayer(tank.s, tank.s.run, tank.run.player, 40);
   const tankHp = tank.run.player.hp;
-  ok(tankHp > plainHp, '坚壁药后同样伤害掉血更少', `无药 ${plainHp} vs 有药 ${tankHp}`);
+  ok(tankHp > plainHp, '护盾药水后同样伤害掉血更少', `无药 ${plainHp} vs 有药 ${tankHp}`);
   ok(plain.run.player.maxHp - tankHp === 20,
-    '坚壁药把 40 点伤害减半成 20', String(plain.run.player.maxHp - tankHp));
+    '护盾药水把 40 点伤害减半成 20', String(plain.run.player.maxHp - tankHp));
 
   // ---- 力量药真的提升伤害 ----
   const weak = armedRunWithPotions({});
@@ -1154,7 +1441,7 @@ section('22. 药水（消耗品）');
   const shopper = L.createState(555);
   shopper.meta.coins = 500;
   const buy1 = L.buyPotion(shopper, 'heal', 2);
-  ok(buy1.ok && shopper.meta.potions.heal === 2, '买 2 瓶回春药', JSON.stringify(buy1));
+  ok(buy1.ok && shopper.meta.potions.heal === 2, '买 2 瓶治疗药水', JSON.stringify(buy1));
   ok(shopper.meta.coins === 500 - 120, '买 2 瓶扣 120 铜币', String(shopper.meta.coins));
   const buy2 = L.buyPotion(shopper, 'heal', 5);
   ok(buy2.ok && shopper.meta.potions.heal === 3, '买到携带上限就停', JSON.stringify(shopper.meta.potions));
@@ -1285,7 +1572,7 @@ section('25. 装备（买卖 / 背包 / 卸下）');
   ok(b1.ok, '能买到装备');
   ok(s.meta.coins === 10000 - C.EQUIPMENT.ironHelm.price, '买装备扣钱',
     String(s.meta.coins));
-  ok(s.meta.inventory.indexOf('ironHelm') >= 0, '买到的装备进背包');
+  ok(L.bagCount(s) === 1 && L.bagAt(s, 0).id === 'ironHelm', '买到的装备进背包');
 
   const b2 = L.buyEquipment(s, 'ironHelm');
   ok(b2.ok === false, '已拥有的装备不能重复买', JSON.stringify(b2));
@@ -1294,34 +1581,41 @@ section('25. 装备（买卖 / 背包 / 卸下）');
   const e1 = L.equipItem(s, 'ironHelm');
   ok(e1.ok, '能穿上装备');
   ok(s.meta.equipment.head && s.meta.equipment.head.id === 'ironHelm', '装备位记录正确');
-  ok(s.meta.inventory.indexOf('ironHelm') < 0, '穿上后从背包移除');
+  ok(L.bagCount(s) === 0, '穿上后从背包移除');
 
   // 同部位换装：旧装备回背包，不消失
   L.buyEquipment(s, 'leatherHelm');
   const e2 = L.equipItem(s, 'leatherHelm');
   ok(e2.ok, '能换装');
   ok(s.meta.equipment.head.id === 'leatherHelm', '新装备穿上');
-  ok(s.meta.inventory.indexOf('ironHelm') >= 0, '被换下的装备回到背包（不凭空消失）');
+  ok(L.bagAt(s, L.bagCount(s) - 1).id === 'ironHelm', '被换下的装备回到背包（不凭空消失）');
 
   // 卸下
   const u1 = L.unequipSlot(s, 'head');
   ok(u1.ok, '能卸下装备');
   ok(s.meta.equipment.head === null, '卸下后该部位为空');
-  ok(s.meta.inventory.indexOf('leatherHelm') >= 0, '卸下的装备回背包');
+  ok(L.bagAt(s, L.bagCount(s) - 1).id === 'leatherHelm', '卸下的装备回背包');
 
   // 卸下后加成消失
   const st = L.playerStats(s);
   ok(st.maxHp === C.BASE_HP, '全部卸下后回到基础值', String(st.maxHp));
 
   // 背包里的装备也能升级
-  const invId = s.meta.inventory[0];
+  const invId = L.bagAt(s, 0).id;
   s.meta.coins = 10000;
   const cost = L.equipUpgradeCost(s, invId);
   ok(cost !== null, '背包里的装备可以升级（有价格）', String(cost));
   const up = L.upgradeEquipment(s, invId);
   ok(up.ok, '升级成功');
-  ok((s.meta.inventoryLevels[invId] || 1) === 2, '背包装备等级 +1',
-    String(s.meta.inventoryLevels[invId]));
+  ok(L.bagAt(s, 0).level === 2, '背包装备等级 +1', String(L.bagAt(s, 0).level));
+
+  // 重复件各占一格、各升各的：升级不能把同 id 的另一件一起抬上去
+  const dupUp = L.createState(31338);
+  dupUp.meta.bag = [L.bagEntry(dupUp, 'ironHelm', 1), L.bagEntry(dupUp, 'ironHelm', 1)];
+  dupUp.meta.coins = 10000;
+  ok(L.upgradeEquipment(dupUp, 'ironHelm').ok, '重复件可以升级');
+  eq(dupUp.meta.bag[0].level, 2, '只升了第一件');
+  eq(dupUp.meta.bag[1].level, 1, '另一件同 id 的不跟着涨级');
 
   // 没拥有的不能升级
   const nope = L.upgradeEquipment(s, 'trident');
@@ -1333,15 +1627,15 @@ section('25. 装备（买卖 / 背包 / 卸下）');
   ok(L.buyEquipment(poor, 'hornHelm').ok === false, '铜币不够买不了装备');
 }
 
-// ---------------------------------------------------------------- 26. 装备：掉落与折算
-section('26. 装备（掉落 5% / 重复折算 30%）');
+// ---------------------------------------------------------------- 26. 装备：掉落
+section('26. 装备（掉落 5% / 重复件也进背包）');
 {
   // 掉落率：用确定性 RNG 跑大样本。
   // 断言区间而不是精确值 —— 抽样本身有方差，卡死 5.00% 会让测试变成
   // "随机数实现的快照"，改一下 RNG 就红，那不是在测掉落率。
   const s = L.createState(777);
   s.meta.equipment = { head: null, torso: null, back: null, weapon: null, feet: null };
-  s.meta.inventory = [];
+  s.meta.bag = [];
   let drops = 0, tries = 4000;
   for (let i = 0; i < tries; i++) if (L.tryEquipDrop(s)) drops++;
   const rate = drops / tries;
@@ -1357,30 +1651,43 @@ section('26. 装备（掉落 5% / 重复折算 30%）');
   }
   ok(allBase, '掉落只出基础装备（特效装备只能买）', String(seen));
 
-  // 重复品折算 30%
-  const s3 = L.createState(999);
-  s3.meta.equipment = { head: null, torso: null, back: null, weapon: null, feet: null };
-  s3.meta.inventory = ['ironHelm'];          // 已拥有
-  s3.meta.coins = 0;
-  const dup = L.rollEquipDrop(s3);
-  // 强制掉到已拥有的那件：直接调折算路径更容易断言
-  const dup2 = (function () {
-    let out = null;
-    const probe = L.createState(1001);
-    probe.meta.equipment = { head: null, torso: null, back: null, weapon: null, feet: null };
-    probe.meta.inventory = Object.keys(C.ALL_EQUIPMENT).filter(i => C.ALL_EQUIPMENT[i].kind === 'base');
-    probe.meta.coins = 0;
-    out = L.rollEquipDrop(probe);
-    return { out: out, coins: probe.meta.coins, inv: probe.meta.inventory.length };
-  })();
-  ok(dup2.out && dup2.out.duplicate === true, '已拥有的装备会判定为重复',
-    JSON.stringify(dup2.out));
-  ok(dup2.coins === Math.round(C.equipDef(dup2.out.id).price * 0.30),
-    '重复品折算 30% 原价', `${dup2.coins} vs ${Math.round(C.equipDef(dup2.out.id).price * 0.30)}`);
-  ok(dup2.inv === 21, '重复品不会进背包（不会撑爆背包）', String(dup2.inv));
+  // 重复品不再折算，而是进背包
+  const dupState = L.createState(7);
+  let dupDrop = null;
+  for (let i = 0; i < 5000 && !dupDrop; i++) {
+    const d = L.rollEquipDrop(dupState);
+    if (d && d.duplicate) dupDrop = d;
+  }
+  ok(dupDrop && dupDrop.refund === undefined, '重复掉落不再带 refund 字段');
+  ok(C.EQUIP_DROP.refundRatio === undefined, '折算比例已从配置里删除');
+  // 重复品仍然进库存，**不会**因为重复就被吞掉或折算。
+  //
+  // 注意两处顺序/命名陷阱（都踩过）：
+  //  1. 上面那个 5000 次的 warm-up 循环**每一次都在入格**，它结束时背包
+  //     已经不是空的。`invBefore` 必须在**重新播种之后**取，
+  //     否则基数不对，`+1` 的断言必挂。
+  //  2. 用 `L.bagCount(state)` / `L.bagAt(state, i)` 读，**不是**直接伸手
+  //     `state.meta.bag[i]` —— 越界时后者是 `undefined`，取 `.id` 会 `TypeError`，
+  //     整个套件在汇总前就崩掉，看不到真正的失败项。
+  const seeded = Object.keys(C.ALL_EQUIPMENT)
+    .filter(function (i) { return C.ALL_EQUIPMENT[i].kind === 'base'; });   // 全部已拥有
+  dupState.meta.bag = seeded.map(function (i) { return L.bagEntry(dupState, i, 1); });
+  const invBefore = L.bagCount(dupState);                  // === 21，此刻才取
+  const dupProbe = L.rollEquipDrop(dupState);
+  ok(dupProbe && dupProbe.duplicate === true, '全拥有时掉落判定为重复');
+  // 重复品"没被吞掉"的唯一含义就是库存**增长**：
+  // 全 21 件已拥有 → 再掉一件 → 22。
+  // 原稿写 === 21 是退款时代的残留（那时重复分支不 push，21 才成立）。
+  ok(L.bagCount(dupState) === invBefore + 1, '重复品进了背包（没被吞掉）');
+  ok(L.bagCount(dupState) === 22, '正好多一件（21 件已拥有 + 1 件重复掉落）');
+  const lastEntry = L.bagAt(dupState, L.bagCount(dupState) - 1);
+  ok(lastEntry && lastEntry.id === dupProbe.id,
+     '新增的那一件就是刚落下的 id（不是别处凭空多出来的）');
+  ok(dupState.meta.coins === 0, '重复品不再产生任何铜币');
 
-  // 折算比例来自配置，不是写死的魔法数
-  ok(C.EQUIP_DROP.refundRatio === 0.30, '折算比例在配置里，值 0.30');
+  // 注：库存已是 `meta.bag` 条目数组（v6）。本段断言的是"refund 已消失、
+  // 重复品不消失"，条目数组本身的语义由上面 10b 段覆盖。
+
   ok(C.EQUIP_DROP.chance === 0.05, '掉落率在配置里，值 0.05');
 }
 
@@ -1696,6 +2003,461 @@ section('31. 专属技能：按键 -> 释放 -> 冷却 -> 失去');
   L.unequipSlot(e.s, 'weapon');
   ok(L.specialSkillOf(e.s) === null, '卸下授予类武器后技能消失');
   eq(L.castSpecial(e.s, e.run, e.p), false, '无武器时 castSpecial 返回 false');
+}
+
+// ---------------------------------------------------------------- 32. 基地错落（V16）
+section('32. 基地六点位错落：判定必须是二维的');
+{
+  /*
+   * 用户原话：「六个点位现在是排成一条直线的……做成上下错落的」。
+   *
+   * 为什么这条测试要盯"判定"而不是只盯画出来的 y：错落本身是数据，
+   * 判定一旦仍然只比 x，上下错开就只是"看起来错开了"，站在中间会同时命中
+   * 相邻两个点位 —— 玩家按 J 不知道该进哪个。
+   *
+   * 坐标写死是有意的：这条测的就是错落值本身，读 ZONES 再拿它断言等于自证。
+   * state.hub 是懒创建的：L.createState 之后必须先 H.ensureHub，否则 s.hub
+   * 是 undefined，赋值直接 TypeError。
+   */
+  const s = L.createState(51);
+  const h = H.ensureHub(s);
+
+  // 定稿的错落值：下排 z=88（画面上更靠前、更低），上排 z=122，门留在中线 105。
+  [['field', 100, 88], ['anvil', 265, 122], ['forgewear', 415, 88],
+    ['shop', 565, 122], ['altar', 720, 88], ['gate', 880, 105]].forEach(function (t) {
+    h.x = t[1]; h.z = t[2];
+    const z = H.zoneAt(s);
+    ok(z && z.id === t[0], '站在 ' + t[0] + ' 的点位坐标上命中自己（实际 ' +
+      (z ? z.id : 'null') + '）');
+  });
+
+  // 数据层：z 与 reachZ 必须显式写在 ZONES 里，不靠函数默认值兜底
+  ok(H.ZONES.every(function (z) { return typeof z.z === 'number'; }),
+    '每个点位都有自己的错落深度 z（不是绘制端临时加的偏移）',
+    JSON.stringify(H.ZONES.map(function (z) { return z.id + ':' + z.z; })));
+  ok(H.ZONES.every(function (z) { return z.reachZ === 60; }),
+    '每个点位都显式写了 reachZ = 60（数据在数据层，不藏默认值）',
+    JSON.stringify(H.ZONES.map(function (z) { return z.id + ':' + z.reachZ; })));
+  // x 容差字段名必须还是 reach —— 三处既有测试在读它，改名会误伤
+  ok(H.ZONES.every(function (z) { return typeof z.reach === 'number' && z.reach > 0; }),
+    'x 容差仍叫 reach（不是 reachX）');
+
+  // 判定必须真的是二维的：站在场地最前缘（z = 0）时，x 再怎么对着设施都不该命中。
+  // 旧的一维实现只比 x，这里会命中 —— 这就是这次改动的关键判据。
+  h.x = (100 + 265) / 2;
+  h.z = 0;
+  ok(H.zoneAt(s) === null, '站在场地最前缘（z=0）时谁都不命中（判定确实是二维的）',
+    (H.zoneAt(s) || {}).id);
+  h.x = 100; h.z = 0;
+  ok(H.zoneAt(s) === null, '田地正前方但深度不对（z=0）也不命中', (H.zoneAt(s) || {}).id);
+  h.x = 265; h.z = 122;
+  ok((H.zoneAt(s) || {}).id === 'anvil', 'z 正确时命中铁匠铺');
+  h.x = (265 + 415) / 2; h.z = 122;
+  ok(H.zoneAt(s) === null, '相邻点位中点（x 轴空隙）不命中任何区域',
+    (H.zoneAt(s) || {}).id);
+
+  // 深度容差真的就是 60：边界上要命中，再多一格必须落空。
+  // 这一对断言钉住 reachZ 真的被用上了，防止它被写成 Infinity 或只在别处存着。
+  h.x = 265; h.z = 122 + 60;
+  ok((H.zoneAt(s) || {}).id === 'anvil', '深度正好在容差边界（Δz = 60）仍命中',
+    (H.zoneAt(s) || {}).id);
+  h.x = 265; h.z = 122 + 61;
+  ok(H.zoneAt(s) === null, '深度超出容差一格（Δz = 61）不命中',
+    (H.zoneAt(s) || {}).id);
+}
+
+// ---------------------------------------------------------------- ESC 菜单 / 主动退出（Task 13）
+section('ESC 菜单与「退出战斗」结算（Task 13）');
+{
+  /*
+   * 菜单行由逻辑层决定、由 index.html 渲染。
+   * 为什么"哪一行该出现"要放在 logic 里：它取决于 state.phase，
+   * 散在 UI 里就会变成第二份"什么时候算在战斗中"的判断，
+   * 迟早和 logic 的口径不一致（比如 phase 已经是 result 了菜单还挂着退出按钮）。
+   */
+  const sh = L.createState(4242);
+  const rowsHub = L.escMenuRows(sh);
+  ok(Array.isArray(rowsHub), 'escMenuRows 已挂到 API 上并返回数组',
+     typeof L.escMenuRows);
+  eq(rowsHub.length, 1, '基地 ESC 菜单只有一行', JSON.stringify(rowsHub));
+  eq(rowsHub[0].id, 'settings', '基地唯一一行的 id 是 settings');
+  eq(rowsHub[0].label, '设置', '基地唯一一行写「设置」');
+  ok(!rowsHub.some(function (r) { return r.id === 'quit'; }),
+     '基地没有「退出战斗」（没有局可退）');
+
+  L.startRun(sh, 'wood');
+  const rowsRun = L.escMenuRows(sh);
+  eq(rowsRun.length, 2, '战斗中 ESC 菜单两行', JSON.stringify(rowsRun));
+  eq(rowsRun[0].id, 'settings', '战斗中第一行仍是设置');
+  eq(rowsRun[1].id, 'quit', '战斗中第二行是退出战斗');
+  eq(rowsRun[1].label, '退出战斗', '第二行文案是「退出战斗」');
+
+  L.exitRun(sh);
+  eq(L.escMenuRows(sh).length, 1, '结算后菜单退回一行（不再提供退出战斗）');
+
+  // ---- 满血退出：保留 50% ----
+  {
+    const s = L.createState(11);
+    L.startRun(s, 'wood');
+    s.run.loot.coins = 1000;
+    s.run.loot.seeds = 200;
+    s.run.player.hp = s.run.player.maxHp;
+    const runsBefore = s.meta.runsCompleted, wonBefore = s.meta.runsWon;
+    const coinsBefore = s.meta.coins;
+    const res = L.exitRun(s);
+    ok(res && res.ok === true, '满血退出结算成功', JSON.stringify(res));
+    eq(s.phase, 'result', '退出后进入结算阶段');
+    eq(s.run, null, '退出后 run 被清空（同一个 run 不能再结算一次）');
+    eq(s.lastResult.won, false, '主动退出按战败记账（won = false）');
+    eq(s.lastResult.exited, true, '结算结果带 exited 标记（文案要区分主动退出）');
+    eq(s.lastResult.coins, 500, '满血退出保留 50% 铜币');
+    eq(s.lastResult.seeds, 100, '满血退出种子同样 50%');
+    eq(s.meta.runsCompleted - runsBefore, 1, '主动退出也算打完一局');
+    eq(s.meta.runsWon - wonBefore, 0, '主动退出不算胜利');
+    ok(s.meta.coins >= coinsBefore + 500, '铜币真的进了钱包（还要加上被动收益）',
+       s.meta.coins - coinsBefore);
+  }
+
+  // ---- 残血退出：公式 0.5 × (0.5 + 0.5 × 血量比) ----
+  {
+    const s = L.createState(12);
+    L.startRun(s, 'wood');
+    s.run.loot.coins = 1000;
+    s.run.loot.seeds = 200;
+    const maxHp = s.run.player.maxHp;
+    s.run.player.hp = 1;
+    // 期望值在测试里独立算一遍，而不是抄实现里的中间变量
+    const keep = 0.5 * (0.5 + 0.5 * (1 / maxHp));
+    const res = L.exitRun(s);
+    eq(res.ok, true, '残血退出也能结算');
+    near(res.keep, keep, 1e-9, '残血退出的保留率走血量折扣公式');
+    eq(s.lastResult.coins, Math.round(1000 * keep),
+       '残血退出的铜币是折扣后的值（四舍五入）', s.lastResult.coins);
+    eq(s.lastResult.seeds, Math.round(200 * keep), '残血退出的种子同比例');
+    ok(keep < 0.5 && keep >= 0.25, '残血保留率落在 [25%, 50%) 之间', keep);
+    ok(s.lastResult.coins < 500, '残血退出比满血退出拿得少', s.lastResult.coins);
+  }
+
+  // ---- 空血退出：下限 25%，不会掉到 0 ----
+  {
+    const s = L.createState(13);
+    L.startRun(s, 'wood');
+    s.run.loot.coins = 1000;
+    s.run.player.hp = 0;
+    L.exitRun(s);
+    eq(s.lastResult.coins, 250, '空血退出保留 25%（下限）');
+  }
+
+  // ---- 重复退出：不能靠连点刷钱 ----
+  {
+    const s = L.createState(14);
+    L.startRun(s, 'wood');
+    s.run.loot.coins = 1000;
+    s.run.loot.seeds = 100;
+    s.run.player.hp = s.run.player.maxHp;
+    L.exitRun(s);
+    const coins = s.meta.coins, seeds = s.meta.seeds, runs = s.meta.runsCompleted;
+    const again = L.exitRun(s);
+    ok(again && again.ok === false, '重复退出被拒绝（ok = false）', JSON.stringify(again));
+    eq(s.meta.coins, coins, '重复退出不再发铜币');
+    eq(s.meta.seeds, seeds, '重复退出不再发种子');
+    eq(s.meta.runsCompleted, runs, '重复退出不重复计一局');
+    eq(s.lastResult.coins, 500, '重复退出不改写上一次的结算');
+  }
+
+  // ---- 没有进行中的局：拒绝，而且不把状态改成 result ----
+  {
+    const s = L.createState(15);
+    eq(L.exitRun(s).ok, false, '没有进行中的局时退出被拒绝');
+    eq(s.phase, 'farm', '被拒绝时状态保持原样（不会卡在结算阶段）');
+  }
+
+  // ---- 「早退」的经济学：不优于打输，永远不如打赢 ----
+  {
+    const lootCoins = 800;
+    const mk = function (hpRatio) {
+      const s = L.createState(16);
+      L.startRun(s, 'wood');
+      s.run.loot.coins = lootCoins;
+      s.run.player.hp = Math.max(0, Math.round(s.run.player.maxHp * hpRatio));
+      return s;
+    };
+    const exitFull = mk(1); L.exitRun(exitFull);
+    const lost = mk(1); L.endRun(lost, false);
+    const exitLow = mk(1 / 70); L.exitRun(exitLow);
+    const wonS = mk(1); L.endRun(wonS, true);
+    eq(exitFull.lastResult.coins, lost.lastResult.coins,
+       '满血早退与打输拿一样多（不优于打输）', exitFull.lastResult.coins);
+    ok(exitLow.lastResult.coins <= lost.lastResult.coins,
+       '残血早退不会比打输拿得多', exitLow.lastResult.coins);
+    ok(exitFull.lastResult.coins < wonS.lastResult.coins, '早退永远不如打赢',
+       exitFull.lastResult.coins + ' vs ' + wonS.lastResult.coins);
+    ok(exitLow.lastResult.coins < exitFull.lastResult.coins,
+       '血越少早退拿得越少', exitLow.lastResult.coins);
+  }
+}
+
+// ---------------------------------------------------------------- V18. 攻击范围 +5%
+section('V18. 攻击连段与判定范围整体加长 5%');
+{
+  // 用户要的是「每段都比之前大或远」，所以不能只看 ATTACK_RANGE ——
+  // 玩普攻走的是 p.comboRange（= COMBO.steps[step].range），
+  // ATTACK_RANGE 只是还没出手时的兜底（logic.js 里 `p.comboRange || C.ATTACK_RANGE`）。
+  // 断言写成「原值 × 1.05」，不写死新数值：将来再调平衡不该打红一整片。
+  const base = [58, 62, 74];
+  const baseRange = 62, baseDepth = 52, baseBack = 14;
+
+  eq(C.COMBO.steps.length, base.length, '连段仍是三段');
+  C.COMBO.steps.forEach(function (st, i) {
+    ok(st.range > base[i] * 1.05,
+       `第 ${i + 1} 段 range 比原值大 5% 以上（${base[i]} -> ${st.range}）`,
+       st.range);
+  });
+  // 单调递增：否则「每段都更远」只是平均数上的假象。
+  for (let i = 1; i < C.COMBO.steps.length; i++) {
+    ok(C.COMBO.steps[i].range > C.COMBO.steps[i - 1].range,
+       `第 ${i + 1} 段比第 ${i} 段更远（${C.COMBO.steps[i - 1].range} -> ${C.COMBO.steps[i].range}）`);
+  }
+  ok(C.ATTACK_RANGE > baseRange,
+     `普攻基准射程也放大（${baseRange} -> ${C.ATTACK_RANGE}）`, C.ATTACK_RANGE);
+  ok(C.ATTACK_DEPTH > baseDepth * 1.05,
+     `纵深判定同比放大（${baseDepth} -> ${C.ATTACK_DEPTH}，否则侧面打不到）`,
+     C.ATTACK_DEPTH);
+  ok(C.ATTACK_BACK > baseBack * 1.05,
+     `身后判定同比放大（${baseBack} -> ${C.ATTACK_BACK}）`, C.ATTACK_BACK);
+
+  // 行为层：真的挥一刀，命中距离必须跟着配置走。
+  // 敌人放在「旧第一段射程之外、新射程之内」，且同深度。
+  {
+    const gap = (base[0] + C.COMBO.steps[0].range) / 2;
+    const { s, run } = armedRun('wood', 500, 105);
+    run.player.facing = 1;
+    const e = addEnemy(s, run, 500 + gap, 105);
+    const hp0 = e.hp;
+    L.step(s, Object.assign({}, INPUT, { attack: true }), DT);
+    ok(e.hp < hp0 || e.state === 'dead',
+       `第 1 段真的能打到 ${gap.toFixed(1)}px 外的敌人（旧射程 ${base[0]}）`,
+       e.hp);
+  }
+}
+
+// ---------------------------------------------------------------- V10/V11 种子失效
+section('V10/V11. 超出自家播种量的种子每局腐烂 25%');
+{
+  /*
+   * 设计 §3.5：防"无限囤种子没地方用"。结算时
+   *   grace = 当前田地数
+   *   seeds > grace ? seeds = grace + ceil((seeds - grace) * (1 - seedSpoilRate))
+   * 为什么不是"每颗种子有寿命"：meta.seeds 是单一整数，改成带年龄的列表要动
+   * 存档结构、迁移链和所有读取点（种植/结算/HUD/导出码），收益与风险不成比例。
+   *
+   * 本节的数字都按"9 块田"算：9 + ceil(91*0.75)=78、9 + ceil(81*0.75)=70。
+   * 78 与 70 不同，是为了证明真的按比例算，而不是"固定减掉 22 颗"。
+   */
+  eq(C.FARM.seedSpoilRate, 0.25, '腐烂比例写进 config（0.25，不在逻辑里内联）');
+
+  // 结算助手：造一局 → 定 loot → endRun。返回同一个 state。
+  // 默认 9 块田（createState 的形状）；plots 不同时按 createState 里 plot 的
+  // 形状重造数组，别自创字段。
+  function settle(before, plots) {
+    const s = L.createState(1);
+    s.meta.seeds = before;
+    if (plots !== C.FARM.cols * C.FARM.rows) {
+      s.farm.plots = new Array(plots).fill(null).map(function () {
+        return { state: 'empty', growth: 0 };
+      });
+    }
+    L.startRun(s, 'wood');
+    s.run.loot.seeds = 0;
+    L.endRun(s, true);
+    return s;
+  }
+
+  const a = settle(100, 9);
+  eq(a.meta.seeds, 78, '100 颗、9 块田 → 78（9 + ceil(91*0.75) = 9 + 69）');
+  eq(a.lastResult.seedSpoiled, 22, '同一次结算记下烂掉 22 颗');
+  // 口径不变：lastResult.seeds 仍是"这一局捡到的种子"。
+  // 结算卡上那个数字原本就是 loot 口径，改成总库存会同时骗到"这局收获多少"。
+  eq(a.lastResult.seeds, 0, 'lastResult.seeds 仍是这一局的收获口径');
+
+  const b = settle(9, 9);
+  eq(b.meta.seeds, 9, '正好等于田地数（9）时一颗都不烂');
+  eq(b.lastResult.seedSpoiled, 0, '没腐烂时 seedSpoiled 是 0，不是 undefined');
+
+  const c = settle(0, 9);
+  eq(c.meta.seeds, 0, '0 颗仍是 0');
+  eq(c.lastResult.seedSpoiled, 0, '0 颗不会算出负数或 NaN');
+
+  const d = settle(90, 9);
+  eq(d.meta.seeds, 70, '90 颗 → 70（9 + ceil(81*0.75) = 9 + 61），不是固定减 22');
+  eq(d.lastResult.seedSpoiled, 20, '90 颗烂 20 颗');
+
+  const e = settle(30, 18);
+  eq(e.meta.seeds, 27, 'grace 跟着田地数走：18 块田、30 颗 → 18 + ceil(12*0.75) = 27');
+  eq(e.lastResult.seedSpoiled, 3, '18 块田时只烂 3 颗');
+
+  // V11 保底不变量：任意输入下都不能把"够种一页"的量也吃掉。
+  // 用固定种子的小 LCG 取 5 组而不是 Math.random —— 随机数会让失败变成偶发，
+  // 红/绿就没有证据价值了。
+  let rnd = 20261113;
+  const next = function () {
+    rnd = (rnd * 1103515245 + 12345) % 2147483648;
+    return rnd / 2147483648;
+  };
+  for (let i = 0; i < 5; i++) {
+    const before = Math.floor(next() * 500);
+    const plots = 1 + Math.floor(next() * 24);
+    const s = settle(before, plots);
+    ok(s.meta.seeds >= Math.min(before, plots),
+       `保底：${before} 颗 / ${plots} 块田 → ${s.meta.seeds} >= min(${before}, ${plots})`,
+       s.meta.seeds);
+    ok(s.meta.seeds <= before, `腐烂只减少不增加（${before} -> ${s.meta.seeds}）`,
+       s.meta.seeds);
+    ok(Number.isInteger(s.meta.seeds), '结算是整数（存档里不能出现小数）',
+       s.meta.seeds);
+    eq(s.lastResult.seedSpoiled, before - s.meta.seeds,
+       'seedSpoiled 与结算前后的差一致（不会和 meta.seeds 对不上）');
+  }
+}
+
+section('V14/V15. 商店开垦田地：扣 3000、上限 27、失败零副作用（Task 24）');
+{
+  /*
+   * 买田地和买背包页是同一种交易：先判能不能，再扣钱，最后改变状态 ——
+   * 顺序反了就会出现"钱扣了、田没加"这种只能读档救的存档。这里每条
+   * 失败路径都配一条"钱和块数都没动"的断言；没有它，"返回 ok:false"
+   * 只是证明函数没崩，不能证明它没顺手扣钱。
+   */
+  ok(typeof L.buyFarmPlot === 'function', 'logic 导出 buyFarmPlot（漏导出时 hub 拿到 undefined）');
+  const buyFarmPlot = typeof L.buyFarmPlot === 'function'
+    ? L.buyFarmPlot
+    : function () { return { ok: false, reason: '未实现' }; };
+  const P = C.FARM.plotPrice;
+
+  // V16：新档就是 3×3 = 9 块，且配置里有价格/上限/每页
+  const fresh = L.createState(2400);
+  eq(fresh.farm.plots.length, C.FARM.cols * C.FARM.rows, 'V16 新档田地 = 3×3 = 9 块');
+  eq(fresh.farm.plots.length, 9, 'V16 新档田地正好 9 块');
+  eq(C.FARM.maxPlots, 27, '田地上限 27 块（3 页）');
+  eq(C.FARM.perPage, 9, '一页 9 块');
+  eq(C.FARM.plotPrice, 3000, '每块 3000 铜币（PM 定价）');
+  eq(fresh.farm.page, 0, '新档页码是 0（第 1 页）');
+
+  const mk = function (coins, plots) {
+    const s = L.createState(2401);
+    s.meta.coins = coins;
+    s.farm.plots = [];
+    for (let i = 0; i < plots; i++) s.farm.plots.push({ state: 'empty', growth: 0 });
+    return s;
+  };
+
+  // V14：成功路径 —— 钱、块数、返回值三处都要对得上
+  const s = mk(5000, 9);
+  const r = buyFarmPlot(s);
+  eq(r.ok, true, 'V14 钱够时开垦成功');
+  eq(r.cost, P, 'V14 返回实际花费');
+  eq(r.plots, 10, 'V14 返回开垦后的块数');
+  eq(s.meta.coins, 5000 - P, 'V14 扣掉 3000 铜币');
+  eq(s.farm.plots.length, 10, 'V14 田地 +1');
+  ok(!!s.farm.plots[9], 'V14 第 10 块田存在（不是只改了长度）');
+  if (s.farm.plots[9]) {
+    eq(s.farm.plots[9].state, 'empty', 'V14 新开的地是空地');
+    eq(s.farm.plots[9].growth, 0, 'V14 新开的地生长进度 0');
+  }
+
+  // V15：差 1 铜币 —— 拒绝，且不能扣钱/加地
+  const poor = mk(P - 1, 9);
+  const rPoor = buyFarmPlot(poor);
+  eq(rPoor.ok, false, 'V15 2999 铜币买不到 3000 的地');
+  eq(rPoor.reason, '铜币不够', 'V15 原因写明铜币不够');
+  eq(poor.meta.coins, P - 1, 'V15 失败不扣钱');
+  eq(poor.farm.plots.length, 9, 'V15 失败不加地');
+
+  // V15：满额 —— 钱再多也不许越界
+  const full = mk(99999, C.FARM.maxPlots);
+  const rFull = buyFarmPlot(full);
+  eq(rFull.ok, false, 'V15 满 27 块后买不到');
+  eq(rFull.reason, '田地已经开垦到上限', 'V15 原因写明上限');
+  eq(full.meta.coins, 99999, 'V15 满额失败不扣钱');
+  eq(full.farm.plots.length, C.FARM.maxPlots, 'V15 满额不越界');
+
+  // 连买到上限：正好 18 次，第 19 次被挡下（上限是硬边界，不是"差不多"）
+  const grow = mk(P * 20, 9);
+  let bought = 0;
+  while (buyFarmPlot(grow).ok) bought++;
+  eq(bought, C.FARM.maxPlots - 9, '从 9 块连买 18 次到达上限');
+  eq(grow.farm.plots.length, 27, '停在 27 块');
+  eq(grow.meta.coins, P * 20 - (C.FARM.maxPlots - 9) * P, '刚好扣了 18 块的钱');
+
+  // 第 2 页的地是真能种的：plant 直接吃绝对索引
+  const seeded = mk(0, 10);
+  seeded.meta.seeds = 5;
+  const rPlant = L.plant(seeded, 9);
+  eq(rPlant.ok, true, '第 2 页第 1 块（绝对索引 9）能播种');
+  eq(seeded.farm.plots[9].state, 'growing', '播种后这块地进入生长');
+}
+
+section('V17/V18. 农场分页：页数由块数推导，页码要夹住（Task 24）');
+{
+  ok(typeof L.farmPageCount === 'function', 'logic 导出 farmPageCount');
+  ok(typeof L.farmPageOf === 'function', 'logic 导出 farmPageOf（漏导出时场景拿到 undefined）');
+  const pageCount = typeof L.farmPageCount === 'function'
+    ? L.farmPageCount : function () { return -1; };
+  const pageOf = typeof L.farmPageOf === 'function'
+    ? L.farmPageOf : function () { return -1; };
+
+  const withPlots = function (n) {
+    const s = L.createState(2500);
+    s.farm.plots = [];
+    for (let i = 0; i < n; i++) s.farm.plots.push({ state: 'empty', growth: 0 });
+    return s;
+  };
+
+  eq(pageCount(L.createState(2501)), 1, '新档 9 块 = 1 页');
+  eq(pageCount(withPlots(10)), 2, '10 块 = 2 页');
+  eq(pageCount(withPlots(18)), 2, '18 块 = 2 页（正好两页）');
+  eq(pageCount(withPlots(19)), 3, '19 块 = 3 页');
+  eq(pageCount(withPlots(27)), 3, '27 块 = 3 页');
+
+  eq(pageOf(0), 0, '第 1 块在第 1 页');
+  eq(pageOf(8), 0, '第 9 块在第 1 页');
+  eq(pageOf(9), 1, 'V18 第 10 块在第 2 页');
+  eq(pageOf(26), 2, '第 27 块在第 3 页');
+
+  // 页码持久化：翻页后存档要记得，重进农场还在那一页
+  const s10 = withPlots(10);
+  s10.farm.page = 1;
+  eq(JSON.parse(L.serialize(s10)).farm.page, 1, '存档里带着当前页码');
+
+  // 存档码是玩家可达的注入入口：页码非法时要夹到合法范围
+  const obj = JSON.parse(L.serialize(withPlots(9)));
+  obj.farm.page = 5;
+  eq(L.deserialize(JSON.stringify(obj)).farm.page, 0, '只有 1 页时 page=5 被夹回 0');
+  obj.farm.page = -3;
+  eq(L.deserialize(JSON.stringify(obj)).farm.page, 0, '负页码被夹回 0');
+  obj.farm.page = 'x';
+  eq(L.deserialize(JSON.stringify(obj)).farm.page, 0, '非数字页码规整为 0');
+  obj.farm.page = 1.7;
+  eq(L.deserialize(JSON.stringify(obj)).farm.page, 0, '小数页码被夹成整数页码');
+
+  const o2 = JSON.parse(L.serialize(withPlots(18)));
+  o2.farm.page = 1;
+  eq(L.deserialize(JSON.stringify(o2)).farm.page, 1, '18 块（2 页）时第 2 页保留');
+  o2.farm.page = 9;
+  eq(L.deserialize(JSON.stringify(o2)).farm.page, 1, '页码超过末页时夹到末页');
+}
+
+section('V17. 翻页后第 2 页的地照常生长（endRun 遍历整张 plots）');
+{
+  const s = L.createState(2600);
+  s.farm.plots = [];
+  for (let i = 0; i < 10; i++) s.farm.plots.push({ state: 'empty', growth: 0 });
+  s.meta.seeds = 10;
+  eq(L.plant(s, 9).ok, true, '先在第 2 页种下');
+  L.startRun(s, 'grass'); L.endRun(s, true);
+  eq(s.farm.plots[9].state, 'growing', '一局后仍在生长（growth 1/2）');
+  L.startRun(s, 'grass'); L.endRun(s, true);
+  eq(s.farm.plots[9].state, 'mature', '两局后成熟 —— endRun 没有只遍历前 9 块');
 }
 
 // ---------------------------------------------------------------- 汇总

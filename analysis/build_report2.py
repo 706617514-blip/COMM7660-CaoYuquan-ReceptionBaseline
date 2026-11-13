@@ -105,8 +105,7 @@ def check_numbers() -> dict:
                           " base:Object.keys(C.EQUIPMENT).length,"
                           " special:Object.keys(C.EQUIP_FX).length,"
                           " slots:C.EQUIP_SLOTS.length,"
-                          " cut:C.EQUIP_DROP.chance*100,"
-                          " refund:Math.round(C.EQUIP_DROP.refundRatio*100)"
+                          " cut:C.EQUIP_DROP.chance*100"
                           "}))"],
                          cwd=ROOT, capture_output=True, text=True).stdout
     import json as _json
@@ -116,7 +115,6 @@ def check_numbers() -> dict:
     vals["equip_special"] = eq["special"]
     vals["equip_slots"] = eq["slots"]
     vals["drop_pct"] = int(round(eq["cut"]))
-    vals["refund_pct"] = eq["refund"]
 
     return vals
 
@@ -299,9 +297,11 @@ def build(pilot: Path | None) -> None:
          f"{v['equip_special']} special items; upgrades scale strength parameters only, never "
          "the mechanic, so a stronger item is not a different one. Special items carry one of "
          "fourteen effects, and two grant a skill rather than a stat, so the weapon slot can "
-         f"change what the player can do. Items drop at {v['drop_pct']}% and a duplicate is "
-         f"refunded at {v['refund_pct']}%, because otherwise a drop is worthless once the "
-         "collection is complete. Bosses are excluded from drops, since a farmable boss would "
+         f"change what the player can do. Items drop at {v['drop_pct']}% and every drop enters "
+         "the bag, duplicates included. Nothing is converted to coins automatically: the player "
+         "sells a spare for half its base price plus half the upgrade money already spent on it, "
+         "so a drop stays worth collecting once the collection is complete. Bosses are excluded "
+         "from drops, since a farmable boss would "
          "make repetition optimal. Two asserted bounds stop the layer from flattening the "
          "ladder it feeds: upgrades may reduce damage taken but never increase it, and a full "
          "basic set stays under twice the unarmoured damage and two and a half times the "

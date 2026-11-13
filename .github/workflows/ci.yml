@@ -168,6 +168,20 @@ jobs:
         # 多档案互不覆盖、存档码往返、基地区域判定与动作可用性
         run: node tests/test_game_meta.js
 
+      - name: Backpack capacity, paging and selling rules
+        # 35 格分页、6 页上限、卖价公式、批量保留一件
+        run: node tests/test_bag.js
+
+      - name: Synthesised audio voices
+        # 17 个音效的声部参数、25ms 节流、静音是压增益而不是 close ctx。
+        # 用 AudioContext 桩跑，不需要真声卡；真浏览器那层在 smoke 里。
+        run: node tests/test_audio.js
+
+      - name: Boss walk and arm-raise pose (pure functions)
+        # 手臂六节方向、走路/蓄力/下砸四态判据、9 条不变量（抬手高度、
+        # 起伏幅度、footfall 频率、纯函数）。这些以前只有肉眼看截图能验。
+        run: node tests/test_bosspose.js
+
       - name: Page wiring under a DOM shim
         # 逻辑测试抓不到接线错误：id 拼错、事件没绑、面板按钮点了没反应。
         # 这一层会执行 index.html 里真实的 inline 脚本（Phaser 用最小桩）。
@@ -262,9 +276,12 @@ jobs:
         # 新断言不误报正确代码。三步任一不符即失败。
         run: python analysis/demo_failed_test.py
 
-      - name: Balance ladder is monotone
+      - name: Balance numbers reproduce from repo scripts
         # 平衡数字必须由仓库内脚本复现（tests/balance_report.js），
         # 不允许存在"报告里写了、仓库里算不出"的胜率。
+        # 注意本步骤只**打印**表格、不断言单调性：n=20 单步长时密林会随机给出
+        # 0%~80%，在这里断言会让 CI 随机变红。阶梯单调性由 test_game_logic.js
+        # 的终局护栏与难度假说断言负责（那里用 n=200×4，颗粒度 0.125pp）。
         run: node tests/balance_report.js 20 1
 
   compliance:

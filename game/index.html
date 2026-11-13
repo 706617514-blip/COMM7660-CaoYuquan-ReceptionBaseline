@@ -84,8 +84,13 @@
     font-size:10px;color:#9fe8b0;font-variant-numeric:tabular-nums;display:none}
   .po.active .t{display:block}
 
+  /* 下边留 64px：底部的提示条（#toast）就停在那块空白里。
+     原来是 20px 四周等距 + toast 在 bottom:96px，于是提示条正好压在卡片
+     最后一行上 —— 在商店买完田地，刚变的「当前 10/27 块」被自己那声
+     「已购买」盖住，玩家得等两秒才能看见结果。 */
   .overlay{position:absolute;inset:0;display:none;align-items:center;
-    justify-content:center;background:#060a0ec2;backdrop-filter:blur(4px);padding:20px}
+    justify-content:center;background:#060a0ec2;backdrop-filter:blur(4px);
+    padding:20px 20px 64px}
   .overlay.on{display:flex}
   .card{width:100%;max-width:520px;max-height:100%;overflow:auto;
     background:linear-gradient(180deg,#18202b,#121820);
@@ -100,13 +105,33 @@
   .x:hover{background:#2c3a4a}
   .card-b{padding:14px 18px 18px}
 
-  .act{display:flex;align-items:center;gap:12px;padding:11px 12px;
+  /* 行高钉在 66：图标列现在跟着内容走（最高 44，见下面 .act .ico），文字两行
+     只有 38 —— 不钉的话同一屏里会同时出现 62 和 68 两种行高，整列参差。
+     66 让"只有文字"的行（38+24）和"图标顶到 44"的行（44+24）落在同一高度上
+     （±2 来自行高取整）。 */
+  .act{display:flex;align-items:center;gap:12px;padding:11px 12px;min-height:66px;
     border-radius:10px;background:#141b24;border:1px solid #232f3c;margin-bottom:8px}
   .act.ult{border-color:#4b3a24;background:#1b1610}
   .act .txt{flex:1;min-width:0}
+  /* 行首贴图（Task 17，Task 18 改成"跟着图走"的盒子）。
+     宽度不再写死 28px：装备贴图按内容紧裁切 + 整数倍放大后，每一件的宽高比
+     都不一样（头部是横带、剑是竖条）。硬盒 + object-fit:contain 会把横带压回
+     0.7 倍以下，那正是"缩成一条色带"的来源。改成 max-* 之后图片按自身比例
+     落进 32×44 这一列，有图/没图两行不会参差。
+     pixelated：画的是整数倍放大过的位图，边缘要保住，别让浏览器再插一层模糊。
+     靠 .act 的 gap 与右侧文字隔开，不额外加 margin（否则两处相加变 22px）。 */
+  .act .ico{width:auto;height:auto;max-width:32px;max-height:44px;
+    object-fit:contain;image-rendering:pixelated;flex:0 0 auto}
   .act .t{font-size:13.5px;color:#e6eef6}
   .act .s{font-size:11px;color:var(--dim);margin-top:3px;line-height:1.45}
   .act .why{font-size:11px;color:var(--red);margin-top:3px}
+  /* 兵器架页签：一排小胶囊，选中态靠底色+描边区分（不靠颜色单一维度） */
+  .tabs{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+  .tab{padding:5px 11px;border-radius:8px;border:1px solid #2b3a49;
+    background:#151d26;color:#9fb2c4;font-size:12px;font-family:inherit;
+    cursor:pointer;transition:background .15s,color .15s,border-color .15s}
+  .tab:hover{background:#1d2833;color:#dbe6f0}
+  .tab.on{background:#26384a;border-color:#4a6a86;color:#eaf3fb}
   .buy{flex:0 0 auto;min-width:78px;padding:8px 12px;border-radius:9px;
     border:1px solid #3a6b46;background:linear-gradient(180deg,#2f6b3c,#24512f);
     color:#eaf7ee;font-size:12.5px;cursor:pointer;font-family:inherit;
@@ -153,10 +178,20 @@
   .pfoot button{margin-top:6px;padding:6px 12px;border-radius:7px;border:1px solid #33455a;
     background:#1b2431;color:#c9d6e2;font-size:11.5px;cursor:pointer;font-family:inherit}
 
+  /* z-index:70 是必须的：toast 与 #bag 都在 #frame 里（#frame 不是 stacking
+     context，所以两者的 z-index 直接比较）。#bag 是 40，toast 原先没有 z-index，
+     于是右键出售的反馈被面板整个盖住 —— 玩家以为卖出去了却什么都没发生（F1）。
+     70 同时高于 #bag 40 与 #bag-tip 60：提示条永远画在最上层。 */
+  /* 96px 是给跑图时让开底部技能条（#skills 在 bottom:14px、高 60px）。
+     但面板打开时这个位置正好压在卡片最后一行上 —— 在商店买完田地，
+     刚变的「当前 10/27 块」被自己那声「已购买」盖住，要等两秒才看得见。
+     所以面板（.overlay）打开期间改成贴着画框底边：那条缝是 .overlay
+     的 padding-bottom:64px 空出来的，卡片不会伸到那里。 */
+  #panel.on ~ #toast{bottom:14px}
   #toast{position:absolute;left:50%;bottom:96px;transform:translateX(-50%) translateY(8px);
     background:#0b1117e6;border:1px solid #3a4a5c;color:#e2ecf5;padding:8px 16px;
     border-radius:20px;font-size:12.5px;opacity:0;transition:opacity .2s,transform .2s;
-    pointer-events:none;white-space:nowrap}
+    pointer-events:none;white-space:nowrap;z-index:70}
   #toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
   #toast.bad{border-color:#7a3a34;color:#ffc7c0}
 
@@ -166,6 +201,230 @@
   footer a{color:var(--gold)}
   kbd{background:#1b2431;border:1px solid #3a4a5c;border-bottom-width:2px;border-radius:4px;
     padding:1px 6px;font-size:11px;font-family:ui-monospace,Menlo,monospace;color:#dfe8f0}
+  /* ---- 背包浮层（设计 §4.1–§4.3）----
+     470 × 500，约占 960×600 画布的 40.8%（V2 的验收值是"约 40%"）。
+     初稿写的 620×540 是算错的：620×540 / 576000 = 58%，纵向吃掉画布 90%，
+     一开就把基地挡掉大半，所以收窄（Task 10b）。
+     尺寸的唯一来源是这里：baghud.js 的夹边读 offsetWidth/Height，
+     PANEL_W/PANEL_H 只是 display:none 时的兜底，改这里必须同步那两个常量。
+     用 position:fixed 而不是 absolute：
+     #frame 是 960/600 等比缩放的盒子，absolute 坐标会跟着缩放，拖动时
+     指针位移和面板位移对不上（窗口一大一小就明显错位）。
+     min(…, 100vw/vh - 24px) 是给小窗口用的：面板比视口还大时，夹边只能把它
+     贴在左上角，右/下照样越界，而且 position:fixed 的元素滚不到（F3）。 */
+  #bag{position:fixed;left:0;top:0;display:none;
+    width:min(470px, calc(100vw - 24px));height:min(500px, calc(100vh - 24px));
+    flex-direction:column;z-index:40;border-radius:14px;overflow:hidden;
+    background:linear-gradient(180deg,#18202b,#11171f);color:var(--ink);
+    font-size:12.5px;user-select:none;
+    box-shadow:0 0 0 1px #33455a, 0 26px 60px -20px #000, 0 0 60px -30px var(--ember)}
+  #bag.on{display:flex}
+
+  /* 标题栏整条都是拖动把手 —— 只有标题文字能拖的话，玩家会以为面板卡住了 */
+  #bag-bar{flex:0 0 34px;display:flex;align-items:center;gap:12px;
+    padding:0 8px 0 14px;cursor:grab;touch-action:none;
+    background:linear-gradient(180deg,#1f2937,#16202b);border-bottom:1px solid #26323f}
+  #bag-bar.grabbing{cursor:grabbing}
+  #bag-bar .t{font-size:13.5px;font-weight:700;letter-spacing:.6px}
+  #bag-bar .n{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums}
+  #bag-bar .sp{flex:1}
+  #bag-x{background:#222d3a;border:1px solid #33455a;color:#c9d6e2;width:24px;height:24px;
+    border-radius:7px;cursor:pointer;font-size:12px;line-height:1;font-family:inherit}
+  #bag-x:hover{background:#2c3a4a}
+
+  #bag-main{flex:1;display:flex;min-height:0;padding:8px;gap:10px}
+
+  /* 左栏 40%：上 70% = 角色图 + 左右各 5 个装备槽（设计 §4.1：5 个槽 × 2 侧），
+     下 30% = 当前四项数值（装备一变就重画，见 baghud 的 refresh） */
+  #bag-left{flex:0 0 calc(40% - 5px);display:flex;flex-direction:column;
+    gap:6px;min-width:0;min-height:0}
+  #bag-wear{position:relative;height:70%;min-height:0;border-radius:10px;background:#0d131a;
+    box-shadow:inset 0 0 0 1px #24303d;display:flex;align-items:center;
+    justify-content:space-between;gap:4px;padding:8px 6px;box-sizing:border-box}
+  #bag-wear .col{display:flex;flex-direction:column;gap:5px;flex:0 0 auto}
+  #bag-wear .slot{position:relative;width:34px;height:27px;border-radius:7px;
+    background:#111923;box-shadow:inset 0 0 0 1px #24303d;display:flex;
+    align-items:center;justify-content:center;overflow:hidden}
+  #bag-wear .slot .k{font-size:9.5px;color:#4a5a6a;letter-spacing:.5px}
+  /* 已穿戴的槽亮起（可点 = 卸下）。未穿戴的槽只留一个暗色空位：
+     玩家要能一眼看出"这个部位空着"，而不是看到一片同样的方框。 */
+  #bag-wear .slot.on{background:#182231;cursor:pointer;
+    box-shadow:inset 0 0 0 1px #6b5a35, 0 0 10px -4px var(--ember)}
+  #bag-wear .slot.on:hover{box-shadow:inset 0 0 0 1px #8a7442, 0 0 14px -4px var(--ember)}
+  #bag-wear .slot img{position:absolute;inset:0;margin:auto;width:20px;height:28px;
+    object-fit:contain;image-rendering:pixelated;pointer-events:none}
+  #bag-wear .slot .lv{position:absolute;right:2px;bottom:0;font-size:9px;color:#c9d6e2;
+    text-shadow:0 1px 2px #000;font-variant-numeric:tabular-nums}
+  /* 角色图：身体贴图 + 五个装备层按 LAYER_ORDER 叠起来，就是场景里那个人 */
+  #bag-wear .doll{position:relative;flex:1 1 auto;height:100%;min-width:0}
+  #bag-wear .doll img{position:absolute;inset:0;margin:auto;width:100%;height:100%;
+    object-fit:contain;image-rendering:pixelated;pointer-events:none}
+
+  /* 当前数值（设计 §4.1：装备变化时立即更新） */
+  #bag-stats{flex:1;min-height:0;border-radius:10px;background:#0d131a;
+    box-shadow:inset 0 0 0 1px #24303d;display:flex;flex-direction:column;
+    justify-content:center;gap:3px;padding:6px 10px;box-sizing:border-box;
+    font-size:11.5px;color:#93a5b7}
+  #bag-stats .row{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+  #bag-stats .row b{color:#dfe8f0;font-weight:600;font-variant-numeric:tabular-nums}
+
+  /* 右栏 60%：页签 + 5×7 网格 + 分页条 */
+  #bag-right{position:relative;flex:1;display:flex;flex-direction:column;
+    gap:4px;min-width:0;min-height:0}
+  /* 七个页签必须一行放得下。面板从 620 收到 470 后右栏只剩约 267px，
+     而 7 个页签按内容宽度要 311px —— overflow:hidden 会把最后一个「特殊」
+     直接裁掉（点得到、看不见）。所以改成等分：flex:1 1 0 让七个页签平分行宽，
+     任何字号下都不会有谁被挤出去。 */
+  #bag-tabs{flex:0 0 24px;display:flex;gap:3px;overflow:hidden}
+  #bag-tabs .tab{flex:1 1 0;min-width:0;background:#161e28;border:1px solid #2a3745;
+    color:#9db0c4;border-radius:7px;padding:0 4px;font-size:11.5px;font-family:inherit;
+    cursor:pointer;white-space:nowrap;line-height:22px}
+  #bag-tabs .tab:hover{color:#d7e4f0;border-color:#3c5064}
+  #bag-tabs .tab.on{background:#2b3a4c;color:var(--gold);border-color:#4a5f77}
+
+  /* 网格：5 列 × 固定 7 行，列宽 48px（右栏收窄到约 267px，5x48+4x2 刚好放下）；
+     行高用 1fr 让网格吃掉右栏剩余高度。
+     不能写死行高 —— 页签下面的分页条要占 24px，写死会把第 7 行顶出面板。
+     overflow:auto 是给小窗口兜底的：面板被 min() 压小、行高不够时网格自己滚，
+     而不是把下面几行裁掉（F3）。
+     格数恒为 35（翻页只换内容），空格也画出来（暗色凹槽），
+     否则格数随内容变化，玩家没法判断还剩几格。 */
+  #bag-grid{flex:1 1 auto;min-height:0;display:grid;overflow:auto;
+    grid-template-columns:repeat(5,48px);grid-template-rows:repeat(7,1fr);
+    gap:2px;border-radius:10px;justify-content:start;align-content:stretch;
+    box-shadow:0 0 0 1px #24303d}
+  #bag .cell{position:relative;display:flex;align-items:center;justify-content:center;
+    border-radius:5px;background:#131b24;box-shadow:inset 0 0 0 1px #1d2734;
+    overflow:hidden}
+  #bag .cell.empty{background:#0e141b;box-shadow:inset 0 1px 3px #05080b}
+  #bag .cell.ult{box-shadow:inset 0 0 0 1px #5a4126, 0 0 10px -4px var(--ember)}
+  #bag .cell.pickable{cursor:pointer}
+  #bag .cell.sel{box-shadow:inset 0 0 0 1px var(--gold), 0 0 10px -4px var(--gold)}
+  /* 穿在身上的、以及每个 id 的最后一件：批量出售里不可勾选。
+     灰掉而不是藏起来 —— 玩家得看见"它在这儿，只是不能卖"，才有解释。 */
+  #bag .cell.worn{opacity:.42}
+  #bag .cell.keep{opacity:.72}
+  #bag .cell img{width:32px;height:100%;max-height:46px;object-fit:contain;
+    image-rendering:pixelated;pointer-events:none}
+  /* 贴图缺失（还没烘好 / 新装备没画）时的占位：虚线框 + 名字前两字，
+     比一格纯黑好判断 —— 那一格是真的有空，只是没画出来 */
+  #bag .cell.noart{box-shadow:inset 0 0 0 1px #33414f}
+  #bag .cell .ph{font-size:12px;color:#4a5a6a}
+  #bag .cell .lv{position:absolute;right:2px;bottom:1px;font-size:9.5px;
+    color:#c9d6e2;text-shadow:0 1px 2px #000;font-variant-numeric:tabular-nums}
+  #bag .cell .pick{position:absolute;left:3px;top:3px;width:14px;height:14px;
+    border-radius:4px;background:#0b1118f2;box-shadow:inset 0 0 0 1px #3c5064;
+    font-size:10px;line-height:14px;text-align:center;color:#0d131a;pointer-events:none}
+  #bag .cell.sel .pick{background:var(--gold);box-shadow:inset 0 0 0 1px #c9a15a}
+
+  /* 页脚：分页条留在右栏，宽度跟网格走。 */
+  #bag-pagebar{flex:0 0 24px;display:flex;align-items:center;gap:5px;
+    padding:0 2px;overflow:hidden}
+  /* 批量条是**面板级**的一条，横跨面板全宽（Task 16）。
+     它原先住在右栏里：右栏只有约 267px，而内容要 334px（零选）/ 362px（选中 2 件），
+     多出来的部分被 #bag 的 overflow:hidden 切掉 —— 「确认」「取消」画在面板外，
+     真鼠标点上去命中的是 BODY。移到 #bag 下之后可用宽度 = 470 - 2x8 = 454 > 362。
+     高度 28 = 按钮 20 + 底部 8 内边距；右栏因此省下原来那条 bar 的 24px 槽位，
+     面板总高 500 与网格高度 394 都保持不变（smoke 的 batchGridH 盯着这一点）。
+     overflow:visible 是故意的：这一层不再负责裁剪，万一还有东西放不下，
+     它会被命中测试当场抓住，而不是悄悄消失。 */
+  #bag-batchbar{flex:0 0 28px;display:flex;align-items:center;gap:5px;
+    padding:0 8px 8px;overflow:visible}
+  #bag-pagebar.off,#bag-batchbar{display:none}
+  #bag-batchbar.on{display:flex}
+  #bag-pagebar .page-n{font-size:11px;color:#93a5b7;font-variant-numeric:tabular-nums}
+  #bag-pagebar .sp,#bag-batchbar .sp{flex:1}
+  #bag-batchbar .sum{font-size:11px;color:#c9d6e2;white-space:nowrap;
+    font-variant-numeric:tabular-nums}
+  /* 小按钮：页脚和标题栏共用一套外观 */
+  #bag .b{background:#222d3a;border:1px solid #33455a;color:#c9d6e2;border-radius:6px;
+    height:20px;padding:0 7px;font-size:11px;font-family:inherit;line-height:18px;
+    cursor:pointer;white-space:nowrap}
+  #bag .b:hover{background:#2c3a4a;color:#eaf2f9}
+  #bag .b[disabled]{opacity:.4;cursor:default}
+  #bag .b.ok{background:#2f4a35;border-color:#3f6b48;color:#cfe9c8}
+  #bag .b.ok:hover{background:#3a5a41}
+  #bag-tools{display:flex;align-items:center;gap:6px}
+  #bag-tools.off{display:none}
+
+  /* 悬停浮层（设计 §4.3）。挂在 #bag 外面：面板有 overflow:hidden，
+     贴着边缘那一格的浮层会被裁掉半截。 */
+  #bag-tip{position:fixed;left:0;top:0;z-index:60;display:none;max-width:224px;
+    padding:7px 10px;border-radius:9px;background:#0b1118f2;color:#d7e4f0;
+    font-size:11.5px;line-height:1.55;pointer-events:none;
+    box-shadow:0 0 0 1px #3c5064, 0 14px 30px -12px #000}
+  #bag-tip.on{display:block}
+  #bag-tip .n{font-size:12.5px;font-weight:700;color:var(--gold);margin-bottom:2px}
+  #bag-tip .r{color:#93a5b7}
+
+  /* 空分类提示盖在网格上：坐标直接取网格的位置（页签 24 + 间距 4），
+     不靠百分比反推 —— 反推出来的位置在窗口尺寸一变就和网格错开。 */
+  #bag-empty{position:absolute;left:0;top:28px;right:0;bottom:28px;
+    display:none;align-items:center;justify-content:center;
+    border-radius:10px;background:#0d131ac2;color:#6d7f90;font-size:12px;
+    pointer-events:none}
+  #bag-empty.on{display:flex}
+
+  /* ---------------------------------------------------------------
+     ESC 菜单（Task 13 / 设计 §5.6）
+     z-index 72：要盖住背包（40）、悬停浮层（60）、结算卡与提示条（70）。
+     显隐只用 class（display:none ↔ flex）：inline style 会被 resize/复位的
+     代码顺手清掉，class 不会。
+     --------------------------------------------------------------- */
+  #esc{position:absolute;inset:0;z-index:72;display:none;align-items:center;
+    justify-content:center;background:#060a0ec2;backdrop-filter:blur(4px);padding:20px}
+  #esc.on{display:flex}
+  .esc-card{width:100%;max-width:340px;padding:14px;
+    background:linear-gradient(180deg,#18202b,#121820);border-radius:14px;
+    box-shadow:0 0 0 1px #33455a, 0 22px 50px -18px #000}
+  .esc-h{padding:2px 4px 12px}
+  .esc-h h2{margin:0;font-size:15px;letter-spacing:3px;color:#dbe6f0}
+  .esc-h .sub{font-size:11px;color:var(--dim);margin-top:3px;letter-spacing:0}
+  #esc-list.off,#esc-settings.off{display:none}
+  .esc-row{display:block;width:100%;box-sizing:border-box;margin-bottom:8px;
+    padding:13px 14px;border-radius:10px;text-align:left;
+    background:#141b24;border:1px solid #232f3c;color:#e6eef6;
+    font-family:inherit;font-size:14px;letter-spacing:2px;cursor:pointer}
+  .esc-row:last-child{margin-bottom:0}
+  .esc-row:hover{background:#1d2836;border-color:#3c5166}
+  .esc-row:focus-visible{outline:none;border-color:#6fb1e0;
+    box-shadow:0 0 0 2px #6fb1e055}
+  /* 「退出战斗」是破坏性动作：颜色上先和其它行分开，别让手指顺手点过去 */
+  .esc-row.quit{color:#ffb4a8;border-color:#4a2b26;background:#1b1210}
+  .esc-row.quit:hover{background:#261713;border-color:#7a3a2e}
+
+  /* 滑块：左侧"已划过"的部分填绿（--fill 由脚本按百分比写），右侧是轨道底色。
+     渐变画在 input 自身而不是 ::-webkit-slider-runnable-track 上：
+     轨道伪元素在部分浏览器里拿不到自定义属性，而且 getComputedStyle(input)
+     读不到伪元素的背景 —— 测试与调试都没法验证"绿色到底有没有画上"。
+     圆钮用 ::-webkit-slider-thumb（Chromium/Electron 唯一的钩子）。 */
+  .vol-row{display:flex;align-items:center;gap:10px;margin:16px 2px 6px}
+  .vol-lab{width:46px;font-size:13px;color:#cfdae6;letter-spacing:1px}
+  .vol-val{width:34px;text-align:right;font-size:13px;color:var(--gold);
+    font-variant-numeric:tabular-nums}
+  input[type=range].vol{-webkit-appearance:none;appearance:none;flex:1;height:22px;
+    margin:0;padding:0;border:none;outline:none;cursor:pointer;
+    background-color:transparent;
+    background-image:linear-gradient(to right,
+      #7fc45c 0%, #7fc45c var(--fill,30%), #24313f var(--fill,30%), #24313f 100%);
+    background-size:100% 8px;background-position:center center;
+    background-repeat:no-repeat;border-radius:5px;
+    box-shadow:inset 0 0 0 1px #3a4a5c}
+  input[type=range].vol::-webkit-slider-runnable-track{height:8px;
+    background:transparent;border-radius:4px}
+  input[type=range].vol::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
+    width:16px;height:16px;margin-top:-4px;border:none;border-radius:50%;
+    background:#f2f7fb;box-shadow:0 0 0 3px #161d26, 0 2px 6px -1px #000}
+  input[type=range].vol:focus-visible::-webkit-slider-thumb{
+    box-shadow:0 0 0 3px #161d26, 0 0 0 5px #6fb1e0}
+  /* 没有 BGM：滑块是"先落地"的通道，界面必须自己说明，别让玩家以为调了没反应 */
+  #vol-music-note{font-size:11px;color:#7d8fa1;margin:0 2px 0 56px;
+    letter-spacing:.2px}
+  .esc-foot{display:flex;justify-content:flex-end;margin-top:16px}
+  .esc-foot button{background:#222d3a;border:1px solid #33455a;color:#c9d6e2;
+    border-radius:8px;padding:8px 16px;font-family:inherit;font-size:13px;
+    cursor:pointer}
+  .esc-foot button:hover{background:#2c3a4a;color:#eaf2f9}
 </style>
 </head>
 <body>
@@ -229,13 +488,104 @@
   </div>
 
   <div id="toast"></div>
+
+  <!-- ESC 菜单（Task 13 / 设计 §5.6）。基地只有「设置」一行，战斗中有两行。
+       行由 logic.escMenuRows 决定，这里只负责长什么样：缺哪一行不要在模板里
+       用 state.phase 现判断，否则会多出第二份"什么时候算在战斗中"的口径。 -->
+  <div id="esc" role="dialog" aria-modal="true" aria-label="暂停菜单">
+    <div class="esc-card">
+      <div class="esc-h">
+        <h2 id="esc-title">菜　单</h2>
+        <div class="sub">ESC 关闭 · 游戏已暂停</div>
+      </div>
+      <div id="esc-list"></div>
+      <div id="esc-settings" class="off">
+        <div class="vol-row">
+          <span class="vol-lab">音乐</span>
+          <input id="vol-music" class="vol" type="range" min="0" max="100" step="1"
+                 aria-label="音乐音量">
+          <span class="vol-val" id="vol-music-val">30</span>
+        </div>
+        <div id="vol-music-note">暂无 BGM · 音乐通道未接入（滑块只保存设置，不发声）</div>
+        <div class="vol-row">
+          <span class="vol-lab">环境音</span>
+          <input id="vol-ambient" class="vol" type="range" min="0" max="100" step="1"
+                 aria-label="环境音音量">
+          <span class="vol-val" id="vol-ambient-val">30</span>
+        </div>
+        <div class="vol-row">
+          <span class="vol-lab">音量</span>
+          <input id="vol-master" class="vol" type="range" min="0" max="100" step="1"
+                 aria-label="总音量">
+          <span class="vol-val" id="vol-master-val">30</span>
+        </div>
+        <div class="esc-foot"><button id="esc-back" type="button">返回</button></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 背包浮层：标题栏可拖，左栏 40%（上 70% 角色 + 10 个装备槽 / 下 30% 四项数值），
+       右栏 60%（7 个页签 + 5×7 网格 + 分页条），底部一条面板级批量出售条。
+       所有格子与槽位都是空壳，
+       由 baghud.js 填内容 —— 结构写在这里是因为它是布局，不是数据。 -->
+  <div id="bag" aria-hidden="true" role="dialog" aria-modal="true" aria-label="背包">
+    <div id="bag-bar">
+      <span class="t">背包</span>
+      <span class="n" id="bag-count">0 / 35</span>
+      <span class="sp"></span>
+      <div id="bag-tools">
+        <button class="b" type="button" data-act="sort"
+          title="按部位与等级整理（特殊在前，等级高的在前）">整理</button>
+        <button class="b" type="button" data-act="batch-sell"
+          title="进入批量出售：勾选要卖的装备，确认后一并结算">批量出售</button>
+      </div>
+      <button id="bag-x" type="button" title="关闭（Tab）">✕</button>
+    </div>
+    <div id="bag-main">
+      <div id="bag-left">
+        <div id="bag-wear"></div>
+        <div id="bag-stats"></div>
+      </div>
+      <div id="bag-right">
+        <div id="bag-tabs"></div>
+        <div id="bag-grid"></div>
+        <div id="bag-pagebar">
+          <span class="page-n" id="bag-page">第 1 / 1 页</span>
+          <span class="sp"></span>
+          <button class="b" type="button" data-page="prev" title="上一页">◀</button>
+          <button class="b" type="button" data-page="next" title="下一页">▶</button>
+          <button class="b" type="button" data-act="expand"
+            title="花铜币买下下一页格子（设计 §4.7）">+扩容</button>
+        </div>
+        <div id="bag-empty"></div>
+      </div>
+    </div>
+    <!-- 批量出售条在 #bag-main 之后、作为 #bag 的直接子元素：整条横跨面板全宽。
+         塞进右栏（约 267px）时内容要 334/362px，会被 #bag 的 overflow:hidden 裁掉，
+         「确认」「取消」落到面板外点不到。它与 #bag-pagebar 从不同时可见
+         （baghud 的 paintBatch 一个 toggle on、一个 toggle off），所以仍只占一条槽位。 -->
+    <div id="bag-batchbar">
+      <button class="b" type="button" data-act="pick-dups"
+        title="勾选全部重复件（每个 id 留等级最高的一件）">重复件</button>
+      <button class="b" type="button" data-act="pick-base"
+        title="勾选全部未穿戴的基础装备">基础件</button>
+      <button class="b" type="button" data-act="toggle-all"
+        title="全选 / 全不选（每个 id 仍会强制留一件）">全选</button>
+      <span class="sp"></span>
+      <span class="sum" id="bag-sum">未勾选可卖的装备</span>
+      <button class="b ok confirm-ok" type="button" disabled>确认</button>
+      <button class="b" type="button" data-act="batch-cancel"
+        title="退出批量出售">取消</button>
+    </div>
+  </div>
+  <div id="bag-tip"></div>
 </div>
 
 <footer>
   <kbd>A</kbd><kbd>D</kbd> 左右　<kbd>W</kbd><kbd>S</kbd> 前后（景深）　
   <kbd>Shift</kbd> 加速跑　<kbd>空格</kbd> 跳　<kbd>J</kbd> 攻击／基地互动　
   <kbd>U</kbd> 裂风斩　<kbd>I</kbd> 闪现　<kbd>O</kbd> 震地　<kbd>K</kbd> 战吼　<kbd>L</kbd> 大招　
-  <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> 喝药水（回春／力量／坚壁）
+  <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> 喝药水（治疗／力量／护盾）
   <br>
   玩法：在基地走到设施前按 <kbd>J</kbd> 使用（田地会进入农场场景）；走到远征之门选难度出发。
   打怪攒种子与铜币；种田后作物 <b>2 局成熟</b>，成熟后<b>每局结算自动入账</b>（不需要手动收取）；收益用来升级强化与技能。
@@ -246,9 +596,15 @@
 
 <script src="vendor/phaser.min.js"></script>
 <script src="config.js"></script>
+<script src="sprites.js"></script>
+<script src="audio.js"></script>
 <script src="logic.js"></script>
 <script src="profile.js"></script>
 <script src="hub.js"></script>
+<script src="baghud.js"></script>
+<!-- Boss 姿态纯函数必须在 app.js 之前：app.js 求值时就抓 window.BossPose，
+     抓不到会退回"不画手臂"的空实现 —— 页面不报错，Boss 还是那张死图。 -->
+<script src="bosspose.js"></script>
 <script src="app.js"></script>
 <script>
 (function () {
@@ -408,29 +764,163 @@
     $('panel').className = 'overlay on';
   }
 
+  // ---------------------------------------------------------------
+  // 面板页签：按区域配
+  //
+  // 为什么要有：改造前"买过的"和"没买的"、"穿着的"和"躺背包的"全混在
+  // 一屏 35 行里，玩家想找"我还能买什么"得从头滑到尾。页签只影响显示，
+  // 不改变下面每一行的动作（三态仍由装备状态决定）。
+  //
+  // Task 21：兵器架从**状态**维度（未拥有/已拥有/已穿戴）换成**部位**维度
+  // （头部/躯干/背部/武器/脚部），与背包面板（baghud.js 的 TABS）逐字一致。
+  // 理由：状态维度回答的是"我买过没有"，而玩家站在兵器架前的真实问题是
+  // "我这个部位还能换什么" —— 部位是稳定维度（五件装备位不会变），状态是
+  // 随存档漂移的维度（同一件今天"未拥有"明天"已拥有"）。
+  // 旧的三个状态页签 id 直接从配置里删掉，不留兼容分支：currentTab() 发现
+  // 缓存的 id 不在配置里会自动退回 'all'。
+  //
+  // 铁匠铺是同一类问题（Task 17）：三项强化里"加伤害"和"加移速"是两种完全
+  // 不同的需求，混在一屏只能靠读说明分辨 —— 按加成方向分三页。
+  // 键是**区域 id**：没配置的区域不渲染页签条（祭坛 / 商店 / 门 / 田地）。
+  // ---------------------------------------------------------------
+  const PANEL_TABS = {
+    forgewear: [
+      { id: 'all', label: '全部' },
+      { id: 'head', label: '头部' },
+      { id: 'torso', label: '躯干' },
+      { id: 'back', label: '背部' },
+      { id: 'weapon', label: '武器' },
+      { id: 'feet', label: '脚部' },
+      { id: 'special', label: '特殊' },
+    ],
+    anvil: [
+      { id: 'all', label: '全部' },
+      { id: 'attack', label: '攻击' },
+      { id: 'defense', label: '生存' },
+      { id: 'move', label: '机动' },
+    ],
+  };
+  const panelTab = {};          // zoneId -> 当前页签 id
+
+  /**
+   * 某个区域的页签配置（拷贝一份：外部改返回值不会污染配置本身）。
+   * 没有配置的区域返回空数组 —— 渲染端据此决定"不画页签条"。
+   */
+  function panelTabsFor(zoneId) {
+    const list = PANEL_TABS[zoneId];
+    if (!list) return [];
+    return list.map(function (t) { return { id: t.id, label: t.label }; });
+  }
+
+  function currentTab(zoneId) {
+    const list = PANEL_TABS[zoneId] || [];
+    const cur = panelTab[zoneId] || 'all';
+    // 配置里没有这个 id（改过配置、或存档里留着旧页签）就退回第一页：
+    // 否则会停在一个"选不中任何按钮、却仍被当 filter 传下去"的状态。
+    return list.some(function (t) { return t.id === cur; }) ? cur : 'all';
+  }
+
+  function makeTabs(zone, s) {
+    const bar = document.createElement('div');
+    bar.className = 'tabs';
+    const cur = currentTab(zone.id);
+    panelTabsFor(zone.id).forEach(function (t) {
+      const b = document.createElement('button');
+      b.className = 'tab' + (t.id === cur ? ' on' : '');
+      b.textContent = t.label;
+      b.addEventListener('click', function () {
+        panelTab[zone.id] = t.id;
+        refreshPanel(zone, s);
+      });
+      bar.appendChild(b);
+    });
+    return bar;
+  }
+
+  /**
+   * 面板按钮上写什么。
+   *
+   * 动作自带 verb 时以它为准（购买 / 穿戴 / 升级 / 卸掉 …）：
+   * 按钮该回答的是"点了会发生什么"，而 label 是物品名，两者不是一回事。
+   * cost 大于 0 时把价格接在后面 —— 换成动词不能把价格藏掉。
+   * 没有 verb 的动作（铁匠铺 / 祭坛 / 远征）沿用原来的阶梯：挑战 / 出发 / 执行。
+   */
+  function panelButtonText(a) {
+    if (a.verb) return a.cost > 0 ? a.verb + ' · ' + a.cost : a.verb;
+    if (a.kind === 'boss') return '挑战';
+    if (a.kind === 'run') return '出发';
+    return (a.cost === null || a.cost === undefined || a.cost === 0) ? '执行' : String(a.cost);
+  }
+
+  /**
+   * 一行动作要渲染成什么（Task 17）。
+   *
+   * 抽出来是为了让"渲染规则"能被单测钉住：DOM 桩里数不到像素，但能读到
+   * "这一行会不会带图、按钮写什么、为什么不能点"。渲染与判定共用这一份，
+   * 免得 refreshPanel 里再长出一套并行逻辑、两边慢慢漂开。
+   */
+  function panelRowModel(a) {
+    return {
+      iconKey: (a && a.icon) || null,
+      label: (a && a.label) || '',
+      sub: (a && a.sub) || '',
+      buttonText: panelButtonText(a || {}),
+      enabled: !!(a && a.enabled),
+      disabledReason: (a && !a.enabled && a.disabledReason) || '',
+    };
+  }
+
   function refreshPanel(zone, s) {
     if (!panelCallback) return;
     const body = $('panelBody');
     body.innerHTML = '';
-    const actions = H.zoneActions(s, zone.id);
+    const actions = H.zoneActions(s, zone.id, currentTab(zone.id));
 
     const res = document.createElement('div');
     res.style.cssText = 'display:flex;gap:16px;font-size:12px;color:#8fa3b8;' +
       'margin-bottom:12px;font-variant-numeric:tabular-nums';
     res.innerHTML = '铜币 <b style="color:#e8b04b">' + s.meta.coins + '</b>' +
       '　种子 <b style="color:#e8b04b">' + s.meta.seeds + '</b>' +
-      '　成熟田 <b style="color:#e8b04b">' + L.maturePlots(s) + '</b>/9' +
+      '　成熟田 <b style="color:#e8b04b">' + L.maturePlots(s) + '</b>/' + s.farm.plots.length +
       '　被动 <b style="color:#e8b04b">+' + L.passiveIncome(s) + '</b>/局';
     body.appendChild(res);
 
+    // 页签只出现在配了页签的区域（兵器架 / 铁匠铺）。
+    // 兵器架是"拥有 / 穿戴"这个维度，铁匠铺是"加成方向"，
+    // 别的区域挂页签只会多一层噪音。
+    if (panelTabsFor(zone.id).length) body.appendChild(makeTabs(zone, s));
+
     actions.forEach(function (a) {
+      const m = panelRowModel(a);
       const row = document.createElement('div');
       row.className = 'act' + (a.ultimate ? ' ult' : '');
+
+      // 行首贴图（Task 17，Task 18 换成紧裁切版）。取不到就不插节点：
+      // 插一个 src 为空的 <img> 在浏览器里会画出一个破图框，
+      // 比"这一行只有文字"难看得多。
+      //
+      // 为什么先问 fitUrl：贴图是 40×60 的整身画布，头部装备只占其中一条横带，
+      // 直接塞进这一列就是一条色带（Task 17 报告 §4）。fitUrl 按内容裁切再整数倍
+      // 放大；它失败（没有引擎、取不到 2D context、像素全透明）时退回整图，
+      // 至少这一行还有图。32×44 就是 CSS 里 .act .ico 的那一列。
+      const iconKey = m.iconKey;
+      const iconUrl = iconKey
+        ? (window.SpriteLib.fitUrl(iconKey, 32, 44) || window.SpriteLib.url(iconKey))
+        : null;
+      if (iconUrl) {
+        const ico = document.createElement('img');
+        ico.className = 'ico';
+        ico.src = iconUrl;
+        ico.alt = '';            // 纯装饰：名字就在右边文字里，读屏不该读两遍
+        ico.draggable = false;   // 拖拽会顺带把整个面板选中
+        row.appendChild(ico);
+      }
+
       const txt = document.createElement('div');
       txt.className = 'txt';
-      let html = '<div class="t">' + a.label + '</div>';
-      if (a.sub) html += '<div class="s">' + a.sub + '</div>';
-      if (!a.enabled && a.disabledReason) html += '<div class="why">' + a.disabledReason + '</div>';
+      let html = '<div class="t">' + m.label + '</div>';
+      if (m.sub) html += '<div class="s">' + m.sub + '</div>';
+      if (m.disabledReason) html += '<div class="why">' + m.disabledReason + '</div>';
       txt.innerHTML = html;
 
       const btn = document.createElement('button');
@@ -439,10 +929,8 @@
       const isBoss = a.kind === 'boss';
       btn.className = 'buy' + (a.ultimate ? ' ult' : '')
         + (a.kind === 'run' ? ' free' : '') + (isBoss ? ' danger' : '');
-      btn.textContent = isBoss ? '挑战'
-        : (a.kind === 'run' ? '出发'
-        : ((a.cost === null || a.cost === undefined || a.cost === 0) ? '执行' : a.cost));
-      btn.disabled = !a.enabled;
+      btn.textContent = m.buttonText;
+      btn.disabled = !m.enabled;
       btn.addEventListener('click', function () { panelCallback.onAction(a); });
 
       row.appendChild(txt);
@@ -462,15 +950,37 @@
     const r = s.lastResult;
     if (!r) { onBack(); return; }
     const d = C.difficultyById(r.difficultyId);
-    $('panelTitle').textContent = r.won ? '清空林场' : '倒下了';
+    /*
+     * 三种结局要分得开（Task 13）：
+     *   打赢 → 清空林场；打到倒下 → 倒下了；自己按 ESC 退的 → 主动退出。
+     * 主动退出也按战败入账，但必须让玩家一眼看出是"我自己退的"、
+     * 而且拿得比倒下少（保留率按剩余血量折扣，§3.4）—— 否则会以为结算坏了。
+     */
+    const lost = !r.won;
+    const exited = lost && !!r.exited;
+    $('panelTitle').textContent = r.won ? '清空林场' : (exited ? '主动退出' : '倒下了');
     $('panelSub').textContent = '难度 ' + d.name + ' · ' + r.wavesCleared + ' / ' +
       d.waves + ' 波 · ' + r.elapsed + ' 秒';
+    const keepPct = Math.round((typeof r.keep === 'number' ? r.keep : 0.5) * 100);
+    /*
+     * 种子失效（设计 §3.5）：超过自家播种量的部分每局腐烂 25%。
+     * 必须写出来，否则玩家看到种子变少只会以为存档坏了。
+     * 只在真的腐烂时出现 —— 没腐烂也挂一句"（腐烂 0）"是噪音。
+     *
+     * 措辞必须写明"库存"：紧挨着的「种子 N」是**这一局带回来的**（loot 口径），
+     * 而腐烂量作用在**总库存**上。两个数不同口径，只写"（腐烂 M）"会读成
+     * "这批种子里烂了 M 颗"，于是「种子 0（腐烂 22）」看着像自相矛盾。
+     */
+    const spoil = (r.seedSpoiled > 0)
+      ? '<span style="color:#8fa3b8">（库存腐烂 ' + r.seedSpoiled + '）</span>' : '';
     const body = $('panelBody');
     body.innerHTML =
       '<div style="font-size:13px;line-height:2;color:#cfdae6">' +
       '带回铜币 <b style="color:#e8b04b">' + r.coins + '</b>　' +
-      '种子 <b style="color:#e8b04b">' + r.seeds + '</b>' +
-      (!r.won ? '<span style="color:#e8574a">（倒下只保留一半）</span>' : '') + '<br>' +
+      '种子 <b style="color:#e8b04b">' + r.seeds + '</b>' + spoil +
+      (exited
+        ? '<span style="color:#e8b04b">（主动退出，按剩余血量保留 ' + keepPct + '%）</span>'
+        : (lost ? '<span style="color:#e8574a">（倒下只保留一半）</span>' : '')) + '<br>' +
       (r.matured > 0
         ? '农庄有 <b style="color:#7fc45c">' + r.matured + '</b> 块田成熟了<br>'
         : (r.passive > 0
@@ -605,9 +1115,206 @@
     refreshProfileList();
   });
 
+  // ---------------------------------------------------------------- ESC 菜单 + 设置页（Task 13）
+  /*
+   * 这一层只管 DOM 与"点哪一行做什么"。**暂停/恢复归场景**（app.js 的
+   * toggleEscMenu）：菜单自己 pause 的话，关闭路径会散在两边 ——
+   * 一条走 scene.resume()，一条走菜单回调，迟早有一边漏掉，
+   * 于是玩家卡在一张关不掉的菜单前面。
+   *
+   * 为什么 ESC 的开关不在 update() 里判 justPressed('esc')：菜单会把场景
+   * pause 住，pause 之后 update 不再执行，就再也没人能把场景恢复 ——
+   * 实测按一下就永久冻结。所以按键在 createInput 的 onDown 里当场处理。
+   */
+  const escRoot = $('esc');
+  const escList = $('esc-list');
+  const escSettings = $('esc-settings');
+  let escOpenFlag = false;
+  let escView = 'root';        // 'root' | 'settings'
+  let escState = null;         // 打开时那份 state（写音量/音乐设置用）
+  let escCtx = null;           // { state, onClose, onQuit }
+  let escSaveTimer = null;
+
+  function escIsOpen() { return escOpenFlag; }
+
+  /*
+   * 绿色填充宽度写进 CSS 变量 --fill。
+   * DOM 桩（tests/test_game_page.js）的 style 只有 cssText、没有 setProperty，
+   * 所以退回直接写 background-image —— 桩里也不该抛异常，那是测试设施的问题，
+   * 不是被测代码的自由。
+   */
+  function setFill(el, pct) {
+    if (!el || !el.style) return;
+    if (typeof el.style.setProperty === 'function') {
+      el.style.setProperty('--fill', pct + '%');
+    } else {
+      el.style.backgroundImage = 'linear-gradient(to right,#7fc45c 0%,#7fc45c ' +
+        pct + '%,#24313f ' + pct + '%,#24313f 100%)';
+    }
+  }
+
+  // 把 0..1 的音量画到滑块上：value、绿色段、右端数值三处必须同步，
+  // 少一处就会出现"滑块在 70 但写着 30"这种自相矛盾的界面。
+  function paintVol(input, valEl, v) {
+    const pct = Math.max(0, Math.min(100, Math.round((Number(v) || 0) * 100)));
+    if (input) input.value = String(pct);
+    setFill(input, pct);
+    if (valEl) valEl.textContent = String(pct);
+    return pct;
+  }
+
+  function settingsDefaultVol() {
+    return (C.AUDIO && typeof C.AUDIO.volume === 'number') ? C.AUDIO.volume : 0.3;
+  }
+
+  // 环境音的出厂值来自 config（Task 23）。默认值和总音量都是 0.30，
+  // 但那只是巧合：虫鸣要能独立于总音量调，所以不能借用 settingsDefaultVol。
+  function settingsDefaultAmbient() {
+    return (C.AUDIO && C.AUDIO.ambient && typeof C.AUDIO.ambient.volume === 'number')
+      ? C.AUDIO.ambient.volume : 0.3;
+  }
+
+  function escSetView(view) {
+    escView = view === 'settings' ? 'settings' : 'root';
+    const on = escView === 'settings';
+    escSettings.className = on ? '' : 'off';
+    escList.className = on ? 'off' : '';
+    $('esc-title').textContent = on ? '设　置' : '菜　单';
+  }
+
+  function openEscSettings() {
+    const s = (escState && escState.meta && escState.meta.settings) || {};
+    paintVol($('vol-master'), $('vol-master-val'),
+      typeof s.volume === 'number' ? s.volume : settingsDefaultVol());
+    // 音乐通道的值也存（§5.5），但没有 BGM 可接，所以只画数字
+    paintVol($('vol-music'), $('vol-music-val'),
+      typeof s.music === 'number' ? s.music : settingsDefaultVol());
+    // 环境音：这条是**真的**接了声源的（营地虫鸣），画的就是存档里的值
+    paintVol($('vol-ambient'), $('vol-ambient-val'),
+      typeof s.ambient === 'number' ? s.ambient : settingsDefaultAmbient());
+    escSetView('settings');
+  }
+
+  function openEsc(rows, ctx) {
+    if (!escRoot) return false;
+    escState = (ctx && ctx.state) || null;
+    escCtx = ctx || null;
+    escList.innerHTML = '';
+    (rows || []).forEach(function (row) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'esc-row' + (row.id === 'quit' ? ' quit' : '');
+      // data-act 是"哪一行"的锚点（浏览器测试与埋点都靠它），不参与渲染判断
+      if (typeof b.setAttribute === 'function') b.setAttribute('data-act', row.id);
+      b.textContent = row.label;
+      b.addEventListener('click', function () {
+        if (row.id === 'settings') { openEscSettings(); return; }
+        if (row.id === 'quit' && escCtx && typeof escCtx.onQuit === 'function') {
+          escCtx.onQuit();
+        }
+      });
+      escList.appendChild(b);
+    });
+    escSetView('root');
+    escRoot.className = 'on';
+    escOpenFlag = true;
+    return true;
+  }
+
+  function closeEsc() {
+    if (!escOpenFlag) return false;
+    const ctx = escCtx;
+    escOpenFlag = false;
+    escView = 'root';
+    escRoot.className = '';
+    escList.innerHTML = '';
+    escSettings.className = 'off';
+    escState = null;
+    escCtx = null;
+    clearTimeout(escSaveTimer);
+    // onClose 负责恢复场景 —— 顺序必须在"关掉视图"之后，
+    // 否则场景先恢复一帧、菜单还在屏幕上，那一帧的输入会被菜单吃掉一半。
+    if (ctx && typeof ctx.onClose === 'function') ctx.onClose();
+    return true;
+  }
+
+  function saveEscSettings() {
+    if (!escState) return;
+    clearTimeout(escSaveTimer);
+    // 拖动时 input 事件一秒能来几十次，每次都写 localStorage 会卡；
+    // 但松手（change）必须立刻落盘，别让玩家关掉页面就丢设置。
+    escSaveTimer = setTimeout(function () { if (escState) save(escState); }, 120);
+  }
+
+  const volMasterEl = $('vol-master');
+  const volMusicEl = $('vol-music');
+
+  volMasterEl.addEventListener('input', function () {
+    const pct = Math.max(0, Math.min(100, Math.round(Number(volMasterEl.value) || 0)));
+    setFill(volMasterEl, pct);
+    $('vol-master-val').textContent = String(pct);
+    const v = pct / 100;
+    // 两条路都要走：音频层负责真实增益（含 clamp），meta 负责跨会话保留。
+    // 只写 meta 的话滑块动了但声音不变；只调音频的话关掉再开就回到 30%。
+    if (globalThis.GameAudio && typeof globalThis.GameAudio.setMasterVolume === 'function') {
+      globalThis.GameAudio.setMasterVolume(v);
+    }
+    if (escState && escState.meta) {
+      if (!escState.meta.settings) escState.meta.settings = { volume: v, muted: false };
+      escState.meta.settings.volume = v;
+    }
+    saveEscSettings();
+  });
+  volMasterEl.addEventListener('change', function () { if (escState) save(escState); });
+  volMusicEl.addEventListener('input', function () {
+    const pct = Math.max(0, Math.min(100, Math.round(Number(volMusicEl.value) || 0)));
+    setFill(volMusicEl, pct);
+    $('vol-music-val').textContent = String(pct);
+    // 音乐滑块只存值：本作没有 BGM（§5.5），这里**不许**去碰 GameAudio 的
+    // masterGain —— 否则玩家拖"音乐"会看到总音量一起变，那是假的。
+    if (escState && escState.meta) {
+      if (!escState.meta.settings) escState.meta.settings = { volume: settingsDefaultVol(), muted: false };
+      escState.meta.settings.music = pct / 100;
+    }
+    saveEscSettings();
+  });
+  volMusicEl.addEventListener('change', function () { if (escState) save(escState); });
+  const volAmbientEl = $('vol-ambient');
+  volAmbientEl.addEventListener('input', function () {
+    const pct = Math.max(0, Math.min(100, Math.round(Number(volAmbientEl.value) || 0)));
+    setFill(volAmbientEl, pct);
+    $('vol-ambient-val').textContent = String(pct);
+    const v = pct / 100;
+    // 与环境音滑块对应的是**虫鸣那一条通道**（ambientGain），不是总音量：
+    // 拖"环境音"时总音量必须纹丝不动，否则玩家没法单独把虫鸣调小。
+    if (globalThis.GameAudio && typeof globalThis.GameAudio.setAmbientVolume === 'function') {
+      globalThis.GameAudio.setAmbientVolume(v);
+    }
+    if (escState && escState.meta) {
+      if (!escState.meta.settings) {
+        escState.meta.settings = { volume: settingsDefaultVol(), muted: false,
+          ambient: settingsDefaultAmbient() };
+      }
+      escState.meta.settings.ambient = v;
+    }
+    saveEscSettings();
+  });
+  volAmbientEl.addEventListener('change', function () { if (escState) save(escState); });
+
+  $('esc-back').addEventListener('click', function () { escSetView('root'); });
+
   window.EmberfieldUI = {
     openPanel: openPanel, refreshPanel: refreshPanel, closePanel: closePanel,
+    // 面板的两个纯函数（Task 17）：页签配置与单行模型。
+    // 导出是为了让"铁匠铺有哪几页、每行按钮写什么"能被单测直接钉住，
+    // 而不必在 DOM 桩里反推字符串。
+    panelTabsFor: panelTabsFor, panelRowModel: panelRowModel,
     toast: toast, showHud: showHud, updateHud: updateHud, showResult: showResult, save: save,
+    // ESC 菜单（Task 13）：场景只调这四个 + isEscOpen/isEscSettings
+    openEsc: openEsc, closeEsc: closeEsc,
+    isEscOpen: escIsOpen,
+    isEscSettings: function () { return escView === 'settings'; },
+    escBack: function () { escSetView('root'); },
   };
 
   // RunScene 在结算时会注册"再来一局"的具体实现（重开同难度的一局）

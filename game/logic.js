@@ -14,7 +14,7 @@
     ? require('./config.js')
     : global.GameConfig;
 
-  const STATE_VERSION = 5;
+  const STATE_VERSION = 6;
 
   // ---------------------------------------------------------------- 随机数
   // 用可序列化的 mulberry32：种子存在 state 里，
@@ -50,15 +50,24 @@
         // 五个装备位（设计文档 §4.8）。空位是 null，不是 undefined ——
         // 后者在 JSON 往返后会消失，导致"装备了但读不到"。
         equipment: { head: null, torso: null, back: null, weapon: null, feet: null },
-        inventory: [],                   // 已拥有但未装备的装备 id 列表
-        // 背包里装备的等级。装备位上的等级直接挂在装备位上，
-        // 背包里的没有位置可挂，只能单独存一张表。
-        inventoryLevels: {},
+        // 背包条目数组（v6 起）。旧版是「id 列表 + 按 id 的等级表」，
+        // 同一 id 只能记一件，装不下重复掉落 —— 所以改成每件一条记录。
+        bag: [],
+        bagPages: 1,                     // 已解锁页数，容量 = 页数 × 每页格数
+        // 条目的 uid 计数器。必须存档（放在 meta 里），否则读档后
+        // 新条目会从 1 重新计数，和旧条目的 uid 撞车。
+        uidSeq: 0,
+        // 音效、静音与环境音（Task 12 / Task 23 读写这里）。
+        // 老档没有这些字段，迁移与 deserialize 负责补。
+        settings: { volume: 0.30, muted: false, ambient: defaultAmbient() },
       },
       farm: {
         plots: new Array(C.FARM.cols * C.FARM.rows).fill(null).map(function () {
           return { state: 'empty', growth: 0 };
         }),
+        // 农场当前页（0 基）。页数不存 —— 由 plots.length 推导，
+        // 免得"加了一块地但页码还停在旧范围"这种两份真相打架。
+        page: 0,
       },
       run: null,
       lastResult: null,
@@ -153,7 +162,7 @@
    * 统一的受伤入口。
    *
    * 之前六处伤害各自写 `p.hp -= x`，加"减伤"就必须改六遍，
-   * 漏一处就会出现"坚壁药有时管用有时不管用"这种极难复现的 bug。
+   * 漏一处就会出现"护盾药水有时管用有时不管用"这种极难复现的 bug。
    * 集中到一个函数后，减伤只在这里生效一次。
    *
    * 需要 state 是因为装备减伤、低血护盾、相位战靴都写在 meta 里；
@@ -400,6 +409,281 @@
     return { ok: true };
   }
 
+  // ---------------------------------------------------------------- 背包条目
+  // 背包是**条目数组**，每件一个 { id, level, uid }。
+  //
+  // 旧结构是「id 列表 + 按 id 的等级表」，它装不下重复件：同一件装备掉两把，
+  // 只能记一个等级、一个位置。改成条目数组之后，重复件各占一格、各升各的级。
+  // uid 是对外的稳定标识（DOM 用「第几格」做 key 会在排序后错位），
+  // 它只活在条目里，不参与战斗中掉落的其它语义。
+  // 每页格数从 config 取，逻辑层不再内联写死数值（CI 会检查这一点）。
+  const BAG_GRID_PER_PAGE = C.BAG.cellsPerPage;
+
+  /** 造一个带新 uid 的条目。uid 计数器挂在 state.meta 上，随存档走。 */
+  function bagEntry(state, id, level) {
+    return { id: id, level: level || 1, uid: nextUid(state) };
+  }
+
+  function nextUid(state) {
+    const n = (state.meta.uidSeq || 0) + 1;
+    state.meta.uidSeq = n;
+    return 'u' + n;
+  }
+
+  /**
+   * 把 bagPages 规整成 1..maxPages 的整数。
+   *
+   * 为什么要防：存档码是**玩家可达的注入入口**。旧存档里没有这个字段、
+   * 手改存档、或者跨版本读档，都可能送进 1.5 / 'abc' / 0 / 7 / null。
+   * 不拦住的话：
+   *   1.5  → 容量 52.5（半格），buyBagPage 扣钱后 coins 直接变 NaN；
+   *   'abc' → pagePrices['abc'] 是 undefined，一扣钱 coins 又是 NaN。
+   * NaN 一旦进了 coins 会顺着存档一路传下去，后面所有花钱的地方全废。
+   * 收敛而不是报错：读档不该因为一个字段就让玩家进不去游戏。
+   */
+  function normBagPages(v) {
+    const n = Math.floor(Number(v));
+    if (!Number.isFinite(n)) return 1;
+    return Math.min(Math.max(1, n), C.BAG.maxPages);
+  }
+
+  /**
+   * 环境音音量规整（Task 23）。
+   *
+   * 存档码是玩家可达的注入入口，所以这里不是"有值就用"：
+   * 只认有限数字，其余（'0.5'、null、{}、NaN）一律退回默认值 —— 退回默认
+   * 而不是退回 0，是因为"读不出来"应该是"回到出厂设置"，不是"静音"。
+   * 越界的数字夹到 [0,1]，跟总音量滑块的语义一致。
+   */
+  function normAmbient(v) {
+    if (typeof v !== 'number' || !isFinite(v)) return defaultAmbient();
+    if (v < 0) return 0;
+    if (v > 1) return 1;
+    return v;
+  }
+
+  /** 环境音的出厂值（config 里只有一处；config 缺这一块时退回 0.30）。 */
+  function defaultAmbient() {
+    return (C.AUDIO && C.AUDIO.ambient && typeof C.AUDIO.ambient.volume === 'number')
+      ? C.AUDIO.ambient.volume : 0.30;
+  }
+
+  /** 补/规整 meta.settings（老档缺字段、脏值都要能直接用）。 */
+  function normSettings(settings) {
+    const src = (settings && typeof settings === 'object') ? settings : {};
+    return {
+      volume: (typeof src.volume === 'number' && isFinite(src.volume))
+        ? Math.min(Math.max(src.volume, 0), 1) : C.AUDIO.volume,
+      muted: !!src.muted,
+      ambient: normAmbient(src.ambient),
+    };
+  }
+
+  /** 背包总格数 = 已解锁页数 × 每页格数。 */
+  function bagCapacity(state) {
+    return normBagPages(state.meta.bagPages) * BAG_GRID_PER_PAGE;
+  }
+
+  function bagCount(state) {
+    return (state.meta.bag || []).length;
+  }
+
+  function bagAt(state, index) {
+    const e = (state.meta.bag || [])[index];
+    return e ? { id: e.id, level: e.level, uid: e.uid } : null;
+  }
+
+  /**
+   * 下标落在第几页（0 基）。
+   * 分页只是"视图"，背包仍然是一个连续数组 —— 排序由 UI 决定，
+   * 逻辑层只负责回答"这一格在第几页"。
+   */
+  function pageOf(state, index) {
+    return Math.floor(index / BAG_GRID_PER_PAGE);
+  }
+
+  /**
+   * 第 page 页的 35 格。缺的补 null（DOM 渲染需要固定格数，
+   * 否则最后一页会塌成一行，格子位置随件数跳动）。
+   */
+  function pageSlice(state, page) {
+    const out = [];
+    const start = page * BAG_GRID_PER_PAGE;
+    for (let i = 0; i < BAG_GRID_PER_PAGE; i++) out.push(bagAt(state, start + i));
+    return out;
+  }
+
+  /**
+   * 买一页容量（设计 §4.7 的扩容线）。
+   *
+   * 页数是 1..maxPages；买第 N+1 页收 pagePrices[N] —— 页价表的第一项
+   * 是 0（没有"第 0 页"可买），所以买第 2 页落在 pagePrices[1]。
+   * 已到顶时返回 ok:false 而不是静默截断：静默截断会让玩家以为
+   * 钱花了页也加了，实际上什么都没发生。
+   */
+  function buyBagPage(state) {
+    // 先规整再办事：传入 1.5 / 'abc' 时若不收敛，
+    // pagePrices[那种值] 就是 undefined，一扣钱 coins 立刻变 NaN。
+    state.meta.bagPages = normBagPages(state.meta.bagPages);
+    const max = C.BAG.maxPages;
+    if (state.meta.bagPages >= max) return { ok: false, reason: '已解锁全部 ' + max + ' 页' };
+    const cost = C.BAG.pagePrices[state.meta.bagPages];
+    if (!Number.isFinite(cost)) return { ok: false, reason: '页价表缺这一档' };
+    if (state.meta.coins < cost) return { ok: false, reason: '铜币不够' };
+    state.meta.coins -= cost;
+    state.meta.bagPages += 1;
+    return { ok: true, cost: cost, pages: state.meta.bagPages };
+  }
+
+  // ---------------------------------------------------------------- 农场分页
+  /**
+   * 农场一共几页（Task 24 / 设计 §3.7）。
+   *
+   * 页数**不存**在存档里，而是由 plots.length 推导：一块地只能在某一页，
+   * 地多了页数自然多。存两份就会出现"买了地但页数没加"的裂缝。
+   * 至少 1 页：空存档或坏存档也不能让界面显示"第 1/0 页"。
+   */
+  function farmPageCount(state) {
+    const n = state && state.farm && Array.isArray(state.farm.plots)
+      ? state.farm.plots.length : 0;
+    return Math.max(1, Math.ceil(n / C.FARM.perPage));
+  }
+
+  /** 第 index 块（绝对索引）落在第几页（0 基）。 */
+  function farmPageOf(index) {
+    const i = Math.floor(Number(index));
+    if (!Number.isFinite(i) || i < 0) return 0;
+    return Math.floor(i / C.FARM.perPage);
+  }
+
+  /**
+   * 开垦一块新田地（Task 24 / 设计 §3.6）。
+   *
+   * 和 buyBagPage 同样的顺序：判上限 → 判钱 → 扣钱 → 加地。
+   * 失败路径必须零副作用：先扣钱再判上限，玩家会"钱没了地也没多"。
+   * 上限是硬边界（27 = 3 页），到顶返回原因而不是静默不做事。
+   */
+  function buyFarmPlot(state) {
+    if (!state.farm || !Array.isArray(state.farm.plots)) {
+      return { ok: false, reason: '田地数据损坏' };
+    }
+    const max = C.FARM.maxPlots;
+    if (state.farm.plots.length >= max) {
+      return { ok: false, reason: '田地已经开垦到上限' };
+    }
+    const cost = C.FARM.plotPrice;
+    if (state.meta.coins < cost) return { ok: false, reason: '铜币不够' };
+    state.meta.coins -= cost;
+    state.farm.plots.push({ state: 'empty', growth: 0 });
+    return { ok: true, cost: cost, plots: state.farm.plots.length };
+  }
+
+  /** 放一件进背包，返回落位下标；容量内满了返回 -1（由调用方决定怎么办）。 */
+  function bagAdd(state, id, level) {
+    if (!state.meta.bag) state.meta.bag = [];
+    // 同样先规整：bagAdd 是入口函数，不能假定上游已经把 bagPages 收拾干净。
+    state.meta.bagPages = normBagPages(state.meta.bagPages);
+    if (state.meta.bag.length >= bagCapacity(state)) return -1;
+    state.meta.bag.push(bagEntry(state, id, level || 1));
+    return state.meta.bag.length - 1;
+  }
+
+  function bagRemove(state, index) {
+    const bag = state.meta.bag || [];
+    if (!(index >= 0 && index < bag.length)) return { ok: false, reason: '格子里没有东西' };
+    bag.splice(index, 1);
+    return { ok: true };
+  }
+
+  function bagIndexOfUid(state, uid) {
+    const bag = state.meta.bag || [];
+    for (let i = 0; i < bag.length; i++) if (bag[i].uid === uid) return i;
+    return -1;
+  }
+
+  /** 背包里第一件该 id 的下标，没有返回 -1。 */
+  function bagIndexOfId(state, id) {
+    const bag = state.meta.bag || [];
+    for (let i = 0; i < bag.length; i++) if (bag[i].id === id) return i;
+    return -1;
+  }
+
+  // ---------------------------------------------------------------- 整理与页签过滤（§4.5）
+  /**
+   * 排序键的五段优先级（设计 §4.5 + Task 20 补的稀有度一层，顺序不可调换）：
+   *   1. 特效装备在前、基础装备在后
+   *   2. 稀有度 tier **升序**（低的在前 —— PM：「按稀有度从低到高排」）
+   *   3. 部位序 head → torso → back → weapon → feet
+   *   4. 等级**降序**（高的在前）
+   *   5. id 字典序 —— 前四条全并列时兜底，保证「同输入同输出」
+   *
+   * 第 2 段是 Task 20 补的：改前只有 kindRank → slotRank → level → id，
+   * 于是同为 base、同为武器位、同为 Lv1 时，rustySword(tier 0) 与
+   * crystalStaff(tier 4) 只按 id 字典序排，「先低级后高级」根本不成立。
+   *
+   * 前几段决定的是"哪一类排前面"，末段才决定"同一类里谁先谁后"。
+   * 只看前两段就够把同 id 排在一起：同 id 必然同 kind、同 slot、同 tier，
+   * 中间不可能夹进别的 id（等级/字典序只在同类内部起作用）。
+   */
+  function bagSortKey(entry) {
+    const def = C.equipDef(entry.id);
+    const special = !!(def && def.kind === 'special');
+    const slotRank = def ? C.EQUIP_SLOTS.indexOf(def.slot) : -1;
+    // 稀有度一层（PM：整理要「按稀有度从低到高排」）。
+    // special 件没有 tier 字段（14 件全是 undefined），它们本来就靠 kindRank
+    // 排在最前，给它们 Infinity 不会改变这个结果 —— 而如果写死成 0，
+    // 就等于宣称"特殊件稀有度最低"，那是反的。
+    const tier = def && typeof def.tier === 'number' ? def.tier : Infinity;
+    return {
+      kindRank: special ? 0 : 1,
+      tier: tier,
+      // 查不到部位（含未知 id）排到最后，而不是因为 -1 就插到队首。
+      slotRank: slotRank < 0 ? C.EQUIP_SLOTS.length : slotRank,
+      level: entry.level || 1,
+      id: entry.id,
+    };
+  }
+
+  /**
+   * 原地整理背包（设计 §4.5）。返回 void —— 排序是背包自身的状态变更，
+   * 不产生新数组，否则调用方拿到的副本和真实背包会分叉。
+   *
+   * V8 的 Array.prototype.sort 已稳定，五段比较链写完之后，
+   * 完全相同的条目之间也保持原有相对顺序，「同输入同输出」由比较链本身保证。
+   */
+  function sortBag(state) {
+    if (!state || !state.meta) return;
+    const bag = state.meta.bag || [];
+    bag.sort(function (a, b) {
+      const ka = bagSortKey(a), kb = bagSortKey(b);
+      if (ka.kindRank !== kb.kindRank) return ka.kindRank - kb.kindRank;
+      if (ka.tier !== kb.tier) return ka.tier - kb.tier;
+      if (ka.slotRank !== kb.slotRank) return ka.slotRank - kb.slotRank;
+      if (ka.level !== kb.level) return kb.level - ka.level;
+      return ka.id < kb.id ? -1 : (ka.id > kb.id ? 1 : 0);
+    });
+  }
+
+  /**
+   * 按页签过滤背包，返回**条目数组**（每项仍是 {id, level, uid}），不是 uid 列表 ——
+   * 调用方要读等级和 uid 才能渲染格子、点选穿哪一件。
+   *
+   * 'all' 返回全部；'special' 按 kind 判；其余按 def.slot 判。
+   * 空分类 / 未知页签返回空数组而不是 null：UI 拿到 null 就得处处判空。
+   *
+   * 'all' 返回浅拷贝：UI 若对结果再排序，不会顺手把真实背包也排掉。
+   */
+  function bagFilter(bag, tab) {
+    const list = bag || [];
+    if (!tab || tab === 'all') return list.slice();
+    return list.filter(function (e) {
+      const def = C.equipDef(e.id);
+      if (!def) return false;
+      if (tab === 'special') return def.kind === 'special';
+      return def.slot === tab;
+    });
+  }
+
   // ---------------------------------------------------------------- 装备
   /**
    * 某件装备当前的持有状态。
@@ -411,7 +695,7 @@
       const it = eq[C.EQUIP_SLOTS[i]];
       if (it && it.id === id) return 'equipped';
     }
-    if (state.meta.inventory.indexOf(id) >= 0) return 'owned';
+    if (bagIndexOfId(state, id) >= 0) return 'owned';
     return null;
   }
 
@@ -426,11 +710,13 @@
     if (!def) return { ok: false, reason: '没有这件装备' };
     if (equipOwned(state, id)) return { ok: false, reason: '已拥有' };
     if (state.meta.coins < def.price) return { ok: false, reason: '铜币不够' };
+    // 容量判定必须在扣钱**之前**：满包时先收钱再发现放不进去，
+    // 就是一台可无限重复的铜币黑洞，而且玩家什么都拿不到。
+    if (bagCount(state) >= bagCapacity(state)) return { ok: false, reason: '背包已满' };
     state.meta.coins -= def.price;
-    state.meta.inventory.push(id);
-    // 新买的按 1 级记账。不记的话 equipItem 读 inventoryLevels 会拿到
-    // undefined，升级过的背包件换出去再换回来就会悄悄掉级。
-    state.meta.inventoryLevels[id] = 1;
+    // 新买的按 1 级入格。等级直接记在条目上，穿戴 / 卸下都跟着条目走，
+    // 不会再出现"换出去再换回来就悄悄掉级"。
+    bagAdd(state, id, 1);
     return { ok: true, id: id };
   }
 
@@ -438,28 +724,27 @@
    * 穿上一件装备。会自动把该位原有的装备放回背包 ——
    * 否则换装会凭空销毁装备，玩家会开始害怕换装，选择就死了。
    */
-  function equipItem(state, id) {
+  function equipItem(state, id, uid) {
     const def = C.equipDef(id);
     if (!def) return { ok: false, reason: '没有这件装备' };
     if (equipOwned(state, id) === 'equipped') return { ok: false, reason: '已经装备着' };
 
-    const idx = state.meta.inventory.indexOf(id);
+    // 同 id 可能有两件（掉落会带重复品）。调用方点的是哪一件就穿哪一件，
+    // 没给 uid（或 uid 已失效）才退回"第一件同 id"——老的两参数调用行为不变。
+    let idx = uid ? bagIndexOfUid(state, uid) : -1;
+    if (idx < 0) idx = bagIndexOfId(state, id);
     if (idx < 0) return { ok: false, reason: '背包里没有' };
-    state.meta.inventory.splice(idx, 1);
+    const entry = state.meta.bag.splice(idx, 1)[0];
 
     const prev = state.meta.equipment[def.slot];
     if (prev) {
-      state.meta.inventory.push(prev.id);
-      // 换下来的装备要连同它的等级一起收回背包，否则升级成果会丢。
-      // 玩家花了铜币升到 3 级、只是换把武器试一下，回来变成 1 级，
-      // 这种惩罚会让"换装"这个核心乐趣直接废掉。
-      state.meta.inventoryLevels[prev.id] = prev.level;
+      // 换下来的装备连同它的等级一起收回背包（条目自带等级），
+      // 否则升级成果会丢：花了铜币升到 3 级、只是换把武器试一下，
+      // 回来变成 1 级，这种惩罚会让"换装"这个核心乐趣直接废掉。
+      bagAdd(state, prev.id, prev.level || 1);
     }
 
-    // 等级从背包记账里取，失败才退回 1。
-    const level = state.meta.inventoryLevels[id] || 1;
-    delete state.meta.inventoryLevels[id];
-    state.meta.equipment[def.slot] = { id: id, level: level };
+    state.meta.equipment[def.slot] = { id: id, level: (entry && entry.level) || 1 };
 
     // 换装可能改变生命上限。不能让当前血量超过新上限（血条会画到框外），
     // 但也不能白送血 —— 所以只做截断，不做补满。
@@ -476,9 +761,12 @@
     if (C.EQUIP_SLOTS.indexOf(slot) < 0) return { ok: false, reason: '没有这个部位' };
     const it = state.meta.equipment[slot];
     if (!it) return { ok: false, reason: '这个部位是空的' };
+    // 满包时拒绝，**不要先把部位清空**：清空之后再发现放不进去，
+    // 装备就凭空消失了 —— 谎报成功比直接报错更糟（§4.7「不丢装备」）。
+    if (bagCount(state) >= bagCapacity(state)) return { ok: false, reason: '背包已满' };
     state.meta.equipment[slot] = null;
-    state.meta.inventory.push(it.id);
-    state.meta.inventoryLevels[it.id] = it.level;
+    // 等级跟着条目走，不需要另一张表记账。
+    bagAdd(state, it.id, it.level || 1);
 
     if (state.run && state.run.player) {
       const st = playerStats(state);
@@ -488,8 +776,13 @@
     return { ok: true, id: it.id };
   }
 
-  /** 升级价格：下一级的价格。满级返回 null。 */
-  function equipUpgradeCost(state, id) {
+  /**
+   * 升级价格：下一级的价格。满级返回 null。
+   *
+   * 带上 uid 时按**那一条**背包条目报价：同 id 的重复件各升各的级，
+   * 报价必须跟着玩家实际点中的那件走，否则会出现"按 A 件的价收钱、升 B 件"。
+   */
+  function equipUpgradeCost(state, id, uid) {
     const def = C.equipDef(id);
     if (!def) return null;
     const max = C.equipMaxLevel(id);
@@ -497,13 +790,15 @@
     if (!held) return null;                      // 没拥有就不能升级
     let level = 1;
     if (held === 'equipped') {
+      // 身上只有一件，uid 在这里不适用：等级就是装备位上的等级。
       C.EQUIP_SLOTS.forEach(function (s) {
         const it = state.meta.equipment[s];
         if (it && it.id === id) level = it.level || 1;
       });
     } else {
-      const lv = state.meta.inventoryLevels && state.meta.inventoryLevels[id];
-      level = lv || 1;
+      let idx = uid ? bagIndexOfUid(state, uid) : -1;
+      if (idx < 0) idx = bagIndexOfId(state, id);
+      level = (idx >= 0 && state.meta.bag[idx].level) || 1;
     }
     if (level >= max) return null;
     return C.equipPrice(id, level + 1);
@@ -513,10 +808,11 @@
    * 升级装备。**只提升强度参数，不改变机制**（§4.4）。
    *
    * 背包里的装备与身上的装备都要能升级，所以等级存在两处：
-   * 装备位上直接带 level，背包里用 inventoryLevels 映射。
+   * 装备位上直接带 level，背包条目里也各自带 level（v6 起）。
    */
-  function upgradeEquipment(state, id) {
-    const cost = equipUpgradeCost(state, id);
+  function upgradeEquipment(state, id, uid) {
+    // 报价与实收必须是同一件：uid 一路透传给 equipUpgradeCost。
+    const cost = equipUpgradeCost(state, id, uid);
     if (cost === null) {
       const def = C.equipDef(id);
       if (!def) return { ok: false, reason: '没有这件装备' };
@@ -533,8 +829,12 @@
         if (it && it.id === id) it.level = (it.level || 1) + 1;
       });
     } else {
-      if (!state.meta.inventoryLevels) state.meta.inventoryLevels = {};
-      state.meta.inventoryLevels[id] = (state.meta.inventoryLevels[id] || 1) + 1;
+      // 背包里只升一件：同一 id 可能有重复件，各升各的级，
+      // 不能把它们一起抬上去（那等于凭空送出升级）。
+      // 升的必须是 equipUpgradeCost 报价时用的那一条，否则收错价、升错件。
+      let idx = uid ? bagIndexOfUid(state, uid) : -1;
+      if (idx < 0) idx = bagIndexOfId(state, id);
+      if (idx >= 0) state.meta.bag[idx].level = (state.meta.bag[idx].level || 1) + 1;
     }
 
     if (state.run && state.run.player) {
@@ -548,8 +848,8 @@
   /**
    * 掉落判定（§4.3）。只掉基础装备，5% 概率。
    *
-   * 重复品折算 30% 原价 —— 这是经济闭环的关键：
-   * 否则玩家掉满 21 件后掉落完全没价值，金币出口又断掉。
+   * 重复品也一律进背包：产品决定是"每件掉落都进包，卖不卖玩家自己定"，
+   * 所以这里不再有折算，只标记 duplicate 供 UI 提示用。
    */
   function rollEquipDrop(state) {
     const pool = Object.keys(C.ALL_EQUIPMENT).filter(function (id) {
@@ -557,20 +857,181 @@
     });
     if (pool.length === 0) return null;
     const id = pool[Math.floor(nextRandom(state) * pool.length)];
-
-    if (equipOwned(state, id)) {
-      const refund = Math.round(C.equipDef(id).price * C.EQUIP_DROP.refundRatio);
-      state.meta.coins += refund;
-      return { id: id, duplicate: true, refund: refund };
+    const duplicate = !!equipOwned(state, id);
+    // 容量感知落位：全满时不丢、也不越界（§4.7「不丢装备」），
+    // 而是覆盖最后已解锁页的末格，由 UI 提示"背包已满"。
+    const idx = bagAdd(state, id, 1);
+    if (idx === -1) {
+      const last = bagCapacity(state) - 1;
+      // 覆盖前先把被顶掉的那件带出去。玩家有权知道"我刚丢的是哪一件"——
+      // 只报 bagFull 而说不出覆盖了谁，UI 就只能干巴巴地说"背包已满"，
+      // 而玩家手里已经白头掉一件装备了。被覆盖的**必须**是最后一格那件，
+      // 不是随机的某一格（掉落不该变成随机销毁）。
+      const victim = state.meta.bag[last];
+      state.meta.bag[last] = bagEntry(state, id, 1);
+      return {
+        id: id, duplicate: duplicate, bagFull: true,
+        overwrote: victim ? { id: victim.id, uid: victim.uid, level: victim.level } : null,
+      };
     }
-    state.meta.inventory.push(id);
-    return { id: id, duplicate: false, refund: 0 };
+    return { id: id, duplicate: duplicate, bagFull: false };
   }
 
   /** 敌人死亡时调用：按概率决定是否掉装备。返回掉落结果或 null。 */
   function tryEquipDrop(state) {
     if (nextRandom(state) >= C.EQUIP_DROP.chance) return null;
     return rollEquipDrop(state);
+  }
+
+  // ---------------------------------------------------------------- 出售
+  /**
+   * 某件装备升到 level 级一共花掉的升级钱（不含 1 级的底价）。
+   *
+   * 必须是**纯函数**，只依赖 id 与等级。不要绕 equipUpgradeCost：
+   * 它要 state、会随状态变化（已穿戴时读身上那件的等级），
+   * 而且满级返回 null —— 在循环里加总就是 null + n = NaN，
+   * 卖价一旦变 NaN，铜币会顺着存档一路传下去。
+   */
+  function equipInvested(id, level) {
+    let sum = 0;
+    for (let lv = 2; lv <= level; lv++) sum += C.equipPrice(id, lv);
+    return sum;
+  }
+
+  /**
+   * 卖出价：底价与升级投入各折一半。
+   *
+   * 折半而不是全退，是为了让"买了又卖"始终亏钱 —— 否则商店就成了
+   * 免费仓库，玩家可以随时反悔，构筑选择也就没有代价了。
+   * 但升级投入必须计入，不然升到满级再卖和 1 级卖一个价，
+   * 玩家会觉得自己被偷了钱。
+   */
+  function sellValue(id, level) {
+    const def = C.equipDef(id);
+    if (!def) return 0;
+    return Math.floor(0.5 * (def.price + equipInvested(id, level || 1)));
+  }
+
+  /**
+   * 背包里"同 id 有多件时，除等级最高那件外其余"的 uid 列表。
+   *
+   * 等级相同时保留**下标靠前**那件：结果必须稳定可复现，
+   * 否则同一份存档两次全选会卖掉不同的件，玩家会以为见了鬼。
+   * 返回顺序按背包下标升序，UI 直接拿去勾选即可。
+   */
+  function duplicateUids(state) {
+    const bag = state.meta.bag || [];
+    // 先按 id 分组，记下每组的全部下标。
+    const groups = {};
+    const order = [];
+    for (let i = 0; i < bag.length; i++) {
+      const id = bag[i].id;
+      if (!groups[id]) { groups[id] = []; order.push(id); }
+      groups[id].push(i);
+    }
+    const out = [];
+    order.forEach(function (id) {
+      const idxs = groups[id];
+      if (idxs.length < 2) return;                 // 只有一件，不算重复
+      // 找"该保留"的那一件：等级最高；并列时取下标最小。
+      // 用严格大于比较，于是并列时先遇到（下标更小）的那件胜出。
+      let keep = idxs[0];
+      for (let k = 1; k < idxs.length; k++) {
+        const lv = bag[idxs[k]].level || 1;
+        const best = bag[keep].level || 1;
+        if (lv > best) keep = idxs[k];
+      }
+      idxs.forEach(function (i) {
+        if (i !== keep) out.push(bag[i].uid);
+      });
+    });
+    // 按背包下标升序输出，保证顺序稳定（分组顺序取决于首次出现位置，
+    // 组内顺序取决于遍历顺序，两者合起来未必是全局升序）。
+    out.sort(function (a, b) {
+      return bagIndexOfUid(state, a) - bagIndexOfUid(state, b);
+    });
+    return out;
+  }
+
+  /**
+   * 可以卖的 uid 列表 —— 即"全选"卖出去之后每个 id 还剩一件。
+   *
+   * 与 duplicateUids 等价，所以直接调用它，不另写一套分组逻辑：
+   * 两份分组代码迟早分叉（一处按等级、一处按下标），
+   * 到那时"勾选全部重复件"和"全选出售"会给出不同的件，玩家无从理解。
+   *
+   * 已穿戴的条目本来就不在 meta.bag 里（穿戴即离包），
+   * 所以这里天然排除，不需要额外判断。
+   */
+  function sellableUids(state) {
+    return duplicateUids(state);
+  }
+
+  /**
+   * 卖一件。玩家明确点的那一件，**不受"每 id 留一件"约束** ——
+   * 那条规则只属于 sellBatch。若错写进这里，玩家最后一件就永远卖不掉。
+   */
+  function sellItem(state, uid) {
+    const idx = bagIndexOfUid(state, uid);
+    if (idx < 0) {
+      // 防御：uid 可能指向身上那件（正常路径不可达，但存档码可注入）。
+      // 穿戴即离包，所以"找不到"里混着"已穿戴"这一种，分开报更好懂。
+      const eq = state.meta.equipment || {};
+      for (let i = 0; i < C.EQUIP_SLOTS.length; i++) {
+        const it = eq[C.EQUIP_SLOTS[i]];
+        if (it && it.uid === uid) return { ok: false, reason: '身上穿着的不能卖' };
+      }
+      return { ok: false, reason: '背包里没有这件' };
+    }
+    const entry = state.meta.bag[idx];
+    const value = sellValue(entry.id, entry.level || 1);
+    // 先算价再移除：移除之后再读 entry 就没了。
+    state.meta.bag.splice(idx, 1);
+    state.meta.coins += value;
+    return { ok: true, value: value, id: entry.id };
+  }
+
+  /**
+   * 批量出售。**每 id 强制留一件**（等级最高的那件），
+   * 所以"全选"永远不会把某个 id 清空 —— 玩家不会因为手滑
+   * 把唯一一件装备卖掉，然后发现自己光着身子打下一局。
+   *
+   * 顺序很重要：先按 id 分组 → 每组按等级降序 → 每组除第一个外全部可卖
+   * → 与传入 uids 取交集 → 求和扣款移除。
+   * 直接复用 duplicateUids 的判定，保证"勾选全部重复件"与"全选出售"
+   * 卖的是同一批件。
+   */
+  function sellBatch(state, uids) {
+    const want = {};
+    (uids || []).forEach(function (u) { want[u] = true; });
+    // 可卖集合由 duplicateUids 决定，传入的 uids 只是"玩家勾了哪些"。
+    // 两者取交集：勾了不该卖的（比如唯一一件）也不会被卖掉。
+    const allowed = {};
+    duplicateUids(state).forEach(function (u) { allowed[u] = true; });
+
+    const targets = [];
+    (state.meta.bag || []).forEach(function (e) {
+      if (want[e.uid] && allowed[e.uid]) targets.push(e.uid);
+    });
+
+    let total = 0;
+    const kept = [];
+    // 逐件求和，不是"一个价 × 件数"：同 id 不同等级卖价不同，
+    // 不同 id 更是各算各的。
+    targets.forEach(function (uid) {
+      const idx = bagIndexOfUid(state, uid);
+      if (idx < 0) return;
+      const entry = state.meta.bag[idx];
+      total += sellValue(entry.id, entry.level || 1);
+      state.meta.bag.splice(idx, 1);
+    });
+    // kept：玩家勾了、但因"每 id 留一件"而没卖的 uid。
+    (uids || []).forEach(function (u) {
+      if (!allowed[u] && bagIndexOfUid(state, u) >= 0) kept.push(u);
+    });
+
+    state.meta.coins += total;
+    return { ok: true, count: targets.length, total: total, kept: kept };
   }
 
   // ---------------------------------------------------------------- 开局
@@ -1280,13 +1741,15 @@
       const drop = tryEquipDrop(state);
       if (drop) {
         run.equipDrops = run.equipDrops || [];
-        run.equipDrops.push({ id: drop.id, duplicate: drop.duplicate, refund: drop.refund });
-        if (drop.duplicate) {
-          // 重复品当场折算成铜币，直接进本局战利品
-          run.loot.coins += drop.refund;
-        } else {
-          state.meta.inventory.push(drop.id);
-        }
+        // 满包时 drop.overwrote 带着被顶掉的那一件（tryEquipDrop → rollEquipDrop
+        // 已经算好了）。这里**必须原样传下去** —— 只推 id/duplicate 的话，
+        // UI 永远看不到"你的哪件装备没了"，玩家只会觉得背包里的东西莫名少了。
+        // 返回值对而通道断，等于没修。
+        run.equipDrops.push({
+          id: drop.id, duplicate: drop.duplicate,
+          bagFull: !!drop.bagFull,
+          overwrote: drop.overwrote || null,
+        });
       }
     }
   }
@@ -1559,17 +2022,51 @@
   }
 
   // ---------------------------------------------------------------- 结算
-  function endRun(state, won) {
+  /**
+   * 一局结束（胜 / 败 / 主动退出）。
+   *
+   * opts（可选，Task 13 起）：
+   *   keep    保留率，缺省按胜负取 1 或 C.LOOT.lossKeep
+   *   round   取整函数，缺省 Math.floor
+   *   exited  是否是「主动退出」（写进 lastResult，结算文案据此区分）
+   */
+  function endRun(state, won, opts) {
     const run = state.run;
+    const o = opts || {};
     run.status = won ? 'won' : 'lost';
-    const keep = won ? 1 : C.LOOT.lossKeep;
-    const coins = Math.floor(run.loot.coins * keep);
-    const seeds = Math.floor(run.loot.seeds * keep);
+    /*
+     * 「退出战斗」会传进来一个按剩余血量折算的保留率（设计 §3.4），
+     * 并且要求四舍五入：早退是玩家主动做的决定，不该像战败那样
+     * 把他本就不多的一半再往下抹一次零。
+     */
+    const keep = won ? 1 : (typeof o.keep === 'number' ? o.keep : C.LOOT.lossKeep);
+    const round = typeof o.round === 'function' ? o.round : Math.floor;
+    const coins = round(run.loot.coins * keep);
+    const seeds = round(run.loot.seeds * keep);
 
     state.meta.coins += coins;
     state.meta.seeds += seeds;
     state.meta.runsCompleted += 1;
     if (won) state.meta.runsWon += 1;
+
+    /*
+     * 种子失效（设计 §3.5）：超过「自家播种量」的那部分每局腐烂 seedSpoilRate。
+     *
+     * grace 取当前田地数：田地是种子的唯一去处，所以"够种满自家所有田"
+     * 永远不该被吃掉 —— 满田玩家不会断种，只有真正的超额囤积才衰减。
+     * 用按比例腐烂而不是"每颗种子有寿命"：meta.seeds 是单一整数，
+     * 带年龄的列表要动存档结构、迁移链和所有读取点，收益与风险不成比例。
+     *
+     * 三层结算路径（战败 / 通关 / 主动退出）都走这里，所以只写一处。
+     * 改的是 meta.seeds，不动 farm.plots 的任何字段。
+     */
+    const seedGrace = state.farm.plots.length;
+    const seedsBeforeSpoil = state.meta.seeds;
+    if (seedsBeforeSpoil > seedGrace) {
+      state.meta.seeds = seedGrace +
+        Math.ceil((seedsBeforeSpoil - seedGrace) * (1 - C.FARM.seedSpoilRate));
+    }
+    const seedSpoiled = seedsBeforeSpoil - state.meta.seeds;
 
     // 药水同步：本局喝掉多少，meta 就扣掉多少。
     // 用"剩余量回写"而不是"扣减量"，中途重开也不会重复扣。
@@ -1593,14 +2090,70 @@
 
     state.lastResult = {
       won: won,
+      // Task 13：主动退出按战败入账，但文案与「倒下」不同，所以要留痕。
+      exited: !!o.exited,
+      keep: won ? 1 : keep,
       difficultyId: run.difficultyId,
       wavesCleared: won ? run.diff.waves : run.waveIndex,
       coins: coins, seeds: seeds,
+      // 腐烂量要显示在结算卡上（设计 §3.5）：种子变少了必须有交代，
+      // 否则玩家会认为存档坏了。没腐烂就是 0，界面按 0 决定显不显示。
+      seedSpoiled: seedSpoiled,
       passive: passive, matured: matured,
       elapsed: Math.round(run.elapsed),
     };
     state.phase = 'result';
     state.run = null;
+  }
+
+  /**
+   * ESC 菜单的行（Task 13 / 设计 §5.6）。
+   *
+   * 只返回 id/label，长什么样由 index.html 决定。
+   * 「哪一行该出现」放在逻辑层而不是 UI：它取决于 state.phase，
+   * 散在界面里就会长出第二份"什么时候算在战斗中"的判断，
+   * 迟早出现"已经结算了菜单还挂着退出按钮"这种不一致。
+   */
+  function escMenuRows(state) {
+    const rows = [{ id: 'settings', label: '设置' }];
+    if (state && state.phase === 'run' && state.run) {
+      rows.push({ id: 'quit', label: '退出战斗' });
+    }
+    return rows;
+  }
+
+  /**
+   * 主动退出的保留率（设计 §3.4）：
+   *   保留率 = 50% × (0.5 + 0.5 × 剩余血量比)
+   * 满血 0.5、空血 0.25。这样「早退」既拿不到打赢的比例（1.0），
+   * 也不比打到倒下（lossKeep = 0.5）更划算 —— 早退永远不是最优解。
+   */
+  function exitKeepRate(state) {
+    const run = state && state.run;
+    const player = run && run.player;
+    const maxHp = player && player.maxHp > 0 ? player.maxHp : 1;
+    const hp = player ? player.hp : 0;
+    const ratio = Math.max(0, Math.min(1, hp / maxHp));
+    return 0.5 * (0.5 + 0.5 * ratio);
+  }
+
+  /**
+   * 「退出战斗」：按血量折扣结算，视为战败（Task 13 / §3.4）。
+   *
+   * 复用 endRun，所以药水回写、农庄生长、被动收益的口径和正常结束完全一致；
+   * 另写一份结算逻辑必然会漏掉其中一两项。
+   * 没有进行中的局（或已经结算过）返回 ok:false —— 而且一分钱都不付：
+   * 结算会把 state.run 置空，连点第二次必须落进这里，而不是再发一份战利品。
+   */
+  function exitRun(state) {
+    if (!state || !state.run) return { ok: false, reason: '没有进行中的远征' };
+    if (state.run.status && state.run.status !== 'active') {
+      return { ok: false, reason: '这一局已经结束' };
+    }
+    const keep = exitKeepRate(state);
+    endRun(state, false, { keep: keep, round: Math.round, exited: true });
+    const r = state.lastResult;
+    return { ok: true, keep: keep, coins: r.coins, seeds: r.seeds };
   }
 
   function returnToFarm(state) {
@@ -1641,9 +2194,31 @@
       if (!s.meta.equipment) {
         s.meta.equipment = { head: null, torso: null, back: null, weapon: null, feet: null };
       }
-      if (!s.meta.inventory) s.meta.inventory = [];
-      if (!s.meta.inventoryLevels) s.meta.inventoryLevels = {};
+      // v5 的库存字段（inventory / inventoryLevels）**故意不补** ——
+      // 它们已经废掉了，补出来只会被下一步的 5→6 块当成真数据再搬一次。
       s.version = 5;
+    }
+    // v5 → v6：库存从「id 列表 + 按 id 的标量等级」改为「条目数组」。
+    // 旧结构装不下重复件（同一 id 只能记一个等级），而本批要求重复件也进背包。
+    // 迁移按 id 去重 —— 老档本来也只存得下一件，不凭空造件。
+    if (s.version === 5) {
+      if (!s.meta) s.meta = {};
+      const oldIds = s.meta.inventory || [];
+      const oldLv = s.meta.inventoryLevels || {};
+      const seen = {};
+      s.meta.bag = [];
+      oldIds.forEach(function (id) {
+        if (seen[id]) return;
+        seen[id] = true;
+        s.meta.bag.push(bagEntry(s, id, oldLv[id] || 1));
+      });
+      delete s.meta.inventory;
+      delete s.meta.inventoryLevels;
+      s.meta.bagPages = normBagPages(s.meta.bagPages);
+      // 音效设置也在这一版进来：老档没有，Task 12 一读就 TypeError。
+      // ambient 是 v6 之后才加的字段（STATE_VERSION 不动），normSettings 兜底。
+      s.meta.settings = normSettings(s.meta.settings);
+      s.version = 6;
     }
     return s;
   }
@@ -1660,11 +2235,30 @@
     if (!s.meta.equipment) {
       s.meta.equipment = { head: null, torso: null, back: null, weapon: null, feet: null };
     }
-    if (!s.meta.inventory) s.meta.inventory = [];
-    if (!s.meta.inventoryLevels) s.meta.inventoryLevels = {};
+    // 注意：兜底块在版本校验**之后**，所以它救不了迁移没抬版本的老档 ——
+    // 版本链必须自己走完，这里只是防止 v6 存档缺字段。
+    if (!s.meta.bag) s.meta.bag = [];
+    // bagPages 必须**规整**而不是简单兜底：存档码是玩家可达的注入入口，
+    // 'abc' / 1.5 / 7 / 0 都能原样进来。null 是 falsy 所以旧写法能挡住空值，
+    // 却挡不住这些非空非法值 —— 它们会一路带进 bagCapacity 与页价表。
+    s.meta.bagPages = normBagPages(s.meta.bagPages);
+    if (!s.meta.uidSeq) s.meta.uidSeq = 0;
+    // 注意用 normSettings 而不是 `if (!s.meta.settings)`：v6 的老档**有**
+    // settings（只是没有 ambient），简单兜底永远不会触发，滑块会读到 undefined。
+    s.meta.settings = normSettings(s.meta.settings);
     if (!s.farm || !s.farm.plots) {
       s.farm = { plots: new Array(C.FARM.cols * C.FARM.rows).fill(null)
-        .map(function () { return { state: 'empty', growth: 0 }; }) };
+        .map(function () { return { state: 'empty', growth: 0 }; }), page: 0 };
+    }
+    // 农场页码（Task 24）：v6 老档没有这个字段，而且存档码是玩家可达的
+    // 注入入口 —— 5 / -3 / 'x' / 1.7 都能原样进来。不夹住的话，
+    // FarmScene 会拿它去算 plotGeo 起点，界面直接空一页或指向不存在的田。
+    {
+      const pages = farmPageCount(s);
+      let page = Math.floor(Number(s.farm.page));
+      if (!Number.isFinite(page) || page < 0) page = 0;
+      if (page > pages - 1) page = pages - 1;
+      s.farm.page = page;
     }
     return s;
   }
@@ -1684,6 +2278,9 @@
   const API = {
     STATE_VERSION,
     createState, startRun, step, endRun, returnToFarm,
+    // ESC 菜单与主动退出结算（Task 13）。漏挂 API 这个坑踩过两次
+    // （bagIndexOfId、sortBag），加完顺手看一眼这里。
+    escMenuRows, exitKeepRate, exitRun,
     plant, buyUpgrade, upgradeCost,
     buySkill, skillCost, skillStats, tryCastSkill, currentDamage,
     stepProjectiles, stepRanged, spawnProjectile, stepPickups, collectAll, killEnemy,
@@ -1692,6 +2289,19 @@
     buyPotion, usePotion, hurtPlayer, potionDamageMul,
     equipBonus, hasFx, equipOwned, buyEquipment, equipItem, unequipSlot,
     equipUpgradeCost, upgradeEquipment, rollEquipDrop, tryEquipDrop,
+    // 出售：卖价按「底价 + 升级投入」折半，批量出售每 id 强制留一件。
+    equipInvested, sellValue, sellItem, sellBatch, duplicateUids, sellableUids,
+    // bagIndexOfId 一直在本文件里（equipOwned 等都要用它），
+    // 但此前没进 API —— hub.js 想按 id 找背包条目读等级时拿不到它。
+    // 函数"存在却不可达"和不存在一样会让调用方写出错的行为。
+    bagAdd, bagRemove, bagAt, bagCount, bagCapacity,
+    bagIndexOfId, bagIndexOfUid, bagEntry, nextUid,
+    buyBagPage, pageOf, pageSlice, normBagPages,
+    // 农场分页与买地（Task 24）：场景与商店都要用，漏挂就变成"函数存在
+    // 但 hub / FarmScene 拿到 undefined" —— 这个坑踩过两次。
+    buyFarmPlot, farmPageCount, farmPageOf,
+    // 整理与页签过滤（§4.5）：sortBag 原地排，bagFilter 返回条目数组。
+    sortBag, bagFilter,
     playerStats, maturePlots, passiveIncome,
     serialize, deserialize,
     nextRandom, buildWave, makeEnemy,
