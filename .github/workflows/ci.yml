@@ -261,6 +261,39 @@ jobs:
         # 重做贴图时曾漏掉 glow/acid，画面出现绿框而控制台与测试全绿。
         run: node tests/check_textures.js
 
+      - name: The deployed site can actually load (staged exactly like a release)
+        # 2026-11-13 的发布事故：deploy-pages.yml 的 stage 步骤是手写白名单，
+        # 新增的 sprites/baghud/audio/bosspose.js 与 game/assets/*.png 全没被复制，
+        # 而部署工作流的自检也只查那 5 个写死的旧文件 —— 于是绿着上线了一个
+        # "首页引用四个 404 脚本"的站点。这个 job 的五项检查全 pass，
+        # 因为它们检查的是仓库，不是发布出去的那份。
+        # 这里用完全相同的两步（整目录拷贝 + 自洽性检查）在 PR 阶段就拦住它。
+        run: |
+          set -eu
+          rm -rf site-ci
+          mkdir -p site-ci
+          cp -R game/. site-ci/
+          rm -rf site-ci/phase1
+          mkdir -p site-ci/phase1
+          cp product/index.html site-ci/phase1/index.html
+          cp product/reference-data.js site-ci/phase1/reference-data.js
+          python analysis/check_staged_site.py site-ci
+
+      - name: The deployment whitelist cannot drift again
+        # 上面那条检查能挡住"站点破碎"，但挡不住有人把 deploy-pages.yml 改回
+        # 逐文件 cp（那时 site 仍然是自洽的，只是下次加文件又会漏）。
+        # 所以直接钉住实现方式：stage 步骤必须靠 cp -R game/. 整目录拷贝。
+        run: |
+          if ! grep -qE 'cp -R game/\. site/' .github/workflows/deploy-pages.yml; then
+            echo "::error::deploy-pages.yml 不再整体拷贝 game/ —— 手写白名单会在新增文件时静默漏文件"
+            exit 1
+          fi
+          if ! grep -q 'check_staged_site.py' .github/workflows/deploy-pages.yml; then
+            echo "::error::deploy-pages.yml 没有调用 analysis/check_staged_site.py"
+            exit 1
+          fi
+          echo "ok: 部署用整目录拷贝，且发布前做自洽性检查"
+
       - name: Real-browser smoke test (opening to restart)
         # 原文对 canvas 游戏的要求："check game state and interactions; a screenshot alone
         # is insufficient"。Node + DOM 桩跑不了 Phaser（canvas 为 null，update 不执行），
