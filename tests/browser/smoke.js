@@ -2650,6 +2650,139 @@ const SCRIPT = `
     out.v8Err = String((e && e.message) || e);
   }
 
+  // ---- 3f. 「再来一局」：难度继承 + 只活一个场景 + Tab/ESC 可用 ----
+  /*
+   * PM 报（2026-11-13）三件事，都在这一段里钉住：
+   *   1. 「不管在什么关卡死了点再来一局都回到了林地难度」；
+   *   2. 「人物走到了地图最左边，按 J 却进入了农场」+「按 tab 和 esc 都没有反应」；
+   *   3. 「进入第二个 boss 关卡在了渐黑」。
+   *
+   * 为什么必须在真浏览器里验：
+   *   - 难度丢失有一半发生在 app.js（startBossRun 写死 'wood'）和场景切换里，
+   *     逻辑层的用例（V18c/V18d）碰不到；
+   *   - Tab/ESC 失效的根因是"两个场景各注册了一份 window keydown 监听器，
+   *     互相把 toggle 抵消掉"——这是监听器与场景生命周期的耦合，
+   *     桩测试里根本没有 window，验不了；
+   *   - 「卡在渐黑」是相机行为。
+   *
+   * 判据一律用 sys.settings.status（5=RUNNING 6=PAUSED），不用 scene.isPaused()：
+   * pause()/resume() 是延迟生效的，调用后立刻读拿到的是旧值，
+   * 实测会给出"开背包后没暂停"这种假红。
+   */
+  try {
+    const scR = globalThis.__game.scene;
+    const stR = window.EmberfieldApp.__state;
+
+    // 干净起点：回到 Hub，清掉上一段可能留下的 run
+    if (scR.isActive('Run')) scR.stop('Run');
+    if (scR.isActive('Farm')) scR.stop('Farm');
+    if (!scR.isActive('Hub')) { scR.start('Hub'); await wait(450); }
+    const hubR = scR.getScene('Hub');
+    stR.run = null;
+    stR.phase = 'farm';
+    hubR.panelOpen = false;
+    window.EmberfieldUI.closePanel();
+    window.BagHud.close();
+    await wait(200);
+
+    const statusOf = (key) => {
+      const sc = scR.getScene(key);
+      return (sc && sc.sys && sc.sys.settings) ? sc.sys.settings.status : null;
+    };
+
+    out.restartTiers = [];
+    for (const tier of ['normal', 'hard', 'hell']) {
+      const rec = { tier: tier };
+      // 走玩家路径：Hub.startBossRun（面板「挑战」按钮最终就是调它）
+      hubR.panelOpen = false;
+      window.EmberfieldUI.closePanel();
+      /*
+       * 每一档开始前必须把上一档的 Run 停掉、并把 phase 归到基地。
+       * 不这么做的话：上一轮「再来一局」把场景切到 Run 并让 phase='run'，
+       * 此时 hubR.startBossRun 里 hubLive 为 false（Hub 已经不 active），
+       * 它会走 scene.start('Run') 那条短路分支 —— 而 Run 已经活着，
+       * 于是这一档的 startBossRun 实际被吞掉，读数全部停在上一次的档位。
+       * （这正是第一版探针出现"normal 过了、hard/hell 还是 normal"的原因。）
+       */
+      if (scR.isActive('Run')) scR.stop('Run');
+      if (!scR.isActive('Hub')) { scR.start('Hub'); await wait(450); }
+      const hubIter = scR.getScene('Hub');
+      hubIter.panelOpen = false;
+      window.EmberfieldUI.closePanel();
+      stR.run = null;
+      stR.phase = 'farm';
+      await wait(250);
+
+      hubIter.startBossRun(tier);
+      await wait(1200);
+      rec.startDiff = stR.run ? stR.run.difficultyId : null;
+      rec.startTier = stR.run ? stR.run.bossTier : null;
+      rec.startIsBoss = !!(stR.run && stR.run.isBossRun);
+
+      // 打输：把血量清零，让 endRun 自然结算
+      if (stR.run && stR.run.player) stR.run.player.hp = 0;
+      await wait(1400);
+      rec.phaseAfterDeath = stR.phase;
+      rec.lastIsBoss = stR.lastResult ? stR.lastResult.isBossRun : null;
+      rec.lastTier = stR.lastResult ? stR.lastResult.bossTier : null;
+      rec.lastDiff = stR.lastResult ? stR.lastResult.difficultyId : null;
+
+      // 点「再来一局」
+      const againBtn = document.getElementById('btn-again');
+      rec.againFound = !!againBtn;
+      if (againBtn) againBtn.click();
+      await wait(1800);
+
+      rec.againDiff = stR.run ? stR.run.difficultyId : null;
+      rec.againTier = stR.run ? stR.run.bossTier : null;
+      rec.againIsBoss = !!(stR.run && stR.run.isBossRun);
+      rec.againPhase = stR.phase;
+      rec.runStatusAfterAgain = statusOf('Run');
+      rec.hubStatusAfterAgain = statusOf('Hub');
+      rec.runActiveAfterAgain = scR.isActive('Run');
+      rec.hubActiveAfterAgain = scR.isActive('Hub');
+
+      // Tab 开背包：必须开，且 Run 场景必须暂停（6）
+      key('keydown', 'Tab', 9);
+      await wait(320);
+      rec.tabOpenBag = window.BagHud.isOpen();
+      rec.tabOpenStatus = statusOf('Run');
+      // Tab 再按一次：必须关掉，且恢复运行（5）
+      key('keydown', 'Tab', 9);
+      await wait(320);
+      rec.tabCloseBag = window.BagHud.isOpen();
+      rec.tabCloseStatus = statusOf('Run');
+
+      // ESC：菜单要开，且场景暂停
+      key('keydown', 'Escape', 27);
+      await wait(320);
+      rec.escOpen = window.EmberfieldUI.isEscOpen ? window.EmberfieldUI.isEscOpen() : null;
+      rec.escStatus = statusOf('Run');
+      // 关掉菜单，别把暂停留给下一档
+      key('keydown', 'Escape', 27);
+      await wait(320);
+      rec.escClosed = window.EmberfieldUI.isEscOpen ? window.EmberfieldUI.isEscOpen() : null;
+      rec.escCloseStatus = statusOf('Run');
+
+      out.restartTiers.push(rec);
+    }
+
+    out.restartErrs = window.__pageErrs ? window.__pageErrs.length : 0;
+
+    // 收尾：回到 Hub，别把 Run 状态留给后面的段落
+    if (scR.isActive('Run')) scR.stop('Run');
+    if (!scR.isActive('Hub')) { scR.start('Hub'); await wait(450); }
+    const hubEnd = scR.getScene('Hub');
+    stR.run = null;
+    stR.phase = 'farm';
+    hubEnd.panelOpen = false;
+    window.EmberfieldUI.closePanel();
+    window.BagHud.close();
+    await wait(200);
+  } catch (e) {
+    out.restartErr = String((e && e.message) || e);
+  }
+
   // ---- 面板开着时缩小窗口：先把大窗口下的矩形记下来（Task 10c）----
   // 主段结束时必须保持面板打开，driver 会在 RESULT 之后把窗口缩到 520x420，
   // 再由 RESIZESCRIPT 量一次。这里记的是反证素材：如果"缩小前有一截在 520
@@ -3228,6 +3361,59 @@ const SMALLSCRIPT = `
   // 渐黑是把相机 alpha 拉到 0 的；如果场景重启不复位 FX，基地会永久黑屏。
   eq(r.v8HubFadeAfter, false, '回基地后没有残留渐黑效果（不会永久黑屏）');
   ok(r.v8HubAlpha > 0.99, '回基地后相机 alpha 是 1（画面真的亮着）', r.v8HubAlpha);
+
+  console.log('\n--- 3f. 「再来一局」：难度继承 + 只活一个场景 + Tab/ESC 可用 ---');
+  if (r.restartErr) {
+    ok(false, '重开段落本身跑完了（接线错误会让下面 20 条全变 undefined）', r.restartErr);
+  } else {
+    const TIER_DIFF = { normal: 'wood', hard: 'deep', hell: 'forge' };
+    const tiers = r.restartTiers || [];
+    eq(tiers.length, 3, '三档 Boss 各跑了一遍完整循环', tiers.length);
+    tiers.forEach((t) => {
+      const want = TIER_DIFF[t.tier];
+      // 开局：Boss 局必须用档位对应的难度，不是写死的林地
+      eq(t.startDiff, want, `档 ${t.tier} 开局难度是 ${want}`, t.startDiff);
+      eq(t.startTier, t.tier, `档 ${t.tier} 开局记着自己的档位`, t.startTier);
+      eq(t.startIsBoss, true, `档 ${t.tier} 开局是 Boss 局`, t.startIsBoss);
+
+      // 结算：身份必须被记住（这是"重开回到林地"的正题）
+      eq(t.phaseAfterDeath, 'result', `档 ${t.tier} 死后进入结算态`, t.phaseAfterDeath);
+      eq(t.lastIsBoss, true, `档 ${t.tier} 结算记住是 Boss 局（否则重开必回林地）`, t.lastIsBoss);
+      eq(t.lastTier, t.tier, `档 ${t.tier} 结算记住档位`, t.lastTier);
+      eq(t.lastDiff, want, `档 ${t.tier} 结算记住难度 ${want}`, t.lastDiff);
+
+      // 点「再来一局」之后：难度必须原样继承
+      eq(t.againFound, true, `档 ${t.tier} 结算面板上有「再来一局」`, t.againFound);
+      eq(t.againDiff, want,
+         `档 ${t.tier} 重开后难度仍是 ${want}（PM 报的"回到林地"就是这条）`, t.againDiff);
+      eq(t.againTier, t.tier, `档 ${t.tier} 重开后档位仍是 ${t.tier}`, t.againTier);
+      eq(t.againIsBoss, true, `档 ${t.tier} 重开后仍是 Boss 局`, t.againIsBoss);
+      eq(t.againPhase, 'run',
+         `档 ${t.tier} 重开后 phase 是 run（不是 run 的话战斗根本不跑、按 J 会进农场）`,
+         t.againPhase);
+
+      // 场景：只能有一个活着（两个都活 = 两份 keydown 监听器互抵）
+      eq(t.runActiveAfterAgain, true, `档 ${t.tier} 重开后 Run 场景活着`, t.runActiveAfterAgain);
+      eq(t.hubActiveAfterAgain, false,
+         `档 ${t.tier} 重开后 Hub 已停（两个场景同时活着会把 Tab/ESC 抵消掉）`,
+         t.hubActiveAfterAgain);
+      eq(t.runStatusAfterAgain, 5, `档 ${t.tier} 重开后 Run 处于 RUNNING`, t.runStatusAfterAgain);
+
+      // Tab：开要暂停，关要恢复
+      eq(t.tabOpenBag, true, `档 ${t.tier} 重开后 Tab 能开背包（PM 报的"没反应"）`, t.tabOpenBag);
+      eq(t.tabOpenStatus, 6, `档 ${t.tier} 背包打开时战斗被暂停`, t.tabOpenStatus);
+      eq(t.tabCloseBag, false, `档 ${t.tier} 再按 Tab 能关背包`, t.tabCloseBag);
+      eq(t.tabCloseStatus, 5, `档 ${t.tier} 关背包后战斗恢复运行`, t.tabCloseStatus);
+
+      // ESC：菜单要开、场景要暂停、再按要能出来
+      eq(t.escOpen, true, `档 ${t.tier} 重开后 ESC 能开菜单`, t.escOpen);
+      eq(t.escStatus, 6, `档 ${t.tier} ESC 菜单开着时战斗被暂停`, t.escStatus);
+      eq(t.escClosed, false, `档 ${t.tier} 再按 ESC 能关菜单`, t.escClosed);
+      eq(t.escCloseStatus, 5, `档 ${t.tier} 关菜单后战斗恢复运行`, t.escCloseStatus);
+    });
+    eq(r.restartErrs, 0, '重开全过程中页面没有未捕获异常（含已销毁场景上的 setTexture）',
+       r.restartErrs);
+  }
 
   console.log('\n--- 3e. 按 J 进田地：不能卡在黑屏 ---');
   eq(r.fieldZoneId, 'field', '站在田地区域上（不然按 J 进不去）');

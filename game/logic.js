@@ -1484,9 +1484,21 @@
       if (e.state === 'dead' || p.hitIds.indexOf(e.id) >= 0) continue;
       const dx = (e.x - p.x) * p.facing;
       const dz = Math.abs(e.z - p.z);
-      const reach = p.comboRange || C.ATTACK_RANGE;
-      const inFront = dx > -C.ATTACK_BACK && dx < reach;
-      const sameDepth = dz <= C.ATTACK_DEPTH;
+      /*
+       * 受击半径（hurtbox）：大型敌人（Boss）的判定要从**轮廓**算，不是从中心。
+       *
+       * 2026-11-13 PM 报"要完全贴住 boss 才能打到"：Boss 会把玩家推到
+       * minGap = bodyRadius + PLAYER_W/2 + 6 = 69px 之外，而命中判据原本是
+       * "中心距 < range"，三段射程 73/78/90 里只有第三段有明显余量。
+       * 补上受击半径之后，有效距离 = range + hitRadius，站在贴身处就能打中。
+       *
+       * 小怪没有 hitRadius（默认 0），行为与以前逐位一致。
+       */
+      const hurt = e.hitRadius || 0;
+      const reach = (p.comboRange || C.ATTACK_RANGE) + hurt;
+      // 后向判定同样要让出受击半径，否则贴脸时敌人中心在身后会被漏掉。
+      const inFront = dx > -(C.ATTACK_BACK + hurt) && dx < reach;
+      const sameDepth = dz <= C.ATTACK_DEPTH + hurt;
       // 这里原本还有一条 Math.abs(p.h - e.h) < 70 的高度门限，
       // 但最大跳跃高度 = 430²/(2·1500) ≈ 61.6px，条件恒真，是死代码。
       // 已删除：命中判定只看 (x, z)，跳跃不提供额外豁免。
@@ -1560,6 +1572,11 @@
       damage: tier.damage,
       speed: C.BOSS.speed * tier.speedMul,
       radius: C.BOSS.radius,
+      // 受击半径挂在对象上（渲染层与本文件都读它）。
+      // 注意不能写成 e.def.hitRadius —— 敌人对象上**没有** def 字段
+      // （makeEnemy 里的 def 是函数局部的），那样写会静默取到 undefined，
+      // 整个受击半径等于没做。
+      hitRadius: C.BOSS.hitRadius,
       state: 'chase',
       timer: 0,
       attackCd: C.BOSS.attackCooldown,
@@ -1688,7 +1705,11 @@
     // 推开重叠：玩家不能走进 Boss 身体，否则视觉上像穿模。
     // 判定半径 46 是"能被打到"的范围，但身体视觉宽约 88，
     // 所以需要额外把玩家推到 88 之外。
-    const minGap = C.BOSS.radius + C.PLAYER_W / 2 + 6;
+    // 推开距离用**碰撞**半径（bodyRadius），不是受击半径 ——
+    // 受击半径是"刀能碰到多远"，把它一起加进来会让玩家被推得更远，
+    // 正好抵消掉"更好打中"的效果（两者必须分开，见 config.js 的注释）。
+    const bossBody = C.BOSS.bodyRadius || C.BOSS.radius;
+    const minGap = bossBody + C.PLAYER_W / 2 + 6;
     if (dist < minGap && dist > 0.001) {
       const ddx = p.x - boss.x, ddz = p.z - boss.z;
       const dd = Math.hypot(ddx, ddz) || 1;
@@ -2093,6 +2114,21 @@
       // Task 13：主动退出按战败入账，但文案与「倒下」不同，所以要留痕。
       exited: !!o.exited,
       keep: won ? 1 : keep,
+      /*
+       * 「再来一局」要能复原这一局**是什么局**，所以三样都得记。
+       *
+       * 2026-11-13 PM 报「不管在什么关卡死了点再来一局都回到了林地难度」。
+       * 三条原因叠在一起：
+       *   1. startBossRun 里写死了 L.startRun(state, 'wood')，Boss 局的
+       *      run.difficultyId 永远是 wood —— Boss 档是 normal/hard/hell，
+       *      与难度 id grass/wood/deep/forge 是两套命名，不能互相顶替。
+       *   2. 这里原本只记 difficultyId，Boss 局于是把 wood 记了进去。
+       *   3. 重开处理器读 lastResult.difficultyId，必然开成普通林地。
+       * 所以 isBossRun / bossTier 必须一起持久化（存档走 serialize），
+       * 重开时按 isBossRun 分流回 startBossRun(bossTier)。
+       */
+      isBossRun: !!run.isBossRun,
+      bossTier: run.isBossRun ? (run.bossTier || 'normal') : null,
       difficultyId: run.difficultyId,
       wavesCleared: won ? run.diff.waves : run.waveIndex,
       coins: coins, seeds: seeds,
