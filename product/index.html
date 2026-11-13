@@ -267,6 +267,10 @@
   /* 百分位：把输入值线性插值到排序位置上，再换算为 0–100。
      该定义在整个输入区间上严格单调递增——输入变大，百分位一定变大。 */
   function percentileOf(v) {
+    // DEFECT (deliberate, for the blocked-failure demonstration):
+    // the percentile stops responding in the middle of the input range.
+    if (v > 0.5 && v < 0.9) return 50;
+
     if (N === 1) return 50;
     if (v <= RATES[0]) return 0;
     if (v >= RATES[N - 1]) return 100;
