@@ -2,7 +2,7 @@
 
 **Student:** Cao Yuquan — student identifier 26366290
 **Repository:** <https://github.com/706617514-blip/COMM7660-CaoYuquan-ReceptionBaseline>
-**Phase 2 media product:** 熔野耕作 / Emberfield — a 2.5D side-scrolling roguelite with a
+**Phase 2 media product:** Kill the Vines — a 2.5D side-scrolling roguelite with a
 farming economy layer, played in the browser (`game/`)
 **Intended audience:** players of short-run action games; the product is a game, not a tool
 **Phase 1 analytics artefact:** Reception Baseline — a Steam reception base-rate locator,

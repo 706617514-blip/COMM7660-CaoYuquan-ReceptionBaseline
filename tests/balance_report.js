@@ -38,7 +38,7 @@ function rate(diffId, up) {
   return rs.reduce((a, b) => a + b, 0) / rs.length;
 }
 
-console.log('熔野耕作 · 难度曲线报告');
+console.log('Kill the Vines · 难度曲线报告');
 console.log(`  每格 n=${N}${STRIDES > 1 ? ` × ${STRIDES} 个种子步长` : ''}；代理 = tests/bot.js`);
 console.log();
 

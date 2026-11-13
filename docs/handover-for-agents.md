@@ -13,7 +13,7 @@ COMM7660 课程作业，学生 Cao Yuquan，学号 26366290。分两阶段：
 - **Phase 1（已完成，冻结）**：Steam 好评率的统计分析。冻结在 tag `phase1-analytics` → `3e7f65e`。
   数据集指纹 `67eaeb6d965ae0d2109c411896f1f12a88d52459520e1f993b2369a77d0c2875`（CI 强制校验）。
   **Phase 1 的任何东西都不许动。**
-- **Phase 2（进行中）**：交付一个浏览器游戏《熔野耕作 / Emberfield》并做用户测试。
+- **Phase 2（进行中）**：交付一个浏览器游戏《Kill the Vines》并做用户测试。
   截止 **2026-11-19**。
 
 ## 2. 项目硬规矩（`AGENTS.md` 与 `$DSH_HOME/AGENTS.md`）
