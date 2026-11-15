@@ -4203,7 +4203,29 @@
     }
     // 场景数组的第一项会被自动启动 —— BootScene 必须先跑，否则纹理还没生成
     const game = new Phaser.Game({
-      type: Phaser.AUTO,
+      /*
+       * 渲染器由 AUTO 改为 WEBGL（Task 2 / 设计文档 §4.3）。
+       *
+       * 为什么必须显式指定，不能用 AUTO
+       * ------------------------------
+       * 彩蛋的"全屏泛光"（《头号玩家》那种光爆）只有 WebGL 能做：
+       * Canvas 2D 的混合模式很有限，做不出真正的加法泛光。
+       * AUTO 在支持 WebGL 的浏览器上确实会选 WebGL，但它**不可控** ——
+       * 一旦某台机器回退到 Canvas，泛光就静默失效，而且回退路径
+       * 不会被任何测试覆盖，等于假装有保险。
+       *
+       * 已实测的风险与处置（切之前查的，不是猜的）
+       * ------------------------------------------
+       * 全项目 38 处 generateTexture 不是风险点 —— 那是 Phaser 统一 API，
+       * 跨渲染器行为一致。真正的风险是 **8 处 BlendModes.ADD**
+       * （app.js:1723/1751/1753/1755/1769/1789/2696/3964，全是发光效果）：
+       * ADD 在 Canvas 与 WebGL 下渲染不同（WebGL 受预乘 alpha 影响）。
+       * 这 8 处已逐一目视核对，是本任务闸门二的核对对象。
+       *
+       * sprites.js 的 getContext('2d') 与渲染器无关 —— 它用的是独立离屏
+       * canvas（doc.createElement），只做像素测量与 toDataURL，不受影响。
+       */
+      type: Phaser.WEBGL,
       width: W, height: HGT,
       parent: parentId,
       backgroundColor: '#141a22',
