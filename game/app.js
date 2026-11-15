@@ -156,7 +156,18 @@
 
   function makeHero(scene, depth) {
     const c = scene.add.container(0, 0);
-    c.body_ = scene.add.image(0, 0, 'hero').setOrigin(0.5, 1);
+    /*
+     * 本体用 **Sprite** 而不是 Image（2026-11-16 改）。
+     *
+     * 原因：Phaser 的 `Image` 没有 `anims` 属性，只有 `Sprite` 有。
+     * 用 add.image 创建时，`body_.anims` 是 undefined，
+     * 播动画会抛 "Cannot read properties of undefined (reading 'isPlaying')" ——
+     * 而且只在**真的走到播放那一步**才抛，编辑器与静态检查都看不出来。
+     *
+     * Sprite 是 Image 的超集：位置、缩放、flipX、纹理替换全部行为一致，
+     * 所以换过来不影响任何既有代码（装备层仍是 Image，它们不需要动画）。
+     */
+    c.body_ = scene.add.sprite(0, 0, 'hero').setOrigin(0.5, 1);
     c.add(c.body_);
     c.layers_ = {};
     EQUIP_LAYER_ORDER.forEach((slot) => {
@@ -3014,6 +3025,59 @@
       }
     }
 
+    /**
+     * 主角的逐帧动画状态机（2026-11-16）。
+     *
+     * 在此之前主角只有 setPosition + setScale —— 一张贴纸在屏幕上平移。
+     * 这是本项目第一段真正的动画，做法依据见 docs/art/pixel/ANIMATION-PLAN.md
+     * （像素风用逐帧精灵图，星露谷即如此）。
+     *
+     * 判据设计：**用实际位移，不用按键**。
+     * 被墙挡住、或原地按方向键时不该播放走路 ——
+     * 否则"看起来在走"与"真的在走"会脱节，玩家脚下会滑步。
+     */
+    updateHeroAnim(p, dt) {
+      if (!this.hero || !this.hero.body_) return;
+
+      const b = this.hero.body_;
+      // 只对本体播动画。装备层是独立的静态贴图，跟着本体走即可 ——
+      // 它们没有自己的帧序列（那是下一步的事）。
+      if (!this.anims.exists('hero-walk')) return;
+
+      // 位移：用上一帧的位置比，和脚步音效同一套判据
+      if (this.__heroPrev === undefined) this.__heroPrev = { x: p.x, z: p.z };
+      const dx = p.x - this.__heroPrev.x;
+      const dz = p.z - this.__heroPrev.z;
+      this.__heroPrev.x = p.x;
+      this.__heroPrev.z = p.z;
+      const moved = Math.sqrt(dx * dx + dz * dz);
+
+      /*
+       * 阈值 0.02：60fps 下玩家速度约 2.6 u/帧，站着不动是 0。
+       * 取这么小是为了"极慢的移动也算在走"，但同时把浮点噪声排除掉
+       * （p.x 每帧重新算，理论上可能产生 1e-9 级的抖动）。
+       */
+      const walking = moved > 0.02;
+
+      if (walking) {
+        if (b.anims.currentAnim?.key !== 'hero-walk' || !b.anims.isPlaying) {
+          b.play('hero-walk', true);
+        }
+        /*
+         * 播放速度跟着真实速度走：慢走时步频低，冲刺时步频高。
+         * 固定 10fps 会让"慢慢挪"和"冲刺"看起来一样快 ——
+         * 那是最容易露馅的滑步感。
+         */
+        const speed = moved / Math.max(dt, 0.001);
+        const base = 10;                       // 业界标准 10 fps
+        const rate = Math.max(0.6, Math.min(2.0, speed / 150));
+        b.anims.timeScale = rate;
+      } else {
+        if (b.anims.isPlaying) b.anims.stop();
+        b.setFrame(0);                         // 静立：停在第 0 帧
+      }
+    }
+
     updateHitSparks(dt) {
       const ms = dt * 1000;
       for (let i = 0; i < this.hitSparkPool.length; i++) {
@@ -3315,6 +3379,17 @@
       const ps = toScreen(p.x, p.z, p.h);
       this.hero.setPosition(ps.sx, ps.sy).setScale(ps.sc * HERO_SCALE);
       this.hero.setFlipX(p.facing < 0);
+
+      /*
+       * 逐帧动画：移动时才播放走路，站着就停在第 0 帧（静立）。
+       *
+       * 2026-11-16 加。在此之前主角只有 setPosition + setScale ——
+       * 玩家看到的是"一张贴纸在屏幕上平移"，没有任何动作。
+       *
+       * 判据用**实际位移**而不是按键：被墙挡住或原地按方向键时
+       * 不该播放走路（那会让"走"与"真的在走"脱节）。
+       */
+      this.updateHeroAnim(p, dt);
       refreshHeroEquip(this.hero, this.state);
       this.hero.setDepth(1000 - p.z);
       this.hero.setAlpha(p.invuln > 0 && Math.floor(time / 60) % 2 === 0 ? 0.55 : 1);
@@ -4688,6 +4763,18 @@
       // add.image(0,0,'hero') 都不必改。文件缺失时 load 会 404，
       // buildTextures 里的 generateTexture('hero') 仍会补上矢量版本。
       this.load.image('hero', 'assets/art/hero_base_right.png');
+      /*
+       * 走路逐帧精灵图（2026-11-16）。
+       *
+       * 8 帧横排、每帧 48x64。这是本项目**第一段真正的逐帧动画** ——
+       * 在此之前主角只有 setPosition + setScale（一张贴纸在屏幕上平移）。
+       *
+       * 做法依据业界标准（见 docs/art/pixel/ANIMATION-PLAN.md）：
+       * 像素风用逐帧精灵图而不是骨骼，星露谷就是这么做的。
+       */
+      this.load.spritesheet('hero-walk', 'assets/art/hero-walk-sheet.png', {
+        frameWidth: 48, frameHeight: 64,
+      });
       // 装备贴图直接用游戏内的 key（eq-head-ironHelm 等），
       // 文件名把 '-' 换成 '_'。这样 refreshHeroEquip 一行都不用改，
       // setTexture(key) 拿到的就是美术图。
@@ -4728,6 +4815,23 @@
         if (this.__texturesBuilt) return;   // 幂等
         this.__texturesBuilt = true;
         buildTextures(this);
+        /*
+         * 建走路动画（2026-11-16）。
+         *
+         * 放在这里而不是 create 开头：必须等 spritesheet 真正加载完，
+         * 否则 anims.create 会因为找不到帧而报错或建出空动画 ——
+         * 和 hero 贴图那个"异步资源 + 同步消费"的坑是同一类。
+         */
+        if (this.textures.exists('hero-walk')) {
+          if (!this.anims.exists('hero-walk')) {
+            this.anims.create({
+              key: 'hero-walk',
+              frames: this.anims.generateFrameNumbers('hero-walk', { start: 0, end: 7 }),
+              frameRate: 10,      // 业界标准：走路 10 fps（ANIMATION-PLAN.md）
+              repeat: -1,
+            });
+          }
+        }
         this.scene.start('Hub');
       };
 
