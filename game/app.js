@@ -4329,6 +4329,91 @@
       });
     }
 
+    /* ------------------------------------------------------------------
+     * 基地相框：彩蛋掉落后，纸条挂在这里可回看（Task 3.3 / D4）
+     *
+     * 为什么放在农场场景而不是基地的交互点列表里
+     * -------------------------------------------
+     * 基地那 6 个 zone 的触发半径**已经互相重叠**（实测：anvil 与 field
+     * 重叠 45px、forgewear 与 anvil 重叠 60px，gate 甚至超出 960 边界 25px）。
+     * 再加一个 zone，无论放哪都会和邻居抢 J 键，让"想出门却点到相框"
+     * 这种事发生 —— 那是把既有体验弄坏，换一个新的可看物，不划算。
+     *
+     * 农场场景是一整屏独立的"装点场地"（PM 的原话：
+     * 「农场存在的意义是，它给玩家提供一个装点小世界的场地」），
+     * 它只有 ESC 与鼠标两个交互，有充足空间。
+     * 纸条挂在这里也**更符合它的性质**：它是纪念物，属于这片自留地。
+     * ------------------------------------------------------------------ */
+
+    /** 相框的几何。null = 还没掉蛋（D8：没掉蛋就不给相框）。 */
+    frameRect() {
+      const got = this.state.meta && this.state.meta.eggFound;
+      if (!got) return null;
+      // 挂在农场上方栅栏的右侧，不遮挡中间的田块
+      // （田区横向 ±300，所以 x 从 +330 起才是空的）
+      return { x: W / 2 + 336, y: 74, w: 58, h: 74 };
+    }
+
+    /** 画相框与里面的纸条。 */
+    drawFrame() {
+      const r = this.frameRect();
+      if (!r) return;
+      if (!this.frameGfx) {
+        this.frameGfx = this.add.graphics().setDepth(700);
+        // 木质画框：与农场栅栏同一族颜色（post 贴图是深棕木）
+        this.frameGfx.fillStyle(0x3b2c1d, 1);
+        this.frameGfx.fillRect(r.x - r.w / 2 - 3, r.y - r.h / 2 - 3, r.w + 6, r.h + 6);
+        this.frameGfx.fillStyle(0x6b5137, 1);
+        this.frameGfx.fillRect(r.x - r.w / 2, r.y - r.h / 2, r.w, r.h);
+        // 纸条：暖白，和彩蛋演出时同一个色系
+        this.frameGfx.fillStyle(0xf3e6c8, 1);
+        this.frameGfx.fillRect(r.x - r.w / 2 + 5, r.y - r.h / 2 + 5, r.w - 10, r.h - 10);
+        // 纸条上的字迹示意：几道横线。真文字缩到这个尺寸读不出来，
+        // 画出行反而能让玩家一眼认出"这是那张纸条"。
+        this.frameGfx.fillStyle(0x9c8a6a, 0.55);
+        for (let i = 0; i < 4; i++) {
+          const ly = r.y - r.h / 2 + 16 + i * 12;
+          // 每行长度不一，像真的手写而不是印刷
+          const lw = (r.w - 20) * (0.55 + (i % 3) * 0.16);
+          this.frameGfx.fillRect(r.x - r.w / 2 + 10, ly, lw, 2);
+        }
+      }
+      // 提示：站在旁边按 J 看
+      if (!this.frameHint) {
+        this.frameHint = this.add.text(r.x, r.y + r.h / 2 + 10, 'J', {
+          fontFamily: 'sans-serif', fontSize: '14px', color: '#ffe9a8',
+          backgroundColor: '#0b1117cc', padding: { x: 8, y: 3 },
+        }).setOrigin(0.5).setDepth(960);
+      }
+      this.frameHint.setVisible(true);
+    }
+
+    /** 打开纸条浮层（与彩蛋演出同一个排版）。 */
+    openLetter() {
+      if (this.letterOpen) return;
+      this.letterOpen = true;
+      let el = document.getElementById('eggLetter');
+      if (!el) {
+        el = document.createElement('div');
+        el.id = 'eggLetter';
+        el.innerHTML = '<div id="eggLetterInner"></div>';
+        document.getElementById('frame').appendChild(el);
+      }
+      document.getElementById('eggLetterInner').textContent = C.EGG.letterText;
+      el.style.display = 'flex';
+      el.style.opacity = '1';
+      // 任意键或点击关闭
+      this.letterCloseArmed = false;
+      this.time.delayedCall(120, () => { this.letterCloseArmed = true; });
+    }
+
+    closeLetter() {
+      if (!this.letterOpen) return;
+      this.letterOpen = false;
+      const el = document.getElementById('eggLetter');
+      if (el) el.style.display = 'none';
+    }
+
     refreshHud() {
       const s = this.state;
       const pages = L.farmPageCount(s);
@@ -4372,6 +4457,26 @@
        * 真正判断按键的是下一行的 this.input2，那行纯属死代码。
        * 删掉即可；键盘仍然走 createInput 自己维护的那套。
        */
+      /*
+       * 基地相框（Task 3.3 / D4）：掉蛋后挂在农场右侧的纪念物。
+       *
+       * 交互：按 J 看纸条。纸条打开时 J 或 ESC 关闭 ——
+       * 关的时候**不能**走 this.leave()：玩家是在关一张纸，
+       * 不是要离开农场，直接走掉会让他莫名其妙被弹出场景。
+       */
+      if (this.letterOpen) {
+        if (this.letterCloseArmed
+            && (this.input2.justPressed('confirm') || this.input2.justPressed('esc'))) {
+          this.closeLetter();
+        }
+        return;                  // 纸条开着时不处理别的输入
+      }
+      this.drawFrame();
+      if (this.frameRect() && this.input2.justPressed('confirm')) {
+        this.openLetter();
+        return;
+      }
+
       if (this.input2.justPressed('esc')) this.leave();
     }
   }
