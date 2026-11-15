@@ -105,6 +105,42 @@
    */
   const EQUIP_LAYER_ORDER = ['back', 'torso', 'feet', 'head', 'weapon'];
 
+  /*
+   * ---- 新美术资产的贴图键 ----
+   *
+   * 与下面 equipLayer 里注册的 key 一一对应。有对应 PNG 的走图片，
+   * 没有的继续用矢量绘制。这样美术可以逐件替换，不会一次改崩。
+   * 命名规则：key 里的 '-' 在文件名里是 '_'（asset 名不允许 '-'）。
+   */
+  /*
+   * 有美术图的游戏实体。键名与 buildTextures 里 generateTexture 的名字一致。
+   */
+  const ART_ENTITIES = [
+    'crawler', 'runner', 'spitter',
+    'treeA', 'treeB', 'bush', 'post', 'torch', 'anvil', 'altar', 'shop', 'rack', 'gate',
+    'soil', 'sprout', 'crop', 'seed', 'clod',
+    'spark', 'glow', 'acid', 'shadow',
+    // bladeA/B/C/S 是场景里的草叶，不是刀光 —— 名字容易误读，
+    // 已确认源码 bladeG() 画的是绿色三角叶片。这里刻意不替换，
+    // 保留矢量版本，避免把草地变成别的颜色。
+  ];
+
+  const ART_GEAR = [
+    'eq-head-leatherHelm', 'eq-head-ironHelm', 'eq-head-guardHelm',
+    'eq-head-hornHelm', 'eq-head-thunderHelm', 'eq-head-stormRing',
+    'eq-torso-leatherVest', 'eq-torso-chestPlate', 'eq-torso-pauldron',
+    'eq-torso-fullPlate', 'eq-torso-frostArmor', 'eq-torso-thornMail',
+    'eq-torso-aegisPlate',
+    'eq-back-shortCape', 'eq-back-longCloak', 'eq-back-runeCloak',
+    'eq-back-wingCape', 'eq-back-bloodCharm', 'eq-back-cinderCloak',
+    'eq-weapon-rustySword', 'eq-weapon-shortSword', 'eq-weapon-broadSword',
+    'eq-weapon-twinBlades', 'eq-weapon-crystalStaff', 'eq-weapon-battleAxe',
+    'eq-weapon-voidBlade', 'eq-weapon-trident', 'eq-weapon-oathkeeper',
+    'eq-weapon-arcaneTome',
+    'eq-feet-strawShoes', 'eq-feet-windBoots', 'eq-feet-greaves',
+    'eq-feet-stoneBoots', 'eq-feet-emberBoots', 'eq-feet-phaseBoots',
+  ];
+
   function makeHero(scene, depth) {
     const c = scene.add.container(0, 0);
     c.body_ = scene.add.image(0, 0, 'hero').setOrigin(0.5, 1);
@@ -175,6 +211,33 @@
    * 按当前 meta.equipment 刷新五层贴图。
    * 幂等：key 没变就不动贴图引用，换装时才真正切一次。
    */
+  /*
+   * 调试钩子：仅在 URL 带 ?debug=1 时挂到 window 上，正常游玩不受影响。
+   * 目的是让自动化脚本能在无头浏览器里换装并截图，验证美术贴图真的挂上了。
+   * 生产路径完全不经过这里。
+   */
+  const DEBUG = (typeof location !== 'undefined')
+    && /[?&]debug=1/.test(location.search);
+
+  function exposeDebug(hero, state) {
+    if (!DEBUG) return;
+    window.__DBG__ = {
+      hero: hero,
+      state: state,
+      equip(slot, id) {
+        state.meta.equipment = state.meta.equipment || {};
+        state.meta.equipment[slot] = id ? { id: id, lv: 1 } : null;
+        refreshHeroEquip(hero, state);
+        return 'ok';
+      },
+      texturesAvailable() {
+        const keys = ['hero'];
+        ART_GEAR.forEach((k) => { if (hero.scene.textures.exists(k)) keys.push(k); });
+        return keys;
+      },
+    };
+  }
+
   function refreshHeroEquip(hero, state) {
     if (!hero || !hero.layers_ || !state || !state.meta) return;
     const eq = state.meta.equipment || {};
@@ -256,6 +319,17 @@
     // 残留的 path 进入下一个纹理 —— 表现为场景里出现无来源的方框。
     const _gen = g.generateTexture.bind(g);
     g.generateTexture = function (key, w, h) {
+      /*
+       * 实体美术优先。
+       *
+       * 26 种游戏实体（敌人 / 场景 / 种植 / 特效）已有美术图，尺寸与这里
+       * generateTexture 的尺寸一致，由 downsample 放进 assets/art/。
+       * 在包装层统一拦截的好处：不必改动 26 处调用点，也不会漏掉某一处。
+       * 美术缺失时照旧走矢量绘制，不会出现 Phaser 的 missing-texture 绿框。
+       */
+      if (ART_ENTITIES.indexOf(key) >= 0 && scene.textures.exists(key)) {
+        return;
+      }
       g.lineStyle(0, 0x000000, 0);
       _gen(key, w, h);
     };
@@ -310,7 +384,11 @@
     g.fillStyle(0xe8f2fa, 1); g.fillRect(30, 14, 1.4, 28);      // 剑脊高光
     g.fillStyle(0x2b2016, 1); g.fillRect(28, 40, 8, 4.5);       // 护手
     g.fillStyle(0x6b5138, 1); g.fillRect(30.5, 43, 3, 7);       // 剑柄
-    g.generateTexture('hero', 40, 60);
+    // 主角本体：tryLoad 到美术图时 textures 里已经有 'hero' 了，
+    // 这里再 generateTexture 会把美术盖掉。只有确实没有美术时才烘矢量版。
+    if (!scene.textures.exists('hero')) {
+      g.generateTexture('hero', 40, 60);
+    }
 
     /*
      * ---- 装备分层贴图 ----
@@ -325,6 +403,18 @@
      * 这正是"主角也要做左右视图"的做法。
      */
     const equipLayer = (key, draw) => {
+      /*
+       * 有美术图就用美术图，否则回退到矢量绘制。
+       *
+       * 美术资产（docs/art，96x144）已由 downsample_for_game.py 降到 40x60，
+       * 尺寸与这里 generateTexture 的 40x60 完全一致，所以可以直接当贴图用，
+       * 不需要再画一遍。先用 scene.textures.exists 探测，探测失败就走 draw()，
+       * 这样美术缺件时游戏不会崩，也不会出现 Phaser 的 missing-texture 绿框。
+       */
+      // 美术图已经在 preload 里注册成 key，存在就不要再画一遍覆盖它。
+      if (scene.textures.exists(key)) {
+        return;
+      }
       g.clear();
       draw(g);
       g.generateTexture(key, 40, 60);
@@ -1728,6 +1818,7 @@
 
       this.shadow = this.add.image(0, 0, 'shadow').setScale(0.8).setDepth(1);
       this.hero = makeHero(this, 100);
+      exposeDebug(this.hero, this.state || CURRENT_STATE);
 
       /*
        * 把背包接到本场景（Task 8）。
@@ -2239,6 +2330,7 @@
 
       this.shadow = this.add.image(0, 0, 'shadow').setDepth(1).setScale(0.8);
       this.hero = makeHero(this, 100);
+      exposeDebug(this.hero, this.state || CURRENT_STATE);
       // 主角与小怪在 1000-z（z∈[0,210] → 790~1000），
       // 刀光若放在 101 会被画在角色和怪物背后，等于看不见
       this.heroSwing = this.add.graphics().setDepth(1100);
@@ -2247,6 +2339,19 @@
       this.dmgPool = [];
       this.lastEnemyHp = {};
       this.lastShake = 0;
+
+      /*
+       * 打击感三件套的状态（Task 26）。参数全部在 C.FEEL 里，这里只存运行时。
+       *
+       * hitStopMs 是"还欠多少毫秒的停顿"。每帧先扣掉本帧的真实 dt，
+       * 只要它还是正的，就把传给 logic 的 dt 换成 0。
+       * 放渲染层而不是 logic：这是观感，不是规则 —— bot.js 直接调 L.step，
+       * 走不到这里，所以平衡阶梯不受影响。
+       */
+      this.hitStopMs = 0;
+      this.hitStopPeak = 0;   // 历史峰值，只给 smoke 断言读，不影响玩法
+      this.hitSparkPool = [];
+      this.hitSparkAt = 0;
 
       /*
        * 音效用的"上一帧快照"（Task 12）。
@@ -2424,8 +2529,13 @@
       const ui = global.EmberfieldUI;
       L.returnToFarm(this.state);
       if (ui && typeof ui.save === 'function') ui.save(this.state);
-      // 先离开 Run 场景，再进 Hub —— 顺序反了会短暂出现两个活动场景。
-      this.scene.stop();
+      /*
+       * 只调 scene.start('Hub', ...)：它会把 Run 停掉再启动 Hub。
+       *
+       * 之前这里先写了一句 this.scene.stop()，场景切换日志里于是出现
+       * 两次 stop(Run)（第二次是对已停场景的空操作，无害但噪音）。
+       * 引擎的 start() 已经保证"先停旧的再起新的"，自己再停一次是多余的。
+       */
       this.scene.start('Hub', { autoRun: { bossTier: bossTier || null, difficultyId: difficultyId || null } });
     }
 
@@ -2557,6 +2667,89 @@
         this.sfxBossSeen = true;
         GameAudio.play('boss');
       }
+    }
+
+    /*
+     * 命中火花（Task 26）。复用 'spark' 贴图 —— 就是给空中火星用的那张
+     * 6×6 ADD 小图，所以和场景里的余烬是同一套视觉语言，不引入新色。
+     *
+     * 为什么自己做池而不是用 Phaser 的粒子发射器：
+     * 命中火花是**单次爆发**、生命周期只有两三百毫秒、每秒可能触发几十次。
+     * 每命中一次就新建一个 emitter，会在连打时留下一堆待回收的发射器对象；
+     * 手写池只有固定 N 张图 + 一个数组，代价恒定。
+     *
+     * 方向：沿命中方向的扇形，不是全向爆炸 ——
+     * 挥砍是定向的，碎片应该朝被砍飞的那边走。
+     */
+    spawnHitSparks(e, seg, killed) {
+      const F = C.FEEL.spark;
+      const n = killed ? F.killBurst : (F.countPerHit[seg] || F.countPerHit[0]);
+      const p = this.state.run.player;
+      const facing = p ? p.facing : 1;
+      // 火花是屏幕空间的自由粒子，但起点要跟着敌人的世界坐标走。
+      const base = toScreen(e.x, e.z, (e.h || 0) + 20);
+      for (let i = 0; i < n; i++) {
+        let sp = this.hitSparkPool.find((s) => !s.live);
+        if (!sp) {
+          if (this.hitSparkPool.length >= 96) break;   // 硬上限，防连打时爆池
+          sp = { img: this.add.image(0, 0, 'spark').setDepth(2600)
+            .setBlendMode(Phaser.BlendModes.ADD), live: false };
+          this.hitSparkPool.push(sp);
+        }
+        // 扇形张角：以朝向为中心 ±spread/2
+        const a = facing > 0
+          ? (Math.random() - 0.5) * F.spread
+          : Math.PI + (Math.random() - 0.5) * F.spread;
+        const spd = F.speedMin + Math.random() * (F.speedMax - F.speedMin);
+        sp.vx = Math.cos(a) * spd;
+        // 屏幕 y 轴向下，而"向上溅"是负的
+        sp.vy = Math.sin(a) * spd * 0.5 - (30 + Math.random() * 50);
+        sp.x = base.sx + (Math.random() - 0.5) * 10;
+        sp.y = base.sy + (Math.random() - 0.5) * 10;
+        sp.life = F.lifeMin + Math.random() * (F.lifeMax - F.lifeMin);
+        sp.maxLife = sp.life;
+        sp.live = true;
+        sp.img.setVisible(true)
+          .setPosition(sp.x, sp.y)
+          .setScale(0.5 + Math.random() * 0.7)
+          .setAlpha(1);
+      }
+    }
+
+    updateHitSparks(dt) {
+      const ms = dt * 1000;
+      for (let i = 0; i < this.hitSparkPool.length; i++) {
+        const s = this.hitSparkPool[i];
+        if (!s.live) continue;
+        s.life -= ms;
+        if (s.life <= 0) { s.live = false; s.img.setVisible(false); continue; }
+        s.x += s.vx * dt;
+        s.y += s.vy * dt;
+        s.vy += 620 * dt;                        // 和掉落物同一档重力，观感统一
+        const k = s.life / s.maxLife;            // 1 → 0
+        s.img.setPosition(s.x, s.y).setAlpha(k).setScale(0.2 + k * 0.9);
+      }
+    }
+
+    /*
+     * 受击停顿 + 屏震（Task 26）。
+     *
+     * 停顿只对**普攻**生效：技能已经有自己的屏震与特效，
+     * 再加停顿会让 slam/nova 卡成 PPT，所以传进来的是连段段号。
+     *
+     * 停顿取**最大值**而不是累加：一刀扫中 5 只怪若累加成 200ms，
+     * 连打时画面会冻成幻灯片。取最大值保证"这刀最重的那一下"决定长度。
+     */
+    onHitFeedback(e, seg, killed) {
+      const F = C.FEEL;
+      let ms = F.hitStop.perHit[seg] || F.hitStop.perHit[0];
+      if (killed) ms += F.hitStop.killBonus;
+      this.hitStopMs = Math.min(F.hitStop.max, Math.max(this.hitStopMs, ms));
+
+      const dur = F.shake.duration[seg] || 0;
+      const inten = F.shake.intensity[seg] || 0;
+      if (dur > 0 && inten > 0) this.cameras.main.shake(dur, inten);
+      if (killed) this.cameras.main.shake(F.shake.kill, F.shake.killIntensity);
     }
 
     /*
@@ -2728,7 +2921,28 @@
       const input = this.input2.read();
       const stepX0 = run.player.x;
       const stepZ0 = run.player.z;
-      L.step(this.state, input, dt);
+
+      /*
+       * 受击停顿（Task 26）：命中后的几十毫秒里，逻辑时间停住，画面继续画。
+       *
+       * 用"扣减欠账"而不是"记一个结束时刻"，是因为帧时长会抖：
+       * 记时刻的话，一次卡顿之后的暂停会突然比设定值长很多。
+       *
+       * 只冻结 logic，不冻结渲染 —— 白闪、伤害数字、火花全都照常推进，
+       * 否则玩家看到的是"整个游戏卡住了"，而不是"我砍中了很重的一刀"。
+       */
+      let logicDt = dt;
+      if (this.hitStopMs > 0) {
+        this.hitStopMs = Math.max(0, this.hitStopMs - dt * 1000);
+        logicDt = 0;
+      }
+      // 峰值记录：供浏览器 smoke 断言"停顿真的发生过"。
+      // 外部按帧轮询读不到它 —— 命中发生在本帧稍后，而轮询间隔远大于
+      // 一次停顿的长度（40~150ms），必然采样在两次停顿之间。
+      // 所以峰值必须在**游戏内部**记，不能靠探针在外部观测。
+      if (this.hitStopMs > this.hitStopPeak) this.hitStopPeak = this.hitStopMs;
+
+      L.step(this.state, input, logicDt);
       // 脚步（Task 23 / 设计 §3.2）：位移驱动，不是定时器。
       // step 之内可能已经结算（run 被置空），所以只在"这一局还在打"时踩。
       const stepDx = run.player.x - stepX0;
@@ -3373,6 +3587,20 @@
            * 同帧多只怪被一刀扫到时会连着调多次 —— 25ms 节流让它们合成一声。
            */
           GameAudio.play(p.comboSwingStep === 3 ? 'crit' : 'hit');
+
+          /*
+           * 打击感三件套（Task 26）。和上面那声命中音同一个位置 ——
+           * 这里是全渲染层唯一"知道打中了谁、掉了多少、是不是打死了"的地方。
+           *
+           * seg 取 1..3：comboSwingStep 在没挥击时可能是 0 或 undefined
+           * （技能伤害、灼烧跳伤都不经过普攻），这时按第 1 段处理 ——
+           * 它们是持续伤害，给重劈级别的顿挫会变成连续卡顿。
+           */
+          const seg = Math.min(Math.max(p.comboSwingStep || 1, 1), 3) - 1;
+          const killed = e.hp <= 0;
+          this.onHitFeedback(e, seg, killed);
+          this.spawnHitSparks(e, seg, killed);
+
           const es = toScreen(e.x, e.z, e.h);
           let tb = this.dmgPool.pop();
           if (!tb) tb = this.add.text(0, 0, '', {
@@ -3395,6 +3623,9 @@
       Object.keys(this.lastEnemyHp).forEach((id) => {
         if (!aliveIds[id]) delete this.lastEnemyHp[id];
       });
+
+      // ---- 命中火花：对象池推进 ----
+      this.updateHitSparks(dt);
 
       // ---- 冲刺残影：三节逐渐变淡的拖影，让"加速"看得见 ----
       if (p.runTrail) {
@@ -3922,6 +4153,33 @@
           const key = 'boss_' + t + '_' + d;
           this.load.image(key, 'assets/boss_' + t + '_' + d + '.png');
         });
+      });
+
+      /*
+       * ---- 主角与装备美术 ----
+       *
+       * 来源：docs/art/ 的 96x144 木刻资产，经 downsample_for_game.py
+       * 降到运行时的 40x60。美术只画**右视图**，左视图靠 setFlipX 镜像，
+       * 与下面 equipLayer 原有的约定一致。
+       *
+       * 加载失败不致命：buildTextures 里仍保留矢量绘制作为兜底，
+       * 图片没到位时角色照常可玩，只是没有新美术。
+       */
+      // 主角本体直接用运行时 key 'hero'，这样 makeHero 里所有
+      // add.image(0,0,'hero') 都不必改。文件缺失时 load 会 404，
+      // buildTextures 里的 generateTexture('hero') 仍会补上矢量版本。
+      this.load.image('hero', 'assets/art/hero_base_right.png');
+      // 装备贴图直接用游戏内的 key（eq-head-ironHelm 等），
+      // 文件名把 '-' 换成 '_'。这样 refreshHeroEquip 一行都不用改，
+      // setTexture(key) 拿到的就是美术图。
+      ART_GEAR.forEach((key) => {
+        this.load.image(key, 'assets/art/' + key.replace(/-/g, '_') + '.png');
+      });
+
+      // 游戏实体：敌人 / 场景 / 种植 / 特效。文件缺失只是没有美术，
+      // buildTextures 里的矢量版本仍然会补上，不会崩。
+      ART_ENTITIES.forEach((key) => {
+        this.load.image(key, 'assets/art/' + key + '.png');
       });
     }
 

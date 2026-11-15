@@ -1,0 +1,6 @@
+{
+  "out": "game/assets/ludo",
+  "defaults": {},
+  "engine": "texturepacker",
+  "max_credits": 0
+}

@@ -337,6 +337,67 @@ const SCRIPT = `
     out.audioSlashDelta = ((out.audioCalls && out.audioCalls.slash) || 0) - b0;
   }
 
+  // ---- 3a3. 打击感三件套真的在跑（Task 26）----
+  // 桩测试能证明 FEEL 表的取值范围合法，但证明不了"砍中时真的有火花喷出来、
+  // hitStopMs 真的被抬起来"。这两件事只有活浏览器能给证据。
+  {
+    const scene = window.EmberfieldApp.__scene;
+    const st = window.EmberfieldApp.__state;
+    // FEEL 表已被场景读到（不是 undefined）
+    out.feelHitStopPerHit = (window.GameConfig && window.GameConfig.FEEL)
+      ? window.GameConfig.FEEL.hitStop.perHit.join(',') : null;
+    out.feelShakeThird = (window.GameConfig && window.GameConfig.FEEL)
+      ? window.GameConfig.FEEL.shake.intensity[2] : null;
+
+    if (scene && st && st.run) {
+      // 强攻一段时间，让普攻真的命中：先贴近最近的敌人再砍。
+      const r0 = st.run;
+      const p0 = r0.player;
+      if (r0.enemies.length) {
+        let near = r0.enemies[0];
+        r0.enemies.forEach((e) => {
+          if (Math.hypot(e.x - p0.x, e.z - p0.z) < Math.hypot(near.x - p0.x, near.z - p0.z)) near = e;
+        });
+        // 直接把玩家挪到怪物旁边（测试探针允许直接改状态），再连打
+        p0.x = near.x - 30;
+        p0.z = near.z;
+        p0.facing = 1;
+
+        let maxStop = 0, sparksSeen = 0, sparksAlive = 0;
+        for (let i = 0; i < 26; i++) {
+          key('keydown', 'KeyJ', 74);
+          await wait(60);
+          key('keyup', 'KeyJ', 74);
+          await wait(90);
+          // 探针：读每一帧里 hitStopMs 的峰值与火花池的活跃数
+          // 读游戏内部记的峰值：命中发生在本帧稍后，外部轮询必然采样在
+          // 两次停顿之间（停顿只有 40~150ms，而轮询间隔 150ms）。
+          const hs = scene.hitStopPeak || 0;
+          if (hs > maxStop) maxStop = hs;
+          const pool = scene.hitSparkPool || [];
+          let live = 0;
+          pool.forEach((s) => { if (s.live) live += 1; });
+          if (live > sparksAlive) sparksAlive = live;
+          if (live > 0) sparksSeen += 1;
+          // 每次重新贴近，保证一直在打击范围内
+          if (r0.enemies.length) {
+            let n2 = r0.enemies[0];
+            r0.enemies.forEach((e) => {
+              if (Math.hypot(e.x - p0.x, e.z - p0.z) < Math.hypot(n2.x - p0.x, n2.z - p0.z)) n2 = e;
+            });
+            p0.x = n2.x - 30; p0.z = n2.z;
+          }
+        }
+        out.feelMaxHitStopMs = Math.round(maxStop);
+        out.feelSparksAlivePeak = sparksAlive;
+        out.feelSparkFrames = sparksSeen;
+        out.feelSparkPoolSize = (scene.hitSparkPool || []).length;
+        // 对象池必须复用而不是无限增长
+        out.feelPoolBounded = (scene.hitSparkPool || []).length <= 96;
+      }
+    }
+  }
+
   // ---- 3b. 草在动（视觉参数化，不是静态贴图）----
   // 断言"草各自独立摆动"而不是"画面上有草"：
   // 同相位的整片平移是常见的错误实现，它看起来像一块板子在晃。
@@ -2651,6 +2712,30 @@ const SCRIPT = `
   }
 
   // ---- 3f. 「再来一局」：难度继承 + 只活一个场景 + Tab/ESC 可用 ----
+
+  /*
+   * 场景切换日志。用来判断"一次点击执行了几遍动作" ——
+   * 最终 state 可能碰巧落回正确值，但 stop/start 的**次数**骗不了人。
+   * 挂在场景管理器的 start/stop 上，只记录、不改变行为。
+   */
+  const transitionLog = [];
+  (function () {
+    if (window.__smTransitionHooked) return;
+    window.__smTransitionHooked = true;
+    const sm = window.__game.scene;
+    const realStart = sm.start.bind(sm);
+    const realStop = sm.stop.bind(sm);
+    sm.start = function (key, data) {
+      transitionLog.push('start(' + key + (data ? '#' + JSON.stringify(data) : ',null') + ')');
+      window.__smTransitionLog = transitionLog;
+      return realStart(key, data);
+    };
+    sm.stop = function (key) {
+      transitionLog.push('stop(' + (key || '?') + ')');
+      window.__smTransitionLog = transitionLog;
+      return realStop(key);
+    };
+  })();
   /*
    * PM 报（2026-11-13）三件事，都在这一段里钉住：
    *   1. 「不管在什么关卡死了点再来一局都回到了林地难度」；
@@ -2768,6 +2853,96 @@ const SCRIPT = `
     }
 
     out.restartErrs = window.__pageErrs ? window.__pageErrs.length : 0;
+
+    // ---- 3g. 结算卡三个出口：各自去哪，而且只执行一次 ----
+    /*
+     * 2026-11-13 PM 报「点击 esc 里的回基地回不去了，反而会重新开一局」。
+     * 根因：结算卡上的按钮自己 closePanel() 之后**又**调了一次自己的动作，
+     * 而 closePanel 内部也会调 panelCallback.onClose（那是同一个动作），
+     * 于是动作执行两遍。回基地跑两遍 -> 第二遍在 phase 已是 farm 之后
+     * 再建一次基地并重新触发 autoRun -> 看起来就是"重开一局"。
+     *
+     * 这段用**场景切换日志**做判据，而不是只看最终 state：
+     * 两遍执行的痕迹在日志里表现为 stop/start 成对出现两次，最终 state
+     * 可能碰巧落回正确值（我实测就遇到过），只看 state 会漏判。
+     * 这里必须每档单独把场景复位干净，否则上一档的读数会串进来
+     * （我第一版就是这么被骗过一次，见 browser-test-evidence 的记录）。
+     */
+    const resetToRun = async () => {
+      if (scR.isActive('Run')) scR.stop('Run');
+      if (!scR.isActive('Hub')) { scR.start('Hub'); await wait(450); }
+      stR.phase = 'farm';
+      stR.run = null;
+      const h = scR.getScene('Hub');
+      stR.hub = stR.hub || {};
+      h.panelOpen = false;
+      window.EmberfieldUI.closePanel();
+      window.BagHud.close();
+      await wait(150);
+      transitionLog.length = 0;
+      scR.getScene('Hub').startBossRun('hell');
+      await wait(1200);
+    };
+
+    const exitCases = [];
+    // (a) 回基地 —— 必须到基地，且不能顺手开一局
+    {
+      await resetToRun();
+      transitionLog.length = 0;
+      document.getElementById('btn-back').click();
+      await wait(1600);
+      const hub = scR.getScene('Hub');
+      exitCases.push({
+        name: 'back',
+        phase: stR.phase,
+        runNull: !stR.run,
+        runActive: scR.isActive('Run'),
+        hubActive: scR.isActive('Hub'),
+        stops: transitionLog.filter((x) => x.indexOf('stop(Run)') === 0).length,
+        starts: transitionLog.filter((x) => x.indexOf('start(Hub') === 0).length,
+        hubRunKick: transitionLog.filter((x) => x.indexOf('start(Run') === 0).length,
+      });
+    }
+    // (b) ✕ —— 与回基地等价
+    {
+      await resetToRun();
+      transitionLog.length = 0;
+      document.getElementById('panelX').click();
+      await wait(1600);
+      exitCases.push({
+        name: 'x',
+        phase: stR.phase,
+        runNull: !stR.run,
+        runActive: scR.isActive('Run'),
+        hubActive: scR.isActive('Hub'),
+        starts: transitionLog.filter((x) => x.indexOf('start(Hub') === 0).length,
+        hubRunKick: transitionLog.filter((x) => x.indexOf('start(Run') === 0).length,
+      });
+    }
+    // (c) 再来一局 —— 必须真的再开一局，而且档位不丢
+    {
+      await resetToRun();
+      transitionLog.length = 0;
+      document.getElementById('btn-again').click();
+      await wait(2000);
+      exitCases.push({
+        name: 'again',
+        phase: stR.phase,
+        runActive: scR.isActive('Run'),
+        hubActive: scR.isActive('Hub'),
+        isBoss: !!(stR.run && stR.run.isBossRun),
+        tier: stR.run && stR.run.bossTier,
+        diff: stR.run && stR.run.difficultyId,
+        starts: transitionLog.filter((x) => x.indexOf('start(Hub') === 0).length,
+      });
+    }
+    out.exitCases = exitCases;
+
+    // 收尾复位
+    if (scR.isActive('Run')) scR.stop('Run');
+    if (!scR.isActive('Hub')) { scR.start('Hub'); await wait(450); }
+    stR.phase = 'farm';
+    stR.run = null;
 
     // 收尾：回到 Hub，别把 Run 状态留给后面的段落
     if (scR.isActive('Run')) scR.stop('Run');
@@ -3413,6 +3588,44 @@ const SMALLSCRIPT = `
     });
     eq(r.restartErrs, 0, '重开全过程中页面没有未捕获异常（含已销毁场景上的 setTexture）',
        r.restartErrs);
+  }
+
+  console.log('\n--- 3g. 结算卡三个出口：各去各的地方，而且只执行一次 ---');
+  {
+    const cases = r.exitCases || [];
+    eq(cases.length, 3, '回基地 / ✕ / 再来一局 三个出口都点了', cases.length);
+    const byName = {};
+    cases.forEach((c) => { byName[c.name] = c; });
+
+    // (a) 回基地：必须真的回到基地，不能顺手开一局
+    const B = byName.back || {};
+    eq(B.phase, 'farm',
+       'PM 报的现象：点「回基地」必须真的回到基地（不是又进战斗）', B.phase);
+    eq(B.runActive, false, '点「回基地」后 Run 场景没有起来', B.runActive);
+    eq(B.hubActive, true, '点「回基地」后 Hub 场景活着', B.hubActive);
+    eq(B.runNull, true, '点「回基地」后 state.run 被清空（不是留着一局）', B.runNull);
+    eq(B.starts, 1,
+       '一次点击只发生一次 scene.start(Hub)：执行两遍的话这里会是 2，' +
+       '第二遍会在 phase 已是 farm 之后再建一次基地并触发 autoRun', B.starts);
+    eq(B.hubRunKick, 0, '点「回基地」不会连带开一局（hubRunKick 必须是 0）', B.hubRunKick);
+
+    // (b) ✕ 与回基地等价
+    const X = byName.x || {};
+    eq(X.phase, 'farm', '✕ 关掉结算卡等价于回基地', X.phase);
+    eq(X.runActive, false, '✕ 之后没有战斗跑起来', X.runActive);
+    eq(X.hubActive, true, '✕ 之后在基地里（不是卡在冻结的战场上）', X.hubActive);
+    eq(X.starts, 1, '✕ 也只执行一次动作', X.starts);
+    eq(X.hubRunKick, 0, '✕ 不会连带开一局', X.hubRunKick);
+
+    // (c) 再来一局：必须真的再开一局，档位不丢
+    const A = byName.again || {};
+    eq(A.phase, 'run',
+       '点「再来一局」必须真的开新一局（不能变成回基地）', A.phase);
+    eq(A.runActive, true, '「再来一局」后 Run 场景活着', A.runActive);
+    eq(A.hubActive, false, '「再来一局」后 Hub 已停（两个场景并存会抵消 Tab/ESC）', A.hubActive);
+    eq(A.isBoss, true, '「再来一局」仍是 Boss 局', A.isBoss);
+    eq(A.tier, 'hell', '「再来一局」记住了地狱档', A.tier);
+    eq(A.diff, 'forge', '「再来一局」记住了熔炉难度', A.diff);
   }
 
   console.log('\n--- 3e. 按 J 进田地：不能卡在黑屏 ---');
@@ -4103,6 +4316,38 @@ const SMALLSCRIPT = `
        '按 1 喝药会触发 potion', JSON.stringify(calls));
     ok(r.audioSlashDelta >= 1,
        '四连挥击里至少响过一次 slash（不是只在首帧响）', r.audioSlashDelta);
+  }
+
+  /*
+   * 打击感三件套（Task 26）。判据全部是**活浏览器读数**：
+   *
+   *   - hitStopMs 峰值 > 0  → 命中时逻辑时间真的被冻住过。
+   *     这是整个任务的核心机制，桩测试完全证明不了它。
+   *   - 火花池有活跃粒子   → 命中时真的有东西喷出来。
+   *   - 池大小 <= 96       → 复用了，不是每次命中都新建。
+   *
+   * 不断言峰值等于配置值（40/45/90）：探针每 90ms 采一次，
+   * 采到的只可能是非零、不可能是精确值。断言"精确等于 90"会是一个
+   * 必然偶发失败的测试 —— 那种测试比没有更糟。
+   */
+  ok(r.feelHitStopPerHit === '40,45,90',
+     'FEEL.hitStop.perHit 已被页面读到（渲染层拿得到这张表）',
+     String(r.feelHitStopPerHit));
+  ok(r.feelShakeThird === 0.003,
+     'FEEL.shake.intensity[2] 已被页面读到', String(r.feelShakeThird));
+
+  if (r.feelMaxHitStopMs !== undefined && r.feelMaxHitStopMs !== null) {
+    ok(r.feelMaxHitStopMs > 0,
+       '命中时 hitStopMs 被抬起过（受击停顿真的生效）',
+       '峰值 ' + r.feelMaxHitStopMs + 'ms');
+    ok(r.feelMaxHitStopMs <= 150,
+       'hitStopMs 峰值不超过上限 150ms', String(r.feelMaxHitStopMs));
+    ok(r.feelSparksAlivePeak > 0,
+       '命中时火花池里有活跃粒子（火花真的喷了）',
+       '峰值 ' + r.feelSparksAlivePeak + ' 颗');
+    ok(r.feelPoolBounded === true,
+       '火花池有上限（复用了，不是每次新建）',
+       '池大小 ' + r.feelSparkPoolSize);
   }
 
   console.log('\n' + '='.repeat(56));
