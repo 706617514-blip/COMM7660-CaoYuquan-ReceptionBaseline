@@ -1128,6 +1128,27 @@
    */
   const BOSS_TIER_DIFF = { normal: 'wood', hard: 'deep', hell: 'forge' };
 
+  /**
+   * 取得（必要时创建）纸条的 DOM 浮层。**全项目只有这一处创建它。**
+   *
+   * 为什么必须收敛到一处：RunScene（彩蛋演出）与 FarmScene（相框回看）
+   * 都要显示同一张纸条。两处各自 createElement 会产生两个
+   * id="eggLetter" 的元素，而 getElementById 只拿得到第一个 ——
+   * 后创建的那个永远关不掉（关闭逻辑改的是查到的那个）。
+   * 这类 bug 只在"玩家先看了演出、之后又去农场看"时出现，
+   * 单次操作的测试抓不到。
+   */
+  function ensureEggLetterEl() {
+    let el = document.getElementById('eggLetter');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'eggLetter';
+      el.innerHTML = '<div id="eggLetterInner"></div>';
+      document.getElementById('frame').appendChild(el);
+    }
+    return el;
+  }
+
   function createInput(scene) {
     const down = Object.create(null);
 
@@ -2877,12 +2898,16 @@
          * 纸条用 DOM 浮层而不是 Phaser 文本（与背包同一做法，见 baghud.js）：
          * 中文换行、行距、居中排版用 DOM 一次就做对了，
          * 用 Phaser 的 BitmapText/Text 要把这些重做一遍且效果更差。
+         *
+         * ⚠️ 必须复用已有元素。踩过一次：这里原本无条件 createElement，
+         * 而 FarmScene.openLetter 也在建同一个 id 的元素。
+         * 玩家先在远征里看了一次纸条、之后去农场再看一次，
+         * 页面上就有两个 id="eggLetter" 的 div ——
+         * getElementById 只拿得到第一个，于是**后创建的那个永远关不掉**
+         * （closeLetter 改的是另一个元素的 display）。
+         * 改成先查后建，两处共用同一个元素。
          */
-        const el = document.createElement('div');
-        el.id = 'eggLetter';
-        el.innerHTML = '<div id="eggLetterInner"></div>';
-        document.getElementById('frame').appendChild(el);
-        this.eggLetter = el;
+        this.eggLetter = ensureEggLetterEl();
         this.eggLetterText = '';
         this.eggLetterFade = 0;
       }
@@ -4438,13 +4463,7 @@
     openLetter() {
       if (this.letterOpen) return;
       this.letterOpen = true;
-      let el = document.getElementById('eggLetter');
-      if (!el) {
-        el = document.createElement('div');
-        el.id = 'eggLetter';
-        el.innerHTML = '<div id="eggLetterInner"></div>';
-        document.getElementById('frame').appendChild(el);
-      }
+      const el = ensureEggLetterEl();
       document.getElementById('eggLetterInner').textContent = C.EGG.letterText;
       el.style.display = 'flex';
       el.style.opacity = '1';
