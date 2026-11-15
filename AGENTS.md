@@ -123,3 +123,25 @@ Agents working in this repository must not:
 
 Skills adapted from third-party sources retain their original attribution and version in the
 skill's own `SKILL.md` and in `records/skill-log.md`.
+
+<!-- ludo:start (managed by `ludo init`; edits inside are replaced) -->
+## Game assets: the ludo CLI
+
+This project generates game assets (sprites, animations, images, 3D, video, audio) with the
+`ludo` CLI. Settings live in `.ludo.json`; every file generated so far is listed in
+`ludo-assets.json`.
+
+- `ludo toolbox` is free and offline, with no account: slicing and joining spritesheets, GIFs, a
+  sprite's pivot and collision box, engine export, palettes, tiles, a sound's loudness and loop.
+  Use it instead of writing your own script. Everything else generates with Ludo AI: it needs a
+  paid plan and costs credits; `ludo pricing` (free) has the details.
+- Run `ludo agent-help` once, and `ludo <group> <command> --help` before using a command.
+- Check `ludo assets` before generating: the asset may already exist. `ludo assets redo <file>`
+  remakes one with changed flags.
+- Every generation costs credits. Check the price with `--dry-run`, cap it with `--max-credits`, and
+  stop and ask the user when the spending budget is reached (exit code 11).
+- `--n 4` makes four variations; look at them, keep the best, delete the rest.
+- Several assets at once: write a jobs file and run `ludo batch jobs.json`.
+- Never ask the user to paste an API key; ask them to run `ludo login` themselves.
+- Hit a limitation or a bug? `ludo feedback "..." --category limitation`.
+<!-- ludo:end -->

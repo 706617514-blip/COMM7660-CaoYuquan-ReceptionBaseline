@@ -21,3 +21,18 @@ exports/
 
 # smoke.js 每次运行重写，是生成物不是源码
 tests/browser/_driver.js
+.ludo/
+
+# 美术中间产物（约 68MB）：大尺寸原图与评审过程图。
+# 最终 40x60 运行时资产在 game/assets/art/，管线源码在 docs/art/*.py，
+# 提示词在 docs/art/prompts/ —— 来源与结局都在仓库里，中间态不入库。
+# 需要时可由 docs/art/gen_direct.py + downsample_for_game.py 重新生成。
+docs/art/generated/
+docs/art/review/
+docs/art/entities/
+docs/art/armed/
+docs/art/sheet/
+docs/art/composites/
+docs/art/anchor/
+docs/art/anchor_refs/
+docs/art/refs/

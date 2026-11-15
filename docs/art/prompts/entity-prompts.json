@@ -1,0 +1,462 @@
+{
+ "generated_by": "build_entity_prompts.py",
+ "purpose": "non-character game entities: enemies, scenery, farming, effects",
+ "total": 35,
+ "items": [
+  {
+   "id": "ent-crawler-right",
+   "category": "entity_enemy",
+   "entity": "crawler",
+   "name_zh": "爬虫",
+   "view": "right",
+   "size": [
+    46,
+    46
+   ],
+   "file": "ent_crawler_right.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 爬虫 as the player sees it during play.\nSUBJECT: a low scuttling insect-like crawling horror, wedge-shaped armoured carapace tapering to a forward point, two small glowing pale-yellow eyes set low, a row of short spikes along the spine, six stubby legs braced wide.\nVIEW: strict orthographic SIDE VIEW facing RIGHT, no perspective. For the left view, the creature must face the opposite way — render it from that side rather than mirroring the right view.\nMATERIAL AND COLOUR: rust-red and burnt umber chitin: base #a8402a, lit plate #d97a5c, deep shadow #5a2515, eye glow #ffd9a0. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 46x46 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-crawler-left",
+   "category": "entity_enemy",
+   "entity": "crawler",
+   "name_zh": "爬虫",
+   "view": "left",
+   "size": [
+    46,
+    46
+   ],
+   "file": "ent_crawler_left.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 爬虫 as the player sees it during play.\nSUBJECT: a low scuttling insect-like crawling horror, wedge-shaped armoured carapace tapering to a forward point, two small glowing pale-yellow eyes set low, a row of short spikes along the spine, six stubby legs braced wide.\nVIEW: strict orthographic SIDE VIEW facing LEFT, no perspective (the same creature seen from the opposite side). For the left view, the creature must face the opposite way — render it from that side rather than mirroring the right view.\nMATERIAL AND COLOUR: rust-red and burnt umber chitin: base #a8402a, lit plate #d97a5c, deep shadow #5a2515, eye glow #ffd9a0. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 46x46 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-crawler-back",
+   "category": "entity_enemy",
+   "entity": "crawler",
+   "name_zh": "爬虫",
+   "view": "back",
+   "size": [
+    46,
+    46
+   ],
+   "file": "ent_crawler_back.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 爬虫 as the player sees it during play.\nSUBJECT: a low scuttling insect-like crawling horror, wedge-shaped armoured carapace tapering to a forward point, two small glowing pale-yellow eyes set low, a row of short spikes along the spine, six stubby legs braced wide.\nVIEW: strict orthographic BACK VIEW seen directly from behind, no perspective. For the left view, the creature must face the opposite way — render it from that side rather than mirroring the right view.\nMATERIAL AND COLOUR: rust-red and burnt umber chitin: base #a8402a, lit plate #d97a5c, deep shadow #5a2515, eye glow #ffd9a0. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 46x46 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-crawler-34",
+   "category": "entity_enemy",
+   "entity": "crawler",
+   "name_zh": "爬虫",
+   "view": "34",
+   "size": [
+    46,
+    46
+   ],
+   "file": "ent_crawler_34.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 爬虫 as the player sees it during play.\nSUBJECT: a low scuttling insect-like crawling horror, wedge-shaped armoured carapace tapering to a forward point, two small glowing pale-yellow eyes set low, a row of short spikes along the spine, six stubby legs braced wide.\nVIEW: THREE-QUARTER view from the front-side at roughly 45 degrees, near-orthographic, no strong perspective distortion. For the left view, the creature must face the opposite way — render it from that side rather than mirroring the right view.\nMATERIAL AND COLOUR: rust-red and burnt umber chitin: base #a8402a, lit plate #d97a5c, deep shadow #5a2515, eye glow #ffd9a0. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 46x46 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-runner-right",
+   "category": "entity_enemy",
+   "entity": "runner",
+   "name_zh": "冲刺虫",
+   "view": "right",
+   "size": [
+    46,
+    43
+   ],
+   "file": "ent_runner_right.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 冲刺虫 as the player sees it during play.\nSUBJECT: a lean sprinting insect predator, forward-leaning aerodynamic body, long powerful hind legs coiled to spring, a sharp horn spike on the head, small bright eyes.\nVIEW: strict orthographic SIDE VIEW facing RIGHT, no perspective. For the left view, the creature must face the opposite way — render it from that side rather than mirroring the right view.\nMATERIAL AND COLOUR: charcoal and ember: dark carapace #2a2118, lit carapace #6b5232, hot orange underside glow #ff7a3c, eye shine #ffd9a0. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 46x43 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-runner-left",
+   "category": "entity_enemy",
+   "entity": "runner",
+   "name_zh": "冲刺虫",
+   "view": "left",
+   "size": [
+    46,
+    43
+   ],
+   "file": "ent_runner_left.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 冲刺虫 as the player sees it during play.\nSUBJECT: a lean sprinting insect predator, forward-leaning aerodynamic body, long powerful hind legs coiled to spring, a sharp horn spike on the head, small bright eyes.\nVIEW: strict orthographic SIDE VIEW facing LEFT, no perspective (the same creature seen from the opposite side). For the left view, the creature must face the opposite way — render it from that side rather than mirroring the right view.\nMATERIAL AND COLOUR: charcoal and ember: dark carapace #2a2118, lit carapace #6b5232, hot orange underside glow #ff7a3c, eye shine #ffd9a0. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 46x43 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-runner-back",
+   "category": "entity_enemy",
+   "entity": "runner",
+   "name_zh": "冲刺虫",
+   "view": "back",
+   "size": [
+    46,
+    43
+   ],
+   "file": "ent_runner_back.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 冲刺虫 as the player sees it during play.\nSUBJECT: a lean sprinting insect predator, forward-leaning aerodynamic body, long powerful hind legs coiled to spring, a sharp horn spike on the head, small bright eyes.\nVIEW: strict orthographic BACK VIEW seen directly from behind, no perspective. For the left view, the creature must face the opposite way — render it from that side rather than mirroring the right view.\nMATERIAL AND COLOUR: charcoal and ember: dark carapace #2a2118, lit carapace #6b5232, hot orange underside glow #ff7a3c, eye shine #ffd9a0. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 46x43 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-runner-34",
+   "category": "entity_enemy",
+   "entity": "runner",
+   "name_zh": "冲刺虫",
+   "view": "34",
+   "size": [
+    46,
+    43
+   ],
+   "file": "ent_runner_34.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 冲刺虫 as the player sees it during play.\nSUBJECT: a lean sprinting insect predator, forward-leaning aerodynamic body, long powerful hind legs coiled to spring, a sharp horn spike on the head, small bright eyes.\nVIEW: THREE-QUARTER view from the front-side at roughly 45 degrees, near-orthographic, no strong perspective distortion. For the left view, the creature must face the opposite way — render it from that side rather than mirroring the right view.\nMATERIAL AND COLOUR: charcoal and ember: dark carapace #2a2118, lit carapace #6b5232, hot orange underside glow #ff7a3c, eye shine #ffd9a0. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 46x43 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-spitter-right",
+   "category": "entity_enemy",
+   "entity": "spitter",
+   "name_zh": "吐酸虫",
+   "view": "right",
+   "size": [
+    50,
+    50
+   ],
+   "file": "ent_spitter_right.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 吐酸虫 as the player sees it during play.\nSUBJECT: a bloated squat acid-spitting creature, heavy rounded body, a swollen translucent green venom sac on its back, ridged wrinkled hide, wide dark eyes, a small dripping maw.\nVIEW: strict orthographic SIDE VIEW facing RIGHT, no perspective. For the left view, the creature must face the opposite way — render it from that side rather than mirroring the right view.\nMATERIAL AND COLOUR: violet hide with a green sac: hide #5a4d80, lit hide #7a68a8, deep shadow #241f33, venom sac #7ab84a with highlight #bfe88a. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 50x50 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-spitter-left",
+   "category": "entity_enemy",
+   "entity": "spitter",
+   "name_zh": "吐酸虫",
+   "view": "left",
+   "size": [
+    50,
+    50
+   ],
+   "file": "ent_spitter_left.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 吐酸虫 as the player sees it during play.\nSUBJECT: a bloated squat acid-spitting creature, heavy rounded body, a swollen translucent green venom sac on its back, ridged wrinkled hide, wide dark eyes, a small dripping maw.\nVIEW: strict orthographic SIDE VIEW facing LEFT, no perspective (the same creature seen from the opposite side). For the left view, the creature must face the opposite way — render it from that side rather than mirroring the right view.\nMATERIAL AND COLOUR: violet hide with a green sac: hide #5a4d80, lit hide #7a68a8, deep shadow #241f33, venom sac #7ab84a with highlight #bfe88a. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 50x50 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-spitter-back",
+   "category": "entity_enemy",
+   "entity": "spitter",
+   "name_zh": "吐酸虫",
+   "view": "back",
+   "size": [
+    50,
+    50
+   ],
+   "file": "ent_spitter_back.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 吐酸虫 as the player sees it during play.\nSUBJECT: a bloated squat acid-spitting creature, heavy rounded body, a swollen translucent green venom sac on its back, ridged wrinkled hide, wide dark eyes, a small dripping maw.\nVIEW: strict orthographic BACK VIEW seen directly from behind, no perspective. For the left view, the creature must face the opposite way — render it from that side rather than mirroring the right view.\nMATERIAL AND COLOUR: violet hide with a green sac: hide #5a4d80, lit hide #7a68a8, deep shadow #241f33, venom sac #7ab84a with highlight #bfe88a. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 50x50 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-spitter-34",
+   "category": "entity_enemy",
+   "entity": "spitter",
+   "name_zh": "吐酸虫",
+   "view": "34",
+   "size": [
+    50,
+    50
+   ],
+   "file": "ent_spitter_34.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 吐酸虫 as the player sees it during play.\nSUBJECT: a bloated squat acid-spitting creature, heavy rounded body, a swollen translucent green venom sac on its back, ridged wrinkled hide, wide dark eyes, a small dripping maw.\nVIEW: THREE-QUARTER view from the front-side at roughly 45 degrees, near-orthographic, no strong perspective distortion. For the left view, the creature must face the opposite way — render it from that side rather than mirroring the right view.\nMATERIAL AND COLOUR: violet hide with a green sac: hide #5a4d80, lit hide #7a68a8, deep shadow #241f33, venom sac #7ab84a with highlight #bfe88a. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 50x50 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-treeA",
+   "category": "entity_scenery",
+   "entity": "treeA",
+   "name_zh": "枯树",
+   "view": null,
+   "size": [
+    68,
+    120
+   ],
+   "file": "ent_treeA.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 枯树 as the player sees it during play.\nSUBJECT: a tall dead tree, bare twisted trunk splitting into stark clawing branches, bark deeply scored and gnarled, no leaves.\nMATERIAL AND COLOUR: ash-grey weathered bark: base #4a4038, lit #7a6a58, shadow #241e19, bleached dead wood #9a8a72. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 68x120 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-treeB",
+   "category": "entity_scenery",
+   "entity": "treeB",
+   "name_zh": "枯树(小)",
+   "view": null,
+   "size": [
+    68,
+    90
+   ],
+   "file": "ent_treeB.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 枯树(小) as the player sees it during play.\nSUBJECT: a shorter gnarled dead tree with a forked trunk and a few broken branch stubs, bark cracked and peeling.\nMATERIAL AND COLOUR: ash-grey weathered bark: base #4a4038, lit #7a6a58, shadow #241e19, bleached dead wood #9a8a72. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 68x90 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-bush",
+   "category": "entity_scenery",
+   "entity": "bush",
+   "name_zh": "灌木",
+   "view": null,
+   "size": [
+    60,
+    40
+   ],
+   "file": "ent_bush.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 灌木 as the player sees it during play.\nSUBJECT: a low dense thorn bush, tangled woody stems, small dark leaves, a few pale dry berries.\nMATERIAL AND COLOUR: deep green scrub: base #3f4a2a, lit #6b7a44, shadow #202616, berries #b84a3a. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 60x40 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-post",
+   "category": "entity_scenery",
+   "entity": "post",
+   "name_zh": "木桩",
+   "view": null,
+   "size": [
+    8,
+    34
+   ],
+   "file": "ent_post.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 木桩 as the player sees it during play.\nSUBJECT: a short weathered fence post driven into the ground, split and splintered at the top, wood grain visible.\nMATERIAL AND COLOUR: grey weathered wood: base #5a4a3a, lit #8a7458, shadow #2e2419. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 8x34 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-torch",
+   "category": "entity_scenery",
+   "entity": "torch",
+   "name_zh": "火把",
+   "view": null,
+   "size": [
+    13,
+    34
+   ],
+   "file": "ent_torch.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 火把 as the player sees it during play.\nSUBJECT: a wooden torch with a wrapped pitch-soaked head, burning with a small orange flame and a wisp of smoke.\nMATERIAL AND COLOUR: wood #5a3a22, flame core #ffd166, flame outer #ff7a3c, glow #ffb066. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 13x34 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-anvil",
+   "category": "entity_scenery",
+   "entity": "anvil",
+   "name_zh": "铁砧",
+   "view": null,
+   "size": [
+    60,
+    58
+   ],
+   "file": "ent_anvil.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 铁砧 as the player sees it during play.\nSUBJECT: a heavy blacksmith's anvil on a wooden stump base, horned on one end, flat scarred top, worn edges.\nMATERIAL AND COLOUR: dark iron: base #4a4f58, lit #7d8794, shadow #22262c, rust patch #8a4a2a, stump wood #5a3a22. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 60x58 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-altar",
+   "category": "entity_scenery",
+   "entity": "altar",
+   "name_zh": "祭坛",
+   "view": null,
+   "size": [
+    64,
+    54
+   ],
+   "file": "ent_altar.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 祭坛 as the player sees it during play.\nSUBJECT: a squat stone altar with carved relief panels on its face, a shallow offering bowl on top, cracks and moss in the joints.\nMATERIAL AND COLOUR: old grey stone: base #6a6a66, lit #9a9a94, shadow #383834, moss #4a5a3a, offering stain #8a2a2a. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 64x54 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-shop",
+   "category": "entity_scenery",
+   "entity": "shop",
+   "name_zh": "商店",
+   "view": null,
+   "size": [
+    80,
+    68
+   ],
+   "file": "ent_shop.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 商店 as the player sees it during play.\nSUBJECT: a small timber market stall with a striped awning, a counter board across the front, crates and bundles stacked behind.\nMATERIAL AND COLOUR: warm timber #7a5230, lit #a87a4c, shadow #452e1a, awning cloth #8a3a2a with #c9a06a stripes. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 80x68 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-rack",
+   "category": "entity_scenery",
+   "entity": "rack",
+   "name_zh": "武器架",
+   "view": null,
+   "size": [
+    90,
+    70
+   ],
+   "file": "ent_rack.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 武器架 as the player sees it during play.\nSUBJECT: a wooden weapon rack with three horizontal crossbars, a few plain blades and hafts resting in it.\nMATERIAL AND COLOUR: timber frame #5a3a22, lit #8a5a34, shadow #2e1e14, steel blades #8a95a3. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 90x70 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-gate",
+   "category": "entity_scenery",
+   "entity": "gate",
+   "name_zh": "石门",
+   "view": null,
+   "size": [
+    76,
+    88
+   ],
+   "file": "ent_gate.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 石门 as the player sees it during play.\nSUBJECT: a heavy stone archway gate with iron-banded timber doors, a barred window above, runes cut into the lintel.\nMATERIAL AND COLOUR: grey stone #6a6a66, lit #9a9a94, shadow #383834, iron bands #3a4048, rune glow #7fb8e8. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 76x88 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-soil",
+   "category": "entity_farming",
+   "entity": "soil",
+   "name_zh": "耕地",
+   "view": null,
+   "size": [
+    52,
+    34
+   ],
+   "file": "ent_soil.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 耕地 as the player sees it during play.\nSUBJECT: a tilled plot of dark soil seen at a slight angle, neat furrow ridges running across it, loose clods at the edges.\nMATERIAL AND COLOUR: rich dark earth: base #4a3826, lit #7a5c3a, shadow #241a10. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 52x34 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-sprout",
+   "category": "entity_farming",
+   "entity": "sprout",
+   "name_zh": "幼苗",
+   "view": null,
+   "size": [
+    19,
+    23
+   ],
+   "file": "ent_sprout.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 幼苗 as the player sees it during play.\nSUBJECT: a young seedling with two small unfolding leaves on a short stem, just broken through the soil.\nMATERIAL AND COLOUR: fresh green: base #5a8a3a, lit #8ac25a, shadow #2a4a1a. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 19x23 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-crop",
+   "category": "entity_farming",
+   "entity": "crop",
+   "name_zh": "成熟作物",
+   "view": null,
+   "size": [
+    20,
+    32
+   ],
+   "file": "ent_crop.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 成熟作物 as the player sees it during play.\nSUBJECT: a mature crop plant heavy with grain, nodding seed heads on tall stalks, leaves curling as they dry.\nMATERIAL AND COLOUR: golden ripe grain: base #c9a44e, lit #f0d98a, shadow #6a5424, stem #7a8a3a. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 20x32 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-seed",
+   "category": "entity_farming",
+   "entity": "seed",
+   "name_zh": "种子",
+   "view": null,
+   "size": [
+    13,
+    11
+   ],
+   "file": "ent_seed.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 种子 as the player sees it during play.\nSUBJECT: a single seed kernel with a hard papery husk, slightly tapered, a fine seam along one side.\nMATERIAL AND COLOUR: pale husk: base #b8a070, lit #e0cfa0, shadow #6a5838. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 13x11 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-clod",
+   "category": "entity_farming",
+   "entity": "clod",
+   "name_zh": "土块",
+   "view": null,
+   "size": [
+    4,
+    8
+   ],
+   "file": "ent_clod.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 土块 as the player sees it during play.\nSUBJECT: a small clump of earth, irregular and crumbly, a few darker specks in it.\nMATERIAL AND COLOUR: dark earth: base #4a3826, lit #6a5034, shadow #241a10. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 4x8 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-spark",
+   "category": "entity_effect",
+   "entity": "spark",
+   "name_zh": "火星",
+   "view": null,
+   "size": [
+    6,
+    6
+   ],
+   "file": "ent_spark.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 火星 as the player sees it during play.\nSUBJECT: a single bright spark, a tiny four-pointed star of hot light.\nMATERIAL AND COLOUR: white-hot core #fff4e0, orange flare #ff7a3c. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 6x6 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-glow",
+   "category": "entity_effect",
+   "entity": "glow",
+   "name_zh": "光晕",
+   "view": null,
+   "size": [
+    112,
+    112
+   ],
+   "file": "ent_glow.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 光晕 as the player sees it during play.\nSUBJECT: a formless radial gradient of warm light: brightest at the very centre and fading smoothly outward until it disappears completely at the rim. It has NO outline, NO hard edge, NO texture and NO solid body — it is pure smooth light, like the halo a lantern casts on the ground.\nMATERIAL AND COLOUR: warm light: solid #ffc06a only within the inner third, then a smooth falloff to fully transparent. No dark outline anywhere in this image.. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 112x112 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-acid",
+   "category": "entity_effect",
+   "entity": "acid",
+   "name_zh": "酸弹",
+   "view": null,
+   "size": [
+    18,
+    18
+   ],
+   "file": "ent_acid.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 酸弹 as the player sees it during play.\nSUBJECT: a small globule of corrosive green liquid, glossy and slightly lumpy, with a faint dripping tail.\nMATERIAL AND COLOUR: venom green: base #7ab84a, lit #bfe88a, shadow #3a5a24. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 18x18 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-shadow",
+   "category": "entity_effect",
+   "entity": "shadow",
+   "name_zh": "影",
+   "view": null,
+   "size": [
+    48,
+    16
+   ],
+   "file": "ent_shadow.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 影 as the player sees it during play.\nSUBJECT: a flat dark ellipse used as a contact shadow under a standing creature, soft-edged and empty.\nMATERIAL AND COLOUR: near-black #000000 at low opacity, no internal detail. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 48x16 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-bladeA",
+   "category": "entity_effect",
+   "entity": "bladeA",
+   "name_zh": "刀光A",
+   "view": null,
+   "size": [
+    20,
+    34
+   ],
+   "file": "ent_bladeA.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 刀光A as the player sees it during play.\nSUBJECT: a short crescent slash of white-blue energy, thin and sharply tapered at both ends.\nMATERIAL AND COLOUR: cold white core #e8f2fa, blue edge #8fd4ff. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 20x34 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-bladeB",
+   "category": "entity_effect",
+   "entity": "bladeB",
+   "name_zh": "刀光B",
+   "view": null,
+   "size": [
+    20,
+    46
+   ],
+   "file": "ent_bladeB.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 刀光B as the player sees it during play.\nSUBJECT: a longer crescent slash arc of white-blue energy, wider in the middle, sharp at the tips.\nMATERIAL AND COLOUR: cold white core #e8f2fa, blue edge #8fd4ff. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 20x46 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-bladeC",
+   "category": "entity_effect",
+   "entity": "bladeC",
+   "name_zh": "刀光C",
+   "view": null,
+   "size": [
+    26,
+    40
+   ],
+   "file": "ent_bladeC.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 刀光C as the player sees it during play.\nSUBJECT: a heavy broad crescent slash of white-blue energy, thick and blunt, the mark of a two-handed blow.\nMATERIAL AND COLOUR: cold white core #e8f2fa, blue edge #8fd4ff. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 26x40 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  },
+  {
+   "id": "ent-bladeS",
+   "category": "entity_effect",
+   "entity": "bladeS",
+   "name_zh": "刀光S",
+   "view": null,
+   "size": [
+    20,
+    52
+   ],
+   "file": "ent_bladeS.png",
+   "prompt": "ART DIRECTION: dark-fantasy woodcut / late-medieval engraving, the same carved world as the game's protagonist. Every form is built from hard chiselled facets with dense fine hatching for shading. Absolutely NO soft gradients, NO smooth airbrushing, NO glossy anime rendering. Light source is fixed at upper-left. Four-layer shading throughout: dark outline, shadow, body mass, lit face. COLOUR: paint the subject in its own natural colours. Do not tint it brown to match the protagonist — colour is how the player identifies what they are looking at.\nROLE/PURPOSE: game art for a 2D side-scrolling roguelite. This is the 刀光S as the player sees it during play.\nSUBJECT: a long singular thrusting streak of white-blue energy, narrow and driving straight forward.\nMATERIAL AND COLOUR: cold white core #e8f2fa, blue edge #8fd4ff. Paint it in exactly these material colours — the hatching and linework are the protagonist's, but the hues belong to this subject.\nSILHOUETTE: drawn to read at roughly 20x52 px in game, so the outline alone must identify what this is.\nTECHNICAL OUTPUT: single isolated subject, fully transparent background (real alpha channel, no checkerboard, no white or coloured matte). No ground, no cast shadow, no scenery behind it, no frame, no text, no watermark."
+  }
+ ]
+}
