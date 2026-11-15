@@ -226,3 +226,57 @@ console.log('========================================================');
 
 console.log('========================================================');
 console.log('全部通过：' + count + ' 项断言');
+
+// ---------------------------------------------------------------- 增益真的生效
+/*
+ * 这一节是**补一个 bug 的回归测试**（2026-11-15 自查发现）。
+ *
+ * 原 bug：eatCrop 写了 run.player.cropBuff，但没有任何地方读它 ——
+ * 吃刺果/树皮瓜完全没有效果。当时的测试只断言"cropBuff 被写入"，
+ * 所以没抓到。**断言状态被写入 ≠ 断言功能生效。**
+ *
+ * 现在改成断言效果本身：吃下增益作物后，
+ *   伤害乘数要变（刺果）
+ *   受伤乘数要变（树皮瓜）
+ */
+{
+  const ids = Object.keys(C.CROPS);
+  const dmgCrop = ids.find((id) => C.CROPS[id].effect.damageMul > 1);
+  const defCrop = ids.find((id) => C.CROPS[id].effect.damageMul < 1);
+
+  if (dmgCrop) {
+    const s = L.createState();
+    s.meta.cropHarvest[dmgCrop] = 1;
+    const run = L.startRun(s, 'grass');
+    const before = L.outgoingDamageMul(run.player);
+    L.eatCrop(s, run, dmgCrop);
+    const after = L.outgoingDamageMul(run.player);
+    ok(after > before,
+       `吃下 ${C.CROPS[dmgCrop].name} 后**输出伤害乘数**真的变大（${before} → ${after}）`);
+  }
+
+  if (defCrop) {
+    const s = L.createState();
+    s.meta.cropHarvest[defCrop] = 1;
+    const run = L.startRun(s, 'grass');
+    const before = L.cropBuffMul(run.player);
+    L.eatCrop(s, run, defCrop);
+    const after = L.cropBuffMul(run.player);
+    ok(after < before,
+       `吃下 ${C.CROPS[defCrop].name} 后**受伤乘数**真的变小（${before} → ${after}）`);
+  }
+
+  // buff 会过期
+  const s = L.createState();
+  const anyCrop = ids[0];
+  s.meta.cropHarvest[anyCrop] = 1;
+  const run = L.startRun(s, 'grass');
+  L.eatCrop(s, run, anyCrop);
+  if (run.player.cropBuff) {
+    run.player.cropBuff.timer = 0.01;
+    // 推进一帧足够长的时间让 buff 过期
+    L.step(s, { up: false, down: false, left: false, right: false }, 0.1);
+    ok(run.player.cropBuff === null || run.player.cropBuff === undefined,
+       '作物增益会随时间过期');
+  }
+}

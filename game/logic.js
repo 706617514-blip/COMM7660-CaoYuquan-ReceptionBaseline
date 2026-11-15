@@ -230,6 +230,17 @@
       mul *= fxMul;
     }
 
+    /*
+     * 作物减伤（Task 4 / D6）：树皮瓜那种 buff。
+     *
+     * 与装备减伤**叠乘**，不是取最小值 —— 取最小会让"有胸铠时吃瓜没用"，
+     * 而玩家的直觉是"我又穿甲又吃了东西，应该更抗打"。
+     *
+     * 放在最后（乘数链的末端）而不是最前：减伤类效果的乘法是可交换的，
+     * 但放末端能保证将来加"最低伤害保底"之类的规则时顺序正确。
+     */
+    mul *= cropBuffMul(p);
+
     // 向上取整，避免 0.5 倍后出现小数血量（血条会显示成 12.5）
     const dealt = Math.max(1, Math.ceil(amount * mul));
 
@@ -402,9 +413,39 @@
     return { ok: true, id: id };
   }
 
-  /** 药水对伤害的乘数（力量药）。没有 buff 时恒为 1。 */
+  /**
+   * 药水对伤害的乘数（力量药）。没有 buff 时恒为 1。
+   *
+   * 命名保留（调用点有几处，改名会让 diff 变大），但它现在同时算作物 buff ——
+   * 见 cropBuffMul 的注释。
+   */
   function potionDamageMul(p) {
     return (p.potionBuff && p.potionBuff.damageMul) || 1;
+  }
+
+  /**
+   * 作物增益对伤害的乘数（Task 4 / D6）。
+   *
+   * ⚠️ 这个函数是**补上的一个 bug 修复**（2026-11-15，自查时发现）。
+   *
+   * eatCrop 一直在写 run.player.cropBuff，但**没有任何地方读它** ——
+   * 吃刺果或树皮瓜完全没有效果。单元测试也没抓到，
+   * 因为它只断言"eatCrop 返回 ok 且 cropBuff 被写入"，
+   * 而没有断言"写进去的东西真的被用上了"。
+   * 教训：断言"状态被写入"不等于断言"功能生效"。
+   *
+   * 与药水**叠乘**而不是覆盖：药水是局前购买、作物是局外积累，
+   * 两者同时生效时应该都算数。共用一个槽会让先吃的那个静默消失。
+   */
+  function cropBuffMul(p) {
+    const b = p.cropBuff;
+    if (!b || !(b.timer > 0)) return 1;
+    return b.damageMul || 1;
+  }
+
+  /** 伤害乘数：药水 × 作物。所有玩家伤害都该走这里。 */
+  function outgoingDamageMul(p) {
+    return potionDamageMul(p) * cropBuffMul(p);
   }
 
   function upgradeCost(state, key) {
@@ -1352,6 +1393,11 @@
       p.potionBuff.timer -= dt;
       if (p.potionBuff.timer <= 0) p.potionBuff = null;
     }
+    // 作物 buff 的计时（Task 4 / D6）。与药水 buff 分开扣，互不影响。
+    if (p.cropBuff) {
+      p.cropBuff.timer -= dt;
+      if (p.cropBuff.timer <= 0) p.cropBuff = null;
+    }
 
     // 药水（1/2/3）：按下即用。justPressed 语义由渲染层保证，
     // 这里只认 input.potionN，长按不会连续消耗（每瓶都是一次资源）。
@@ -1417,7 +1463,7 @@
   function currentDamage(state, p) {
     let d = playerStats(state).damage;
     if (p.buffTimer > 0) d *= C.SKILLS.cry.buffMult;
-    d *= potionDamageMul(p);
+    d *= outgoingDamageMul(p);
     return d;
   }
 
@@ -1439,7 +1485,7 @@
     const st = skillStats(key, level, state);
     // 直接乘增益倍率。原写法 (1 + current/base - 1) 代数上等价，
     // 但 BASE_DAMAGE 若变成 0 会除出 NaN。
-    const dmg = st.damage * (p.buffTimer > 0 ? C.SKILLS.cry.buffMult : 1) * potionDamageMul(p);
+    const dmg = st.damage * (p.buffTimer > 0 ? C.SKILLS.cry.buffMult : 1) * outgoingDamageMul(p);
     p.cooldowns[key] = st.cooldown;
     p.casting = { key: key, timer: def.fxTime };
 
@@ -2703,7 +2749,7 @@
     stepProjectiles, stepRanged, spawnProjectile, stepPickups, collectAll, killEnemy,
     specialSkillOf, castSpecial, stepZones,
     spawnBoss, bossCast, stepBoss, bossResolve,
-    buyPotion, usePotion, hurtPlayer, potionDamageMul,
+    buyPotion, usePotion, hurtPlayer, potionDamageMul, cropBuffMul, outgoingDamageMul,
     equipBonus, hasFx, equipOwned, buyEquipment, equipItem, unequipSlot,
     equipUpgradeCost, upgradeEquipment, rollEquipDrop, tryEquipDrop,
     // 出售：卖价按「底价 + 升级投入」折半，批量出售每 id 强制留一件。
