@@ -2716,6 +2716,241 @@
       }
     }
 
+    /* ------------------------------------------------------------------
+     * 终极彩蛋（Task 3.2 / 设计文档 §5.3）
+     *
+     * 三层演出，对应 PM 引用的《头号玩家》那个片段：
+     *   1. 发现  地面上的七彩蛋在脉动发光，吸引玩家走过去
+     *   2. 光爆  按 J 的瞬间，全屏白光 + 七彩泛光
+     *   3. 揭示  光散去，纸条从模糊到清晰，文字逐字浮现
+     *
+     * 彩蛋对象 run.egg 由 logic 层创建，这里只管怎么画。
+     * 三层都用同一个计时器推进（this.eggAnim），避免三套时间互相打架。
+     * ------------------------------------------------------------------ */
+
+    /**
+     * 每帧推进彩蛋状态。发现阶段画蛋，拾取后逐层推进演出。
+     */
+    updateEgg(dt) {
+      const run = this.state.run;
+      if (!run || !run.egg) return;
+      const egg = run.egg;
+      const E = C.EGG;
+
+      // 未拾取：画蛋 + 看着近就提示按 J
+      if (!egg.taken) {
+        this.drawEgg(egg, dt);
+        return;
+      }
+
+      // 已拾取：推进三层演出
+      if (!this.eggAnim) {
+        // 首次进入：记录起始时刻，并触发光爆
+        this.eggAnim = { t: 0, done: false };
+        GameAudio.play('eggBurst');   // 复用合成音体系，不引采样文件
+        // 清掉蛋的绘制对象
+        if (this.eggGfx) this.eggGfx.setVisible(false);
+        if (this.eggGlow) this.eggGlow.setVisible(false);
+      }
+      const a = this.eggAnim;
+      a.t += dt * 1000;
+
+      this.drawEggBurst(a.t);
+      this.drawEggLetter(a.t);
+
+      // 演出走完 → 若这一局的结算是被彩蛋延后的，现在补上（D5）
+      if (!a.done && a.t >= E.burstMs + E.letterFadeMs + E.letterHoldMs) {
+        a.done = true;
+        this.finishEggSettlement();
+      }
+    }
+
+    /** 发现阶段：七彩蛋 + 呼吸光晕 + 浮动。 */
+    drawEgg(egg, dt) {
+      const E = C.EGG;
+      const now = (this.time && this.time.now) || 0;
+
+      if (!this.eggGfx) {
+        // 蛋体用程序化贴图，与既有美术风格一致（全项目都是这个做法）。
+        const g = this.make.graphics({ x: 0, y: 0, add: false });
+        g.fillStyle(0xffffff, 1);
+        g.fillEllipse(11, 15, 16, 20);        // 蛋身
+        g.fillEllipse(11, 8, 11, 13);         // 上半收窄
+        g.generateTexture('eggBody', 22, 26);
+        g.destroy();
+
+        this.eggGfx = this.add.image(0, 0, 'eggBody').setOrigin(0.5, 0.5);
+        /*
+         * 光晕复用既有的 'spark' 贴图 + ADD 混合。
+         * 这里能用 ADD 做出真正的发光，正是切 WebGL 换来的
+         * （Canvas 下 ADD 的表现弱得多，见 Task 2）。
+         */
+        this.eggGlow = this.add.image(0, 0, 'spark')
+          .setOrigin(0.5, 0.5)
+          .setScale(E.glowScale * 6)
+          .setAlpha(0.5)
+          .setBlendMode(Phaser.BlendModes.ADD);
+      }
+
+      /*
+       * 七彩：用色相循环而不是固定彩虹贴图。
+       * 色相按时间走一圈，蛋体和光晕同步 —— 这是"七彩"最省的做法，
+       * 且能保证任何时候截屏都是彩的（固定贴图会有单调的时刻）。
+       */
+      const hue = ((now % E.hueCycleMs) / E.hueCycleMs) * 360;
+      const col = Phaser.Display.Color.HSVToRGB(hue / 360, 0.85, 1).color;
+      this.eggGfx.setTint(col);
+      this.eggGlow.setTint(col);
+
+      // 浮动：上下呼吸
+      const bob = Math.sin((now / E.bobMs) * Math.PI * 2) * E.bobAmp;
+      const sc = toScreen(egg.x, egg.z, 14 + bob);
+      this.eggGfx.setPosition(sc.sx, sc.sy).setDepth(1000 - egg.z + 8);
+      this.eggGlow.setPosition(sc.sx, sc.sy + 2).setDepth(1000 - egg.z + 7);
+      // 光晕同步呼吸，让"活着"的感觉更明确
+      this.eggGlow.setAlpha(0.34 + Math.sin((now / E.bobMs) * Math.PI * 2) * 0.16);
+
+      // 走近了就提示按 J —— 没有提示玩家大概率会直接走过去
+      const near = L.eggInReach(this.state, this.state.run);
+      if (!this.eggPrompt && near) {
+        this.eggPrompt = this.add.text(0, 0, '按 J 打开', {
+          fontFamily: 'system-ui, -apple-system, "PingFang SC", sans-serif',
+          fontSize: '15px', color: '#ffe9a8',
+        }).setOrigin(0.5, 1).setDepth(9000);
+        // 浅底描边：蛋在草地与暗背景上都读得出来
+        this.eggPrompt.setShadow(0, 1, '#000000cc', 3);
+      }
+      if (this.eggPrompt) {
+        this.eggPrompt.setVisible(near);
+        if (near) this.eggPrompt.setPosition(sc.sx, sc.sy - 26);
+      }
+    }
+
+    /** 第 2 层：全屏光爆（拾取瞬间）。 */
+    drawEggBurst(t) {
+      const E = C.EGG;
+      if (t > E.burstMs) {
+        if (this.eggBurst) this.eggBurst.setVisible(false);
+        return;
+      }
+      if (!this.eggBurst) {
+        /*
+         * 全屏白光 + 七彩泛光。
+         *
+         * 用两个盖满画布的椭圆而不是 Graphics 矩形：椭圆边缘天然柔和，
+         * 配 ADD 混合就是"光从中心炸开"而不是"屏幕闪了一下白"。
+         * 这是 Canvas 做不出来的那种柔光，也是切 WebGL 的收益点。
+         */
+        this.eggBurst = this.add.container(0, 0).setDepth(9500);
+        this.eggBurstCore = this.add.ellipse(W / 2, HGT / 2, W * 1.6, HGT * 1.6,
+          0xffffff, 1).setBlendMode(Phaser.BlendModes.ADD);
+        this.eggBurstHalo = this.add.ellipse(W / 2, HGT / 2, W * 1.2, HGT * 1.2)
+          .setBlendMode(Phaser.BlendModes.ADD).setAlpha(0.55);
+        this.eggBurst.add([this.eggBurstCore, this.eggBurstHalo]);
+      }
+      this.eggBurst.setVisible(true);
+
+      // 强度曲线：快速涨到峰值再缓慢衰减 —— 电影里的光爆都是这个形状
+      const k = t / E.burstMs;
+      const peak = E.burstPeakAt;
+      const amp = k < peak ? (k / peak) : Math.pow(1 - (k - peak) / (1 - peak), 1.7);
+      this.eggBurstCore.setAlpha(Math.min(1, amp * 1.25));
+      this.eggBurstHalo.setAlpha(Math.min(1, amp * 0.9));
+
+      // 七彩：光环色相随爆开过程推进
+      const hue = (k * 360 * 2) % 360;
+      const col = Phaser.Display.Color.HSVToRGB(hue / 360, 0.9, 1).color;
+      this.eggBurstHalo.setFillStyle(col, 1);
+
+      // 光爆期间画面轻微脉动，"能量"的感觉来自这里而不是静态白光
+      this.eggBurst.setScale(0.92 + amp * 0.16);
+    }
+
+    /** 第 3 层：纸条渐现 + 文字逐字浮现。 */
+    drawEggLetter(t) {
+      const E = C.EGG;
+      const start = E.burstMs;
+      if (t < start) return;
+
+      if (!this.eggLetter) {
+        /*
+         * 纸条用 DOM 浮层而不是 Phaser 文本（与背包同一做法，见 baghud.js）：
+         * 中文换行、行距、居中排版用 DOM 一次就做对了，
+         * 用 Phaser 的 BitmapText/Text 要把这些重做一遍且效果更差。
+         */
+        const el = document.createElement('div');
+        el.id = 'eggLetter';
+        el.innerHTML = '<div id="eggLetterInner"></div>';
+        document.getElementById('frame').appendChild(el);
+        this.eggLetter = el;
+        this.eggLetterText = '';
+        this.eggLetterFade = 0;
+      }
+
+      const el = this.eggLetter;
+      el.style.display = 'flex';
+
+      // 纸条本体渐现
+      const fk = Math.min(1, (t - start) / E.letterFadeMs);
+      el.style.opacity = String(fk);
+
+      /*
+       * 逐字浮现。
+       *
+       * 按"已经过去多少毫秒"算应该显示几个字，而不是每帧 +=1 ——
+       * 后者在掉帧时会明显变慢，而这正是最该稳的一段演出。
+       */
+      const full = C.EGG.letterText;
+      const elapsed = t - start - E.letterFadeMs;
+      const n = Math.max(0, Math.floor(elapsed / E.letterCharMs));
+      const shown = full.slice(0, Math.min(n, full.length));
+      if (shown !== this.eggLetterText) {
+        this.eggLetterText = shown;
+        // 保留换行：CSS 的 white-space: pre-line 负责渲染
+        document.getElementById('eggLetterInner').textContent = shown;
+      }
+    }
+
+    /**
+     * 演出结束后补结算（设计文档 D5）。
+     *
+     * 为什么延后结算：PM 要求"打完最后一只怪 → 蛋掉出来 →
+     * 你走过去按 J"。若按原流程立刻 endRun，玩家会被直接推进结算界面，
+     * 永远没有机会按 J。所以 logic 层用 pendingEggSettlement 标记延后，
+     * 这里在演出真正走完后补上。
+     */
+    finishEggSettlement() {
+      const run = this.state.run;
+      if (this.eggLetter) {
+        this.eggLetter.style.display = 'none';
+      }
+      if (!run || !run.pendingEggSettlement) return;
+      run.pendingEggSettlement = false;
+
+      /*
+       * ⚠️ 这里必须走**和正常通关完全一样的两步**：endRun + showResult。
+       *
+       * 踩过的坑（2026-11-15）：最初只调了 L.endRun，注释还写着"结算界面由
+       * 既有的 result 相位渲染接管，不需要额外切场景" —— **那句话是错的**。
+       *
+       * 事实是：`phase = 'result'` 只是把 RunScene.update 变成空转
+       * （它第一行的 guard 里就 return 了），**结算面板根本不会自己出现**。
+       * 面板由 `EmberfieldUI.showResult(state, onClose)` 显式弹出，
+       * 玩家点「再来一局 / 回基地」时才 scene.start('Hub')。
+       * 所以只调 endRun 的结果是：RunScene 卡死不动，回合永远不结束。
+       * 这正是把彩蛋演出看成"纯视觉"会犯的错 —— 它同时也是一次状态转移。
+       */
+      L.endRun(this.state, true);
+      if (global.EmberfieldUI && global.EmberfieldUI.save) {
+        global.EmberfieldUI.save(this.state);
+      }
+      if (global.EmberfieldUI && typeof global.EmberfieldUI.showResult === 'function') {
+        global.EmberfieldUI.showResult(this.state, () => {
+          this.scene.start('Hub');
+        });
+      }
+    }
+
     updateHitSparks(dt) {
       const ms = dt * 1000;
       for (let i = 0; i < this.hitSparkPool.length; i++) {
@@ -3626,6 +3861,9 @@
 
       // ---- 命中火花：对象池推进 ----
       this.updateHitSparks(dt);
+
+      // ---- 终极彩蛋：发现阶段的绘制（Task 3.2 / 设计文档 §5.3 第 1 层）----
+      this.updateEgg(dt);
 
       // ---- 冲刺残影：三节逐渐变淡的拖影，让"加速"看得见 ----
       if (p.runTrail) {

@@ -51,9 +51,16 @@ ok(m && m[1] !== 'Phaser.CANVAS',
    '不是 Phaser.CANVAS（Canvas 做不出加法泛光）');
 
 /*
- * 8 处 BlendModes.ADD 是切 WebGL 时的真实风险点（WebGL 受预乘 alpha 影响），
- * 已逐一目视核对通过（商店三色药水光 / 兵器架宝石光 / 祭坛符文光 / 田地暖光）。
+ * BlendModes.ADD 是切 WebGL 时的真实风险点（WebGL 受预乘 alpha 影响）。
+ *
+ * 数量沿革：
+ *   8 处  Task 2 切换时实测核对（商店三色药水光 / 兵器架宝石光 /
+ *         祭坛符文光 / 田地暖光）—— 这是**既有发光效果**，已逐一目视通过。
+ *   11 处 Task 3.2 新增 3 处，全在彩蛋里（发现阶段的七彩光晕 1 处 +
+ *         光爆的核心与光环 2 处）。它们**尚未经 PM 目视** —— 见下。
+ *
  * 这里钉住数量，防"顺手删掉一个发光效果"这种悄悄退化。
+ * 数量变化时**必须重新目视**，所以断言失败信息里写清该看什么。
  *
  * 必须剥注释再数 —— 代码里就有解释这件事的注释本身含 "BlendModes.ADD"
  * 字样，裸数会多数一个（踩到过）。
@@ -64,8 +71,8 @@ function stripComments(src) {
     .replace(/(^|[^:])\/\/.*$/gm, '$1');
 }
 const addCount = (stripComments(appJs).match(/BlendModes\.ADD/g) || []).length;
-ok(addCount === 8,
-   'BlendModes.ADD 仍是 8 处（实测核对过的数量，变化需重新目视）');
+ok(addCount === 11,
+   'BlendModes.ADD 共 11 处（8 既有 + 3 彩蛋）；变化需重新目视');
 
 console.log('========================================================');
 console.log('全部通过：' + count + ' 项断言');

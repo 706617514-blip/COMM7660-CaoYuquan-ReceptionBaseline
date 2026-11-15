@@ -1252,6 +1252,21 @@
     if (input.potion2) usePotion(state, 'strength');
     if (input.potion3) usePotion(state, 'wall');
 
+    /*
+     * 终极彩蛋：**按 J 拾取**（Task 3 / PM 指定 D1）。
+     *
+     * 为什么必须在 logic 层而不是渲染层记这个事实：
+     * "彩蛋被拾取"是一个**规则状态**（决定了演出开始、以及熔炉通关的
+     * 结算何时补上），不是视觉效果。放渲染层会让状态机与画面两份真相。
+     *
+     * needsConfirm 来自 config：PM 明确要求"按 J 打开"，
+     * 所以蛋**不参与 stepPickups 的自动吸附**（那只看 run.pickups，
+     * 而蛋存在 run.egg，天然隔离 —— 见 dropEgg 的注释）。
+     */
+    if (input.confirm && C.EGG.needsConfirm && eggInReach(state, run)) {
+      takeEgg(state, run);
+    }
+
     // 技能（U/I/O/K/L）：冷却好了就释放
     C.SKILL_ORDER.forEach(function (k) {
       if (input[k]) tryCastSkill(state, run, p, k);
