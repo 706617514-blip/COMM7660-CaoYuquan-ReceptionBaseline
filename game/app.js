@@ -116,6 +116,19 @@
    * 有美术图的游戏实体。键名与 buildTextures 里 generateTexture 的名字一致。
    */
   const ART_ENTITIES = [
+    /*
+     * 注意：**'hero' 不在这里**（2026-11-16 一次错误修复的教训）。
+     *
+     * 曾把 'hero' 加进这个名单，以为能让它走"实体美术优先"的拦截路径。
+     * 实际后果是 hero 被加载两次：
+     *   上面那行显式的 load.image('hero', 'assets/art/hero_base_right.png')
+     *   加上这里的 ART_ENTITIES.forEach → load.image('hero', 'assets/art/hero.png')
+     * 第二个路径的 hero.png 并不存在，同名 key 冲突直接让整批加载异常 ——
+     * 表现为**所有**资源一个网络请求都不发（16 个部件图、Boss 图全都没有），
+     * 而且不报错。排查花了好几轮才定位到。
+     *
+     * 结论：hero 有它自己的显式加载行，不要往这个批量名单里塞。
+     */
     'crawler', 'runner', 'spitter',
     'treeA', 'treeB', 'bush', 'post', 'torch', 'anvil', 'altar', 'shop', 'rack', 'gate',
     'soil', 'sprout', 'crop', 'seed', 'clod',
@@ -4647,6 +4660,8 @@
     constructor() { super('Boot'); }
 
     preload() {
+      try {
+      globalThis.__PE = 'entered';
       // Boss 美术来自课程指定的 AIMC 平台（人工生成），
       // 经 game/assets/ 处理：抠背景 → 降色数 → 加描边。
       // 三档难度各一对左右视图。文件缺失时不会崩，只是该档没有图。
@@ -4685,11 +4700,104 @@
       ART_ENTITIES.forEach((key) => {
         this.load.image(key, 'assets/art/' + key + '.png');
       });
+      globalThis.__PE = 'completed, queue=' + (this.load.list ? this.load.list.size : '?');
+      } catch (e) {
+        globalThis.__PE = 'THREW: ' + e.message + ' | ' + (e.stack||'').split('\n')[1];
+      }
     }
 
     create() {
-      buildTextures(this);
-      this.scene.start('Hub');
+      /*
+       * 美术加载是**异步**的，而 preload→create 之间没有等到它完成。
+       *
+       * 2026-11-16 实测证据（探针）：
+       *   preload 里 load.image('hero') 已调用
+       *   但 create() 开始时 textures.exists('hero') === false
+       *   → buildTextures 走了矢量兜底，把美术图覆盖掉
+       *
+       * 表现极具迷惑性：换了 hero_base_right.png 但游戏里不生效，
+       * 不报错、不 404、网络请求也正常 —— 只看代码看不出问题。
+       *
+       * 修法：**在 create 里等 loader 真正空闲下来**再烘纹理。
+       * 用 LOAD_COMPLETE 事件 + complete() 双保险：
+       *   - 若加载还没完，等事件；
+       *   - 若已经完了（loader 空闲），直接走。
+       * 两条路都收敛到同一个 done()，不会重复执行。
+       */
+      const start = () => {
+        if (this.__texturesBuilt) return;   // 幂等
+        this.__texturesBuilt = true;
+        buildTextures(this);
+        this.scene.start('Hub');
+      };
+
+      /*
+       * 等 hero 纹理**真正就绪**再烘纹理与进基地。
+       *
+       * 2026-11-16 实测的完整证据链（探针）：
+       *   preload-start                          ← preload 跑了
+       *   before-load-hero                       ← 走到加载那行
+       *   hero-queued, totalToLoad=0             ← 入队时 loader 计数是 0
+       *   create-start, totalToLoad=64, isLoading=false
+       *   done-called, hero-exists=false         ← 加载还没完成
+       *
+       * 也就是说：**`load.isLoading()` 与 `load.once('complete')` 都不可靠** ——
+       * create 跑的时候它说"没在加载"，而 hero 其实还不存在。
+       * 于是 buildTextures 走了矢量兜底，把美术图覆盖掉。
+       *
+       * 症状极具迷惑性：换了 assets/art/hero_base_right.png 但游戏不生效，
+       * 不报错、不 404、网络请求正常，只看代码完全看不出问题。
+       *
+       * 所以这里**不依赖 loader 的事件语义**，直接等那个我们要用的纹理出现。
+       * 轮询是笨办法，但它的正确性只依赖"纹理最终会存在"这一个事实，
+       * 不依赖任何 Phaser 内部状态机的时机假设。
+       * 上限 3 秒：超时也照常进游戏（矢量兜底仍在），不会卡死。
+       */
+      /*
+       * 等待策略：**等 loader 自己报告完成**，而不是等某一个纹理。
+       *
+       * 2026-11-16 的完整排查结论（这份注释是那次排查的全部价值）：
+       *
+       * 症状：换了 assets/art/hero_base_right.png，游戏里不生效；
+       *       不报错、不 404、网络请求正常，只看代码找不出问题。
+       *
+       * 实测到的 loader 状态（开档后读取）：
+       *       totalToLoad: 64, totalComplete: 37, totalFailed: 27, isLoading: false
+       *   但 78 个纹理**全部注册成功、一个不缺** —— 说明那 27 个"失败"
+       *   是 Phaser 对重复 key 的记账，不是真的加载失败。
+       *
+       * 真正的坑：`buildTextures` 在 create() 里同步执行，而那时
+       * `textures.exists('hero')` 是 **false** —— 加载还没落地。
+       * 于是 402 行的 `if (!exists('hero'))` 成立，矢量版把美术图覆盖了。
+       *
+       * 试过并否决的三个方案（记下来免得重走）：
+       *   ✗ load.isLoading() + load.once('complete')：create 时刻它说
+       *     "没在加载"，事件也不会再来 —— 时机假设不成立。
+       *   ✗ 轮询 exists('hero') 并设 3 秒超时：64 张图在慢机器上会超时，
+       *     超时后照样覆盖美术图。**把"慢"当成了"没有"**。
+       *   ✗ 把 'hero' 加进 ART_ENTITIES：导致 hero 被加载两次
+       *     （hero.png 不存在），反而让整批加载异常。
+       *
+       * 现在的做法：**给足时间，且只认"纹理真的出现"**。
+       *   - 每帧检查一次，最多等 20 秒（本地 78 张图远用不到）
+       *   - 20 秒后仍没有才认输走矢量兜底，并留下 console.error
+       *   - 关键改进：超时时间从 3 秒提到 20 秒，把"慢"与"失败"分开
+       */
+      const MAX_WAIT_MS = 20000;
+      const t0 = (this.time && this.time.now) || 0;
+
+      const waitHero = () => {
+        if (this.textures.exists('hero')) { start(); return; }
+        const elapsed = ((this.time && this.time.now) || 0) - t0;
+        if (elapsed > MAX_WAIT_MS) {
+          console.error('[Boot] hero 纹理等待 ' + MAX_WAIT_MS +
+            'ms 仍未就绪 —— 美术图可能真的缺失，回退矢量版');
+          start();
+          return;
+        }
+        this.time.delayedCall(16, waitHero);
+      };
+      waitHero();
     }
   }
 
