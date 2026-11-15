@@ -47,7 +47,16 @@ console.log('=== 顺序一：先通关熔炉 → 再打赢地狱 Boss ===');
                   !(run.pickups||[]).some(p=>p.kind==='egg'));
   L.collectAll(s, run);
   allOk &= report('清波吸走后彩蛋仍在', !!run.egg && !run.egg.taken);
-  allOk &= report('eggFound 已置位', s.meta.eggFound === true);
+  /*
+   * eggFound 现在在**拾取时**才置位（C1 修复）：
+   * 掉落就置位会让"掉了但没来得及按 J 就结束"的玩家永久失去彩蛋。
+   */
+  allOk &= report('eggFound 尚未置位（捡起来才算拿到，C1）', s.meta.eggFound === false);
+  /*
+   * pendingEgg 在**局结束时**才写入（endRun 里调 stashPendingEgg）。
+   * 这里还没结束，所以不该有值 —— 有值反而说明写入时机错了。
+   */
+  allOk &= report('局未结束时不写 pendingEgg', !s.meta.pendingEgg);
 }
 
 console.log('');
@@ -81,8 +90,22 @@ console.log('=== 不该掉的情况 ===');
   const run3 = L.startRun(s, 'forge');
   allOk &= report('两个都有 → 掉', L.dropEgg(s, run3, 100, 100) === true);
 
-  const run4 = L.startRun(s, 'forge');   // 已经掉过了
-  allOk &= report('已掉过 → 不再掉（D3）', L.dropEgg(s, run4, 100, 100) === false);
+  /*
+   * D3（只掉一次）的判据现在是 **eggFound**，而它在拾取时才置位。
+   * 所以要先真的捡起来，才能验证"之后不再掉"。
+   */
+  /*
+   * 场景 3 里上的那颗蛋（s 上的 run3）实际**已经掉了**，
+   * 先把它捡起来，再验证"之后不再掉"。
+   */
+  const r3 = s.run || L.startRun(s, 'forge');
+  if (r3 && r3.egg && !r3.egg.taken) {
+    r3.player.x = r3.egg.x; r3.player.z = r3.egg.z;
+    L.takeEgg(s, r3);
+  }
+  allOk &= report('捡起后 eggFound 置位', s.meta.eggFound === true);
+  const run5 = L.startRun(s, 'forge');
+  allOk &= report('已拿到 → 不再掉（D3）', L.dropEgg(s, run5, 100, 100) === false);
 }
 
 console.log('');

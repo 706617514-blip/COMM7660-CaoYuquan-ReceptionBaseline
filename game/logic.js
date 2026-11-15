@@ -71,7 +71,9 @@
          */
         clearedForge: false,      // 通关过「熔炉」难度（普通局，4 波）
         beatHellBoss: false,      // 打赢过「地狱」档藤蔓巨像
-        eggFound: false,          // 彩蛋已掉落（只掉一次）
+        eggFound: false,          // 彩蛋已**被捡起**（只掉一次）
+        // 掉了但没被捡走的蛋会顺延到下一局（C1），坐标存这里
+        pendingEgg: null,
         /*
          * 作物通道（Task 4 / D6）。
          *
@@ -1257,6 +1259,11 @@
       diff: diff,
     };
     buildWave(state);
+    /*
+     * 上一局没取走的彩蛋原地重放（C1）。
+     * 放在最后：run 的其余部分都已建好，玩家坐标也有了。
+     */
+    restorePendingEgg(state, state.run);
     return state.run;
   }
 
@@ -2360,14 +2367,31 @@
   function dropEgg(state, run, x, z) {
     if (!run) return false;
     if (!eggEligible(state, run)) return false;
-    run.egg = {
-      x: x, z: z,
-      taken: false,
-      // 演出进度由渲染层推进，逻辑层只记"开始拾取"这个事实，
-      // 避免把毫秒计时塞进纯模拟层（logic 不认识时间以外的渲染概念）。
-      opened: false,
-    };
-    state.meta.eggFound = true;   // 立即置位：防同一帧内被触发两次
+    /*
+     * 坐标防御（C2）：lastKillX/Z 只在 killEnemy 里赋值，
+     * 若这一局的最后一个敌人不是经 killEnemy 消失的（或局面是恢复出来的），
+     * 它们就是 undefined。undefined 传进去会让 run.egg.x 变成 undefined，
+     * 之后 eggInReach 的 NaN 比较恒为 false —— **玩家永远够不到那颗蛋**，
+     * 但界面上看不到任何异常。
+     * 落到玩家身上 / 场地中心都是可接受的兜底：蛋至少能被捡到。
+     */
+    const px = (typeof x === 'number' && isFinite(x)) ? x
+      : (run.player ? run.player.x : C.FIELD_W / 2);
+    const pz = (typeof z === 'number' && isFinite(z)) ? z
+      : (run.player ? run.player.z : C.FIELD_D / 2);
+    run.egg = { x: px, z: pz, taken: false, opened: false };
+    /*
+     * ⚠️ 这里**不置位** state.meta.eggFound。
+     *
+     * 踩过的坑（独立审查发现，Critical）：最初在掉落时就置位，
+     * 于是任何"掉蛋之后、按 J 之前"的结束路径都会**永久烧掉**这个成就 ——
+     * 玩家在两个成就都达成之后被残敌打死一次，那张纸条就再也看不到了，
+     * 而且没有任何提示。这正是"做对了所有事却拿不到"的最坏情况。
+     *
+     * 现在 eggFound 在 **takeEgg（真的捡起来）** 时才置位。
+     * 配合 ensureEggOnRunEnd：局结束时若蛋还在场上没被捡，就把它
+     * 顺延到下一局，玩家的努力不会被一次意外抹掉。
+     */
     return true;
   }
 
@@ -2375,7 +2399,34 @@
   function takeEgg(state, run) {
     if (!run || !run.egg || run.egg.taken) return { ok: false, reason: '没有彩蛋' };
     run.egg.taken = true;
+    // ★ 真正的"拿到了"发生在这里，而不是掉落时（见 dropEgg 的注释）
+    state.meta.eggFound = true;
     return { ok: true, text: C.EGG.letterText };
+  }
+
+  /**
+   * 一局结束时把没被捡走的蛋顺延下来（C1 的第二半）。
+   *
+   * 为什么需要它：掉了蛋但玩家没来得及按 J 就结束，
+   * 若什么都不做，那一局的 run 会被清空，蛋随之消失。
+   * 由于 eggFound 现在只在拾取时置位，成就本身是保住了，
+   * 但玩家的体验不能靠"再打一次两个成就"来补偿 —— 那太苛刻。
+   *
+   * 做法：把蛋的坐标记在 meta.pendingEgg 上，下一局开始时原地重放。
+   * 玩家看到的是"那颗蛋还在那里等着我"。
+   */
+  function stashPendingEgg(state, run) {
+    if (!run || !run.egg || run.egg.taken) return;
+    state.meta.pendingEgg = { x: run.egg.x, z: run.egg.z };
+  }
+
+  /** 开局时若有未取走的蛋，原地重放。 */
+  function restorePendingEgg(state, run) {
+    const p = state.meta.pendingEgg;
+    if (!p || !run) return false;
+    if (state.meta.eggFound) { state.meta.pendingEgg = null; return false; }
+    run.egg = { x: p.x, z: p.z, taken: false, opened: false };
+    return true;
   }
 
   /**
@@ -2510,6 +2561,9 @@
       }
     });
     state.meta.coins += passive;
+
+    // 未取走的彩蛋顺延到下一局（C1），必须在 run 被清空之前做。
+    stashPendingEgg(state, run);
 
     state.lastResult = {
       won: won,
@@ -2704,6 +2758,7 @@
      * undefined 就表示"通用作物"，收获路径据此分流。
      * 补一个假 id 反而会让老田被当成本次新增的作物处理。
      */
+    if (s.meta.pendingEgg === undefined) s.meta.pendingEgg = null;
     if (!s.meta.cropSeeds) s.meta.cropSeeds = {};
     if (!s.meta.cropHarvest) s.meta.cropHarvest = {};
     // 注意用 normSettings 而不是 `if (!s.meta.settings)`：v6 的老档**有**
@@ -2770,6 +2825,7 @@
     // 挂进 API 的理由同 farm 那几行 —— 函数存在但不可达，
     // 会让调用方拿到 undefined 然后写出错的行为。
     eggEligible, dropEgg, takeEgg, eggInReach,
+    stashPendingEgg, restorePendingEgg,
     // 作物通道（Task 4 / D6）：种植、收获、食用、计数。
     plantCrop, harvestCrop, eatCrop, cropHarvestCount,
     serialize, deserialize,

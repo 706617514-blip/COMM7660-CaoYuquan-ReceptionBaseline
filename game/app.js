@@ -2320,6 +2320,31 @@
        */
       this.cameras.main.fadeIn(420, 0, 0, 0);
 
+      /*
+       * 重置彩蛋相关的字段（I1，独立审查发现）。
+       *
+       * Phaser 会**复用场景实例**：scene.start 回到本场景时 create 会再跑一遍，
+       * 但上一轮的 GameObject 已经随 shutdown 销毁了。
+       * 这时 this.eggGfx 等仍是**真值但已死**的引用，
+       * drawEgg 里的 `if (!this.eggGfx)` 惰性创建分支就不会执行，
+       * 接着对死对象调 setTint/setPosition —— 抛的还是那句
+       * `Cannot read properties of undefined (reading 'sys')`，
+       * 堆栈看不出是哪一行业务代码。
+       *
+       * 同一个坑本项目已经踩过一次（见下面 bossSprite 的注释），
+       * 所以这里显式清空，而不是指望"彩蛋只掉一次所以碰不到"。
+       */
+      this.eggGfx = null;
+      this.eggGlow = null;
+      this.eggBurst = null;
+      this.eggBurstCore = null;
+      this.eggBurstHalo = null;
+      this.eggAnim = null;
+      this.eggPrompt = null;
+      // 注意 this.eggLetter 是 DOM 元素，**不随场景销毁**，
+      // 故意不置 null —— 它由 ensureEggLetterEl 统一管理生命周期。
+      if (this.eggLetter) this.eggLetter.style.display = 'none';
+
       this.effectGfx = this.add.graphics().setDepth(1050);
       // 蓄力光点单独一层：它必须盖在 Boss 上面，否则 Boss 身体一挡就看不见。
       // Boss 的 depth 是 1000 - z，z 在 0..210 之间，所以 1000 - z 在 790..1000。
@@ -3973,6 +3998,18 @@
       paintBackdrop(this, 'farm');
       this.cameras.main.fadeIn(420, 0, 0, 0);
 
+      /*
+       * 重置相框相关字段（I1，与 RunScene 同一理由）：
+       * Phaser 复用场景实例，上一轮的 GameObject 已销毁，
+       * 留着真值引用会让惰性创建分支不执行，接着对死对象调 setVisible。
+       */
+      this.frameGfx = null;
+      this.frameHint = null;
+      this.letterOpen = false;
+      // letterOpen 被重置了，但 DOM 元素可能还显示着（上一次没关就切场景）
+      const staleLetter = document.getElementById('eggLetter');
+      if (staleLetter) staleLetter.style.display = 'none';
+
       // 与 Hub/Run 一致的调试钩子（无头探针与排障要用）
       global.EmberfieldApp.__scene = this;
       global.EmberfieldApp.__state = this.state;
@@ -4522,6 +4559,12 @@
     leave() {
       if (this.busy) return;
       this.busy = true;
+      /*
+       * 兜底：离开农场时确保纸条不残留（I2）。
+       * 正常情况下留着开纸条是走不到这里的（上面无条件拦截了 ESC），
+       * 但"再来一局"、场景被外部切走等路径绕不过这个显式关闭。
+       */
+      this.closeLetter();
       global.EmberfieldUI.save(this.state);
       // 与 startRun 同款兜底：相机不跑 update 就没有完成事件，
       // 玩家会卡在黑屏（见 HubScene.startRun 里的长注释）。
@@ -4549,13 +4592,20 @@
       /*
        * 基地相框（Task 3.3 / D4）：掉蛋后挂在农场右侧的纪念物。
        *
-       * 交互：按 J 看纸条。纸条打开时 J 或 ESC 关闭 ——
-       * 关的时候**不能**走 this.leave()：玩家是在关一张纸，
-       * 不是要离开农场，直接走掉会让他莫名其妙被弹出场景。
+       * 交互：按 J 看纸条；纸条开着时按 J 或 ESC 关闭。
+       *
+       * ⚠️ 关闭逻辑必须**无条件拦截**，不能加"延迟武装"（I2，独立审查发现）。
+       * 原写法是打开后 120ms 才允许关闭（怕同一次按键立刻把它关掉），
+       * 但 justPressed 是**按帧**读的：在那 120ms 内按下的 ESC
+       * 会绕过这个分支、落到下面的 this.leave() ——
+       * 结果是**纸条没关掉，人却被弹出了农场**，纸条还糊在屏幕上。
+       *
+       * 现在：只要 letterOpen 为真，ESC/J 一律只用于关闭，天然不会误触发
+       * "刚打开就被关掉" —— 因为打开它的那一次按键已经被本帧消费掉了
+       * （justPressed 的语义是"本帧刚按下"，同一帧不会再读第二次）。
        */
       if (this.letterOpen) {
-        if (this.letterCloseArmed
-            && (this.input2.justPressed('confirm') || this.input2.justPressed('esc'))) {
+        if (this.input2.justPressed('confirm') || this.input2.justPressed('esc')) {
           this.closeLetter();
         }
         return;                  // 纸条开着时不处理别的输入

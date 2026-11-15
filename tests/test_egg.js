@@ -126,7 +126,14 @@ function withHell(state) { state.meta.beatHellBoss = true; return state; }
   ok(run.egg.x === 300 && run.egg.z === 120,
      '彩蛋落在指定的坐标（最后一个敌人死亡处）');
   ok(run.egg.taken === false, '彩蛋初始未被拾取');
-  ok(s.meta.eggFound === true, '掉落后 eggFound 立即置位（防重复）');
+  /*
+   * ⚠️ 这里原本断言"掉落后 eggFound 立即置位"，那是 **C1 缺陷本身**
+   * （独立审查发现）。掉蛋就置位会让"掉了但没来得及按 J 就结束"的玩家
+   * 永久失去彩蛋。现在正确的语义是：**捡起来才算拿到**。
+   * 防重复由"同一局只有一个 run.egg"与 taken 标记保证。
+   */
+  ok(s.meta.eggFound === false,
+     '掉落后 eggFound **不**置位（捡起来才算拿到，C1）');
 }
 
 // ---------------------------------------------------------------- collectAll 免疫
@@ -167,6 +174,76 @@ function withHell(state) { state.meta.beatHellBoss = true; return state; }
   const willDrop = L.eggEligible(s, run);
   ok(willDrop === false,
      '缺地狱 Boss 成就时，通关熔炉不掉蛋（既有行为不变）');
+}
+
+// ---------------------------------------------------------------- C1：蛋不会被永久烧掉
+
+/*
+ * 这一节是**补 Critical 缺陷的回归测试**（独立审查发现，2026-11-15）。
+ *
+ * 原缺陷：dropEgg 在**掉落时**就置位 meta.eggFound，
+ * 于是玩家在做完两个成就、还没按 J 之前被残敌打死一次，
+ * 那颗蛋就永久消失、成就被烧掉、纸条再也看不到 —— 而且没有任何提示。
+ * 那是"做对了所有事却拿不到"的最坏情况。
+ *
+ * 修法：eggFound 改在 **takeEgg（真的捡起来）** 时置位；
+ * 局末若蛋还在场上没被捡，就把坐标存进 meta.pendingEgg，下一局原地重放。
+ */
+{
+  const s = fresh();
+  withForge(s); withHell(s);
+  const run = L.startRun(s, 'forge');
+  L.dropEgg(s, run, 300, 100);
+
+  ok(s.meta.eggFound === false,
+     'C1：掉蛋**不**置位 eggFound（只有捡起来才算拿到）');
+
+  // 玩家没按 J 就死了
+  L.endRun(s, false);
+  ok(s.meta.eggFound === false, 'C1：玩家死后 eggFound 仍是 false');
+  ok(s.meta.pendingEgg && s.meta.pendingEgg.x === 300,
+     'C1：未取走的蛋被存进 pendingEgg');
+
+  // 重开一局，蛋应该原地回来
+  const run2 = L.startRun(s, 'forge');
+  ok(!!run2.egg, 'C1：重开一局后蛋回来了');
+  ok(run2.egg && run2.egg.x === 300 && run2.egg.z === 100,
+     'C1：蛋回到原来的坐标');
+  ok(L.eggEligible(s, run2) === false || !!run2.egg,
+     'C1：玩家的努力没有被一次意外抹掉');
+
+  // 真的捡起来才置位
+  run2.player.x = 300; run2.player.z = 100;
+  const r = L.takeEgg(s, run2);
+  ok(r.ok === true, 'C1：按 J 能捡起恢复的蛋');
+  ok(s.meta.eggFound === true, 'C1：捡起后才置位 eggFound');
+}
+
+// ---------------------------------------------------------------- C2：坐标防御
+
+/*
+ * C2 回归：lastKillX/Z 只在 killEnemy 里赋值。
+ * 若这一局的最后一个敌人不是经 killEnemy 消失的，它们是 undefined，
+ * 传进去会让 run.egg.x 变成 undefined —— eggInReach 的 NaN 比较恒为 false，
+ * **玩家永远够不到那颗蛋，而界面上看不出任何异常**。
+ */
+{
+  const s = fresh();
+  withForge(s); withHell(s);
+  const run = L.startRun(s, 'forge');
+  // 故意不设 lastKillX / lastKillZ
+  const dropped = L.dropEgg(s, run, run.lastKillX, run.lastKillZ);
+
+  ok(dropped === true, 'C2：坐标缺失时仍然掉蛋（不静默失败）');
+  ok(run.egg && typeof run.egg.x === 'number' && isFinite(run.egg.x),
+     'C2：蛋的 x 是有限数字，不是 undefined');
+  ok(run.egg && typeof run.egg.z === 'number' && isFinite(run.egg.z),
+     'C2：蛋的 z 是有限数字');
+
+  // 走到蛋的坐标必须够得到
+  run.player.x = run.egg.x; run.player.z = run.egg.z;
+  ok(L.eggInReach(s, run) === true,
+     'C2：玩家走到蛋的坐标时确实够得到（NaN 比较会恒为 false）');
 }
 
 // ---------------------------------------------------------------- 存档往返
