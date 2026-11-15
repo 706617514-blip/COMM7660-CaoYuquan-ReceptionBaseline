@@ -187,6 +187,60 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
     ].join('\n'),
   };
 
+  /**
+   * 作物（Task 4 / D6）。
+   *
+   * PM 的设计初衷（原话）：
+   *   「农场存在的意义是，它给玩家提供一个装点小世界的场地……
+   *     收获的东西可以作为补给吃下去加血加体力」
+   *   「**不种还要农场干啥？**」—— 所以远征掉的是**种子**，
+   *   必须种下去、等成熟、收获，才能用。
+   *
+   * 与既有 FARM 的关系（重要）
+   * -------------------------
+   * 这条通道是**新增的**，不是替换：
+   *   meta.seeds        通用种子（整数）—— 语义与行为**完全不变**
+   *   meta.cropSeeds    作物种子 { cropId: n } —— 本次新增
+   * 所以既有的农场经济（19 块田的价格曲线、被动产出、腐烂规则）
+   * 一个字节都没动。tests/test_game_logic 的 650 条断言不需要改，
+   * 那就是"没弄坏东西"的证明。
+   *
+   * 三种效果刻意与现有三种药水对齐（回血 / 伤害 / 减伤）。
+   * 这是有意的：收获物走 POTIONS 那套使用路径（D7 最小版），
+   * 效果类型对齐才能复用，不需要造第二套消耗品系统。
+   */
+  const CROPS = {
+    /*
+     * ⚠️ 作物的**名字与外观属于 PM 的内容**，实施者不得自行发明世界观。
+     * 下面这三个名字是**占位名**，交付说明里已标注"待 PM 命名"。
+     * 改名字只需改这里的 name 与 color，机制不受影响。
+     */
+    emberbloom: {
+      name: '焰花',                       // 占位名，待 PM 定
+      color: 0xe08a5a,
+      desc: '吃下去立刻恢复少量生命',
+      // kind 只能是 instant / buff —— 与 POTIONS 的两种一致（测试守着）
+      effect: { kind: 'instant', heal: 14 },
+      // 单块田一次收获几个
+      yield: 1,
+    },
+    thornfruit: {
+      name: '刺果',                       // 占位名，待 PM 定
+      color: 0xc46b8a,
+      desc: '吃下去短时间内伤害提升',
+      effect: { kind: 'buff', duration: 12.0, damageMul: 1.22 },
+      yield: 1,
+    },
+    barkmelon: {
+      name: '树皮瓜',                     // 占位名，待 PM 定
+      color: 0x7fa86a,
+      desc: '吃下去短时间内受伤减少',
+      effect: { kind: 'buff', duration: 12.0, damageMul: 0.80 },
+      yield: 1,
+    },
+  };
+  const CROP_ORDER = Object.keys(CROPS);
+
   // 玩家基础值（强化会在此之上叠加）
   const BASE_HP = 70;
   const BASE_DAMAGE = 12;
@@ -753,6 +807,12 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
 
   // 战利品：每只小怪的基础掉落，再乘难度 lootMul
   const LOOT = {
+    /*
+     * 作物种子掉率（Task 4 / D6）。比通用种子的 seedChance 低得多 ——
+     * 作物必须种（PM 的 D6），产出要等两局，掉率再高只会堆一堆种不下的种子。
+     * 具体数值在这里，方便和别的掉落一起调。
+     */
+    cropSeedChance: 0.10,
     coinsPerKill: 4,
     seedChance: 0.05,       // 每只小怪掉种子的概率（0.05 = 5%）
     clearBonusCoins: 20,    // 清完一波的额外奖励
@@ -1001,6 +1061,7 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
     INVULN_AFTER_HIT, WAVE_BREAK, WAVE_HEAL,
     FEEL,
     EGG,
+    CROPS, CROP_ORDER,
     BASE_HP, BASE_DAMAGE, BASE_ATTACK_SPEED,
     DIFFICULTIES, ENEMIES, UPGRADES, FARM, BAG, LOOT, SKILLS, SKILL_ORDER, SPAWN, BOSS,
     POTIONS, POTION_ORDER,

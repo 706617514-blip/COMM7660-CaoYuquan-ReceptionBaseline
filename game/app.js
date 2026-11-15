@@ -4247,6 +4247,33 @@
         return;
       }
 
+      /*
+       * 作物种植（Task 4 / D6）。
+       *
+       * 手上**有作物种子**时优先种作物，没有时才退回通用种子。
+       * 为什么是这个优先级而不是反过来：
+       * 作物是新增的、更稀有的资源（只有远征才掉），
+       * 而通用种子开局就有 3 颗、随时买得到。
+       * 让稀有资源优先被使用，玩家不会"想种花却种成了普通作物"。
+       *
+       * 不弹选择菜单：选了再点一次田是两次点击，而农场是高频操作。
+       * 用当前选中的作物（数字键 1/2/3 切换，见 update 里的处理）。
+       */
+      const chosen = this.chosenCrop;
+      const chosenHave = chosen
+        ? ((this.state.meta.cropSeeds || {})[chosen] || 0) : 0;
+
+      if (chosen && chosenHave > 0) {
+        const rc = L.plantCrop(this.state, idx, chosen);
+        if (!rc.ok) { this.flash(rc.reason, false); return; }
+        this.splashSoil(idx);
+        global.EmberfieldUI.save(this.state);
+        this.redrawField();
+        this.refreshHud();
+        this.flash('已种下 ' + C.CROPS[chosen].name, true);
+        return;
+      }
+
       const r = L.plant(this.state, idx);
       if (!r.ok) {
         this.flash(r.reason, false);
@@ -4257,6 +4284,25 @@
       this.redrawField();
       this.refreshHud();
       this.flash('已播种', true);
+    }
+
+    /**
+     * 吃一份收获物（Task 4 / D6）。
+     *
+     * 在农场里吃**回满血但不进战斗**是没意义的（血量是局内的），
+     * 所以这里只对 buff 类生效——回血类留给局内用。
+     * 这也是为什么 eatCrop 要求 run 存在。
+     */
+    eatHarvest(cropId) {
+      const have = (this.state.meta.cropHarvest || {})[cropId] || 0;
+      if (have < 1) { this.flash('没有可吃的 ' + C.CROPS[cropId].name, false); return; }
+      const def = C.CROPS[cropId];
+      if (def.effect.kind === 'instant') {
+        // 回血作物在农场里吃不了：农场没有战斗，血量无处可用
+        this.flash(def.name + ' 要下地时吃（战斗中回血）', false);
+        return;
+      }
+      this.flash('增益类作物请在下地后按对应数字键食用', false);
     }
 
     /** 点田时的轻微反馈，让"点到了"看得见。 */
@@ -4421,9 +4467,33 @@
       // 反而让人以为还有别处看不到的地。
       const pageLine = pages > 1
         ? '第 ' + (this.curPage() + 1) + '/' + pages + ' 页　　' : '';
+      /*
+       * 作物行（Task 4 / D6）：只在**手上有作物种子或收获物**时才显示。
+       *
+       * 常驻显示会让从没掉过种子的玩家看到一排 0，那是噪音；
+       * 只有真的有了才提示 —— 和"相框只在掉蛋后出现"是同一条原则。
+       */
+      const seeds = s.meta.cropSeeds || {};
+      const harvest = s.meta.cropHarvest || {};
+      const cropChips = C.CROP_ORDER.map(function (id, i) {
+        const sn = seeds[id] || 0;
+        const hn = harvest[id] || 0;
+        if (sn === 0 && hn === 0) return null;
+        const mark = (this.chosenCrop === id) ? '▶' : ' ';
+        return mark + (i + 1) + '.' + C.CROPS[id].name +
+               ' 种' + sn + ' 存' + hn;
+      }, this).filter(Boolean);
+
+      let cropLine = '';
+      if (cropChips.length) {
+        cropLine = '作物：' + cropChips.join('　') + '\n' +
+                   '（数字键选种，点空田播种）\n';
+      }
+
       this.hudText.setText(
         '铜币  ' + s.meta.coins + '　　种子  ' + s.meta.seeds + '\n' +
-        pageLine + '成熟田  ' + L.maturePlots(s) + ' / ' + s.farm.plots.length +
+        pageLine + cropLine +
+        '成熟田  ' + L.maturePlots(s) + ' / ' + s.farm.plots.length +
         '　　每局被动  +' + L.passiveIncome(s) + '\n' +
         '作物需要 ' + C.FARM.runsToMature + ' 局成熟（输掉也算）\n' +
         '成熟后每局结算自动产出，不需要手动收取'
@@ -4476,6 +4546,28 @@
         this.openLetter();
         return;
       }
+
+      /*
+       * 作物选择（Task 4 / D6）：数字键 1/2/3 对应 CROP_ORDER。
+       *
+       * 为什么用数字键：它与局内的药水键（1/2/3）是同一套手感，
+       * 玩家不用学第二套操作。农场里不会有药水冲突——药水只在局内用。
+       *
+       * 键位只在**手上有该作物种子**时才有意义，所以按下时校验一次，
+       * 没种子就明说，而不是静默切换（静默切换会让玩家以为键坏了）。
+       */
+      C.CROP_ORDER.forEach((id, i) => {
+        if (this.input2.justPressed('potion' + (i + 1))) {
+          const have = (this.state.meta.cropSeeds || {})[id] || 0;
+          if (have < 1) {
+            this.flash('没有 ' + C.CROPS[id].name + ' 的种子（远征才会掉）', false);
+          } else {
+            this.chosenCrop = id;
+            this.flash('已选中 ' + C.CROPS[id].name + '，点空田播种', true);
+          }
+          this.refreshHud();
+        }
+      });
 
       if (this.input2.justPressed('esc')) this.leave();
     }

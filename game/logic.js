@@ -72,6 +72,17 @@
         clearedForge: false,      // 通关过「熔炉」难度（普通局，4 波）
         beatHellBoss: false,      // 打赢过「地狱」档藤蔓巨像
         eggFound: false,          // 彩蛋已掉落（只掉一次）
+        /*
+         * 作物通道（Task 4 / D6）。
+         *
+         * 为什么是**新增**而不是替换 meta.seeds：
+         *   seeds 是通用种子（整数），既有农场经济围着它平衡过；
+         *   把它拆成分类表会牵动 plant / 腐烂 / 结算卡 / 田地 UI 四处，
+         *   而 PM 要的是"作物有种类、必须种、种出来能吃"，
+         *   **不是**"把通用种子废掉"。两套并存，各走各的通道。
+         */
+        cropSeeds: {},            // { cropId: 数量 } 可种下的作物种子
+        cropHarvest: {},          // { cropId: 数量 } 已收获、可食用的产物
         // 音效、静音与环境音（Task 12 / Task 23 读写这里）。
         // 老档没有这些字段，迁移与 deserialize 负责补。
         settings: { volume: 0.30, muted: false, ambient: defaultAmbient() },
@@ -412,6 +423,102 @@
     plot.state = 'growing';
     plot.growth = 0;
     return { ok: true };
+  }
+
+  /* ---------------------------------------------------------------- 作物（Task 4 / D6）
+   *
+   * 与通用种子的 plant() 分开写，而不是给 plant 加参数：
+   * plant 被既有测试与 Hub 的田地入口调用，加参数会改它的签名与行为。
+   * 两条通道各自完整，互不干扰 —— 这是"不弄坏既有农场"最省的做法。
+   */
+
+  /** 种下一种作物。plotIndex 上的田必须是空的、且手上有该作物的种子。 */
+  function plantCrop(state, plotIndex, cropId) {
+    const def = C.CROPS[cropId];
+    if (!def) return { ok: false, reason: '没有这种作物' };
+    const plot = state.farm.plots[plotIndex];
+    if (!plot || plot.state !== 'empty') return { ok: false, reason: '这块田不是空的' };
+    const have = (state.meta.cropSeeds && state.meta.cropSeeds[cropId]) || 0;
+    if (have < 1) return { ok: false, reason: '没有这种作物的种子' };
+    state.meta.cropSeeds[cropId] = have - 1;
+    plot.state = 'growing';
+    plot.growth = 0;
+    /*
+     * 田地记住种的是什么。
+     * 老田（通用种子种的）没有 crop 字段 —— 收获路径据此分流，
+     * 所以迁移**不需要**给老田补字段：undefined 就是"通用作物"。
+     */
+    plot.crop = cropId;
+    return { ok: true };
+  }
+
+  /** 收获一块成熟的田。返回收到了什么。 */
+  function harvestCrop(state, plotIndex) {
+    const plot = state.farm.plots[plotIndex];
+    if (!plot || plot.state !== 'mature') return { ok: false, reason: '这块田还没成熟' };
+    const cropId = plot.crop;
+    /*
+     * 没有 crop 字段 = 这个版本之前的田，按**通用产出**结算
+     * （铜币，由 passiveIncome 处理）。收获路径只处理作物，
+     * 所以这种情况返回 ok:false 并保持田的状态不变，
+     * 让既有的"清空、回到 empty"逻辑照旧走。
+     */
+    if (!cropId || !C.CROPS[cropId]) {
+      plot.state = 'empty';
+      plot.growth = 0;
+      return { ok: true, generic: true };
+    }
+    const def = C.CROPS[cropId];
+    if (!state.meta.cropHarvest) state.meta.cropHarvest = {};
+    state.meta.cropHarvest[cropId] =
+      (state.meta.cropHarvest[cropId] || 0) + def.yield;
+    plot.state = 'empty';
+    plot.growth = 0;
+    delete plot.crop;
+    return { ok: true, cropId: cropId, amount: def.yield };
+  }
+
+  /**
+   * 吃掉一份收获物。
+   *
+   * 效果走既有的 instant / buff 两条路（与药水同一套语义，D7 最小版）：
+   *   instant → 立刻回血
+   *   buff    → 给一个限时增益，记在 run.player.cropBuff 上
+   *
+   * 为什么用独立的 cropBuff 而不是复用 potionBuff：
+   * 药水是**局前购买**的资源，作物是**局外积累**的资源，
+   * 两者同时生效时（先喝力量药水再吃刺果）应该叠乘而不是互相覆盖。
+   * 共用一个槽会让先吃的那个静默消失。
+   */
+  function eatCrop(state, run, cropId) {
+    const def = C.CROPS[cropId];
+    if (!def) return { ok: false, reason: '没有这种作物' };
+    const have = (state.meta.cropHarvest && state.meta.cropHarvest[cropId]) || 0;
+    if (have < 1) return { ok: false, reason: '没有可吃的收获物' };
+    if (!run || !run.player) return { ok: false, reason: '不在战斗中' };
+
+    state.meta.cropHarvest[cropId] = have - 1;
+    const p = run.player;
+    const e = def.effect;
+
+    if (e.kind === 'instant') {
+      if (e.heal) {
+        p.hp = Math.min(p.maxHp, p.hp + e.heal);
+      }
+    } else if (e.kind === 'buff') {
+      p.cropBuff = {
+        cropId: cropId,
+        timer: e.duration,
+        damageMul: e.damageMul,
+      };
+    }
+    return { ok: true, effect: e };
+  }
+
+  /** 手上的收获物总数（HUD 用）。 */
+  function cropHarvestCount(state) {
+    const h = (state.meta && state.meta.cropHarvest) || {};
+    return Object.keys(h).reduce(function (n, k) { return n + (h[k] || 0); }, 0);
   }
 
   function buyUpgrade(state, key) {
@@ -1790,6 +1897,23 @@
     };
     spawn('coin', Math.round(C.LOOT.coinsPerKill * run.diff.lootMul), 90, 55);
     if (nextRandom(state) < C.LOOT.seedChance) spawn('seed', 1, 110, 70);
+    /*
+     * 作物种子（Task 4 / D6）：远征带回来的"花与农作物"。
+     *
+     * 掉率比通用种子低得多，理由：
+     *   - 作物种子是**必须种**的（PM 的 D6），产出需要两局等待，
+     *     本来就慢；掉率再高会让玩家手上堆一堆种不下的种子。
+     *   - 通用种子是"基线资源"，作物种子是"额外收获"，
+     *     稀有度要对得上这个定位。
+     * 只掉一种、按权重随机 —— 具体能不能拿到想要的作物，是远征的运气成分。
+     */
+    if (nextRandom(state) < C.LOOT.cropSeedChance) {
+      const pick = Math.floor(nextRandom(state) * C.CROP_ORDER.length);
+      spawn('cropSeed', 1, 110, 70);
+      // 把作物 id 记在掉落物上：同一种 kind 要能区分是哪一种作物
+      const last = run.pickups[run.pickups.length - 1];
+      if (last) last.cropId = C.CROP_ORDER[pick];
+    }
 
     // 血滴护符：击杀回血
     const kh = hasFx(state, 'killHeal');
@@ -1865,7 +1989,21 @@
                 && Math.abs(it.z - p.z) < C.LOOT.pickupRadiusZ;
       if (near) {
         if (it.kind === 'coin') run.loot.coins += it.value;
-        else run.loot.seeds += it.value;
+        else if (it.kind === 'cropSeed') {
+          /*
+           * 作物种子直接进 meta（不走 run.loot）。
+           *
+           * 理由：run.loot 是"这一局的战利品"，结算时按胜败折算保留率；
+           * 而作物种子是**具体哪一种作物**的种子，run.loot 是个数字袋子，
+           * 装不下种类。而且它不该被"战败只保留一半"折算 ——
+           * 那会切出半颗种子。所以拾到即入账，与铜币/通用种子的口径不同。
+           */
+          if (!state.meta.cropSeeds) state.meta.cropSeeds = {};
+          const cid = it.cropId || C.CROP_ORDER[0];
+          state.meta.cropSeeds[cid] = (state.meta.cropSeeds[cid] || 0) + 1;
+        } else {
+          run.loot.seeds += it.value;
+        }
         run.pickups.splice(i, 1);
       } else if (it.life <= 0) {
         run.pickups.splice(i, 1);
@@ -1877,7 +2015,12 @@
   function collectAll(state, run) {
     run.pickups.forEach(function (it) {
       if (it.kind === 'coin') run.loot.coins += it.value;
-      else run.loot.seeds += it.value;
+      else if (it.kind === 'cropSeed') {
+        // 与 stepPickups 同一口径：作物种子拾到即入 meta，不进战利品折算。
+        if (!state.meta.cropSeeds) state.meta.cropSeeds = {};
+        const cid = it.cropId || C.CROP_ORDER[0];
+        state.meta.cropSeeds[cid] = (state.meta.cropSeeds[cid] || 0) + 1;
+      } else run.loot.seeds += it.value;
     });
     run.pickups.length = 0;
   }
@@ -2251,6 +2394,29 @@
     }
     const seedSpoiled = seedsBeforeSpoil - state.meta.seeds;
 
+    /*
+     * 作物种子按**同一条规则**腐烂（Task 4 / D6）。
+     *
+     * 为什么要腐烂而不是无限囤：和通用种子同一个理由 ——
+     * 田地的数量是上限，囤超过上限的种子没有任何用途，只是数字变大。
+     * 不腐烂的话，玩到后期作物种子会堆到几百颗，农场的取舍就消失了。
+     *
+     * 每种作物**分别**套用这条规则，而不是把所有作物加总：
+     * 加总会让"三种各囤 5 颗"和"一种囤 15 颗"受到同样的惩罚，
+     * 而前者是健康的储备、后者才是超额囤积。
+     *
+     * 注意：这条只作用于 cropSeeds，**不碰 meta.seeds** ——
+     * 既有种子的腐烂行为（以及 test_game_logic 的相关断言）完全不变。
+     */
+    if (state.meta.cropSeeds) {
+      Object.keys(state.meta.cropSeeds).forEach(function (id) {
+        const n = state.meta.cropSeeds[id] || 0;
+        if (n > seedGrace) {
+          state.meta.cropSeeds[id] = seedGrace +
+            Math.ceil((n - seedGrace) * (1 - C.FARM.seedSpoilRate));
+        }
+      });
+    }
     // 药水同步：本局喝掉多少，meta 就扣掉多少。
     // 用"剩余量回写"而不是"扣减量"，中途重开也不会重复扣。
     if (run.potions && state.meta.potions) {
@@ -2269,6 +2435,34 @@
       }
     });
     const passive = passiveIncome(state);
+
+    /*
+     * 成熟作物的自动收获（Task 4 / D6）。
+     *
+     * ⚠️ 这段**必须在上面那个成熟推进循环之后**。
+     * 踩过的坑（2026-11-15，真机验证时发现）：最初把它放在成熟推进**之前**，
+     * 于是同一局里先检查收获（那时还是 growing，跳过）、之后才推进成熟 ——
+     * 结果作物永远差一局才收，player 看到的是"熟了但什么都没发生"。
+     * 两个循环的顺序就是这段逻辑的全部正确性，别调换。
+     *
+     * 为什么自动收获而不是等玩家点：
+     * 既有的通用作物就是"成熟后每局结算自动产出"
+     * （见 passiveIncome 与 FarmScene 的 HUD 文案
+     * 「成熟后每局结算自动产出，不需要手动收取」）。
+     * 若要求手动点，同一个农场里就有两套矛盾的规则。
+     * 统一成自动：**种植要手动（那是决策），收获不用（那是结果）**。
+     */
+    state.farm.plots.forEach(function (plot) {
+      if (plot.state === 'mature' && plot.crop && C.CROPS[plot.crop]) {
+        const def = C.CROPS[plot.crop];
+        if (!state.meta.cropHarvest) state.meta.cropHarvest = {};
+        state.meta.cropHarvest[plot.crop] =
+          (state.meta.cropHarvest[plot.crop] || 0) + def.yield;
+        plot.state = 'empty';
+        plot.growth = 0;
+        delete plot.crop;
+      }
+    });
     state.meta.coins += passive;
 
     state.lastResult = {
@@ -2456,6 +2650,16 @@
     if (s.meta.clearedForge === undefined) s.meta.clearedForge = false;
     if (s.meta.beatHellBoss === undefined) s.meta.beatHellBoss = false;
     if (s.meta.eggFound === undefined) s.meta.eggFound = false;
+    /*
+     * 作物通道（Task 4 / D6）：同样是"加字段不动 STATE_VERSION"。
+     * 空对象是安全默认值 —— 老玩家不白得作物种子，也不丢档。
+     *
+     * farm.plots 里的老田**故意不补 crop 字段**：
+     * undefined 就表示"通用作物"，收获路径据此分流。
+     * 补一个假 id 反而会让老田被当成本次新增的作物处理。
+     */
+    if (!s.meta.cropSeeds) s.meta.cropSeeds = {};
+    if (!s.meta.cropHarvest) s.meta.cropHarvest = {};
     // 注意用 normSettings 而不是 `if (!s.meta.settings)`：v6 的老档**有**
     // settings（只是没有 ambient），简单兜底永远不会触发，滑块会读到 undefined。
     s.meta.settings = normSettings(s.meta.settings);
@@ -2520,6 +2724,8 @@
     // 挂进 API 的理由同 farm 那几行 —— 函数存在但不可达，
     // 会让调用方拿到 undefined 然后写出错的行为。
     eggEligible, dropEgg, takeEgg, eggInReach,
+    // 作物通道（Task 4 / D6）：种植、收获、食用、计数。
+    plantCrop, harvestCrop, eatCrop, cropHarvestCount,
     serialize, deserialize,
     nextRandom, buildWave, makeEnemy,
   };
