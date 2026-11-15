@@ -57,6 +57,21 @@
         // 条目的 uid 计数器。必须存档（放在 meta 里），否则读档后
         // 新条目会从 1 重新计数，和旧条目的 uid 撞车。
         uidSeq: 0,
+        /*
+         * 终极彩蛋的两个成就标记（Task 3 / 设计文档 D1）。
+         *
+         * 为什么是两个独立布尔而不是一个"已通关"标记：
+         * PM 要的触发条件是「熔炉通关 **且** 地狱 Boss 打赢，先完成哪个都行，
+         * 在第二个达成的那一刻掉」。两个成就是两个独立事实，各自一个布尔
+         * 最诚实 —— 合成一个字段就再也分不出"只通关了熔炉"和"什么都没做"，
+         * 将来要做成就展示也会缺信息。
+         *
+         * eggFound 与上面两个分开：它记的是"彩蛋已经掉过了"，
+         * 而不是"某个成就达成了"。掉落后置位，防重复触发（D3）。
+         */
+        clearedForge: false,      // 通关过「熔炉」难度（普通局，4 波）
+        beatHellBoss: false,      // 打赢过「地狱」档藤蔓巨像
+        eggFound: false,          // 彩蛋已掉落（只掉一次）
         // 音效、静音与环境音（Task 12 / Task 23 读写这里）。
         // 老档没有这些字段，迁移与 deserialize 负责补。
         settings: { volume: 0.30, muted: false, ambient: defaultAmbient() },
@@ -1732,6 +1747,18 @@
 
   function killEnemy(state, run, e) {
     e.state = 'dead';
+    /*
+     * 记录"最后一个敌人死在哪"（Task 3 / 设计文档 §4.2）。
+     *
+     * 为什么必须在这里记，而不是在触发彩蛋时现取：
+     *   彩蛋有两个触发点，其中"通关熔炉"走 stepWave → endRun，
+     *   那一刻最后一只怪**已经死过了**，e.x/e.z 不再可达。
+     *   提前记下来，两个触发点就都能拿到同一个坐标。
+     *
+     * 纯增量：只写两个新字段，不读不判断，对既有行为零影响。
+     */
+    run.lastKillX = e.x;
+    run.lastKillZ = e.z;
     // 改成掉在地上等玩家去捡（见 LOOT 注释：这是战斗节奏的一部分）
     // 掉落物是**实体**：从死亡点弹起、抛向一侧，落地后停住。
     // 旧版本只是贴在原地不动的标记，视觉上没有"东西掉出来"的感觉。
@@ -1771,6 +1798,21 @@
           bagFull: !!drop.bagFull,
           overwrote: drop.overwrote || null,
         });
+      }
+    } else {
+      /*
+       * Boss 被击杀（Task 3 / 设计文档 D1）。
+       *
+       * ⚠️ 判定必须同时看 isBossRun 和 bossTier，不能只看 bossTier。
+       * 被击杀的 e.isBoss 只说明"这是个 Boss"，而我们要的是
+       * "**玩家主动挑战的那一局**的地狱档 Boss"。
+       *
+       * 成就置位后立刻尝试掉蛋：若"通关熔炉"这个成就已经达成，
+       * 此刻就是"第二个达成"的瞬间，蛋落在这里（Boss 尸体位置）。
+       */
+      if (run.isBossRun && run.bossTier === C.EGG.hellTier) {
+        state.meta.beatHellBoss = true;
+        dropEgg(state, run, e.x, e.z);
       }
     }
   }
@@ -2034,12 +2076,117 @@
       if (run.breakTimer <= 0) {
         run.waveIndex += 1;
         if (run.waveIndex >= run.diff.waves) {
-          endRun(state, true);
+          /*
+           * 通关（Task 3 / 设计文档 D5）。
+           *
+           * ⚠️ `!run.isBossRun` 不可省略 —— 这是本项目最容易写错的一处判定。
+           *
+           * app.js:1129 有 `BOSS_TIER_DIFF = { normal:'wood', hard:'deep',
+           * hell:'forge' }`，也就是说**挑战地狱 Boss 时，Boss 局的
+           * run.difficultyId 就是 'forge'**。
+           * 如果这里只写 difficultyId === 'forge'，那么打赢地狱 Boss 会
+           * 同时把"通关熔炉"和"打赢地狱 Boss"两个成就一起置位 ——
+           * PM 要的"两个成就"当场坍缩成一个条件，彩蛋逻辑失效。
+           *
+           * 所以"通关熔炉"只认**普通局**（从远征之门出发的 4 波熔炉）。
+           * 这一条是独立构建者审查发现的，见设计文档 §3.3。
+           */
+          if (!run.isBossRun && run.difficultyId === C.EGG.forgeDifficulty) {
+            state.meta.clearedForge = true;
+            /*
+             * 尝试掉蛋。若"打赢地狱 Boss"已达成，此刻就是第二个达成的瞬间，
+             * 蛋落在**最后一只怪死亡处**（由 killEnemy 记下的 lastKillX/Z）。
+             *
+             * 掉蛋成功则**不立刻结算**（D5）：PM 要求玩家能走过去按 J 捡蛋，
+             * 捡完才进结算界面。见下面的 pendingEggSettlement。
+             */
+            if (dropEgg(state, run, run.lastKillX, run.lastKillZ)) {
+              run.pendingEggSettlement = true;
+            }
+          }
+          /*
+           * 不延后时行为与改动前**完全一致** —— 这是本改动最重要的性质：
+           * 没拿到彩蛋的玩家，熔炉通关的流程一个字节都没变。
+           * tests/test_egg.js 有断言守着这条。
+           */
+          if (!run.pendingEggSettlement) endRun(state, true);
         } else {
           buildWave(state);
         }
       }
     }
+  }
+
+  // ---------------------------------------------------------------- 终极彩蛋
+  /**
+   * 终极彩蛋（Task 3 / 设计文档 D1-D5）。
+   *
+   * 触发条件：**通关熔炉难度 且 打赢地狱 Boss**，先完成哪个都行，
+   * 在第二个达成的那一刻掉落，落在最后一个敌人死亡的位置。
+   *
+   * ⚠️ 判定里两处容易写错的地方，各有注释说明，别"优化"掉。
+   */
+
+  /**
+   * 两个成就是否都达成、且彩蛋还没掉过。
+   *
+   * run 可以为 null（结算之后调用），此时只看 meta。
+   */
+  function eggEligible(state, run) {
+    if (!state || !state.meta) return false;
+    if (state.meta.eggFound) return false;              // 只掉一次（D3）
+    return !!(state.meta.clearedForge && state.meta.beatHellBoss);
+  }
+
+  /**
+   * 在指定坐标放下彩蛋。返回是否真的掉了。
+   *
+   * ⚠️ 彩蛋存进 `run.egg`，**不是 `run.pickups`**。
+   *
+   * 为什么这一条至关重要（设计文档 §4.2 陷阱，独立构建者审查发现）：
+   *   stepWave() 清波时会调 collectAll()，它把 run.pickups **全部**吸进战利品
+   *   （logic.js 的 collectAll）。而"熔炉通关"正是 stepWave 触发的 ——
+   *   蛋若进 pickups，会在最后一只怪死的那一刻被吸走、紧接着 endRun 结算，
+   *   玩家**永远没有机会按 J**。
+   *   表现是"按 J 拾取看起来实现了，实际触发不到"，极难发现。
+   *
+   * 同时 run.egg 也不参与 stepPickups 的自动吸附（那只看 run.pickups），
+   * 所以"必须按 J"这个 PM 指定的动作是真的必须。
+   */
+  function dropEgg(state, run, x, z) {
+    if (!run) return false;
+    if (!eggEligible(state, run)) return false;
+    run.egg = {
+      x: x, z: z,
+      taken: false,
+      // 演出进度由渲染层推进，逻辑层只记"开始拾取"这个事实，
+      // 避免把毫秒计时塞进纯模拟层（logic 不认识时间以外的渲染概念）。
+      opened: false,
+    };
+    state.meta.eggFound = true;   // 立即置位：防同一帧内被触发两次
+    return true;
+  }
+
+  /** 玩家拾取彩蛋（按 J 确认后由渲染层调用）。 */
+  function takeEgg(state, run) {
+    if (!run || !run.egg || run.egg.taken) return { ok: false, reason: '没有彩蛋' };
+    run.egg.taken = true;
+    return { ok: true, text: C.EGG.letterText };
+  }
+
+  /**
+   * 彩蛋是否在玩家可拾取范围内。
+   *
+   * 半径比普通掉落物大得多（见 C.EGG.pickupRadius 的注释）：
+   * 这是彩蛋不是掉落物，让玩家在尸体附近反复找不到它会把仪式感毁掉。
+   */
+  function eggInReach(state, run) {
+    if (!run || !run.egg || run.egg.taken) return false;
+    const p = run.player;
+    if (!p) return false;
+    const dx = run.egg.x - p.x;
+    const dz = run.egg.z - p.z;
+    return Math.sqrt(dx * dx + dz * dz) <= C.EGG.pickupRadius;
   }
 
   // ---------------------------------------------------------------- 结算
@@ -2279,6 +2426,21 @@
     // 却挡不住这些非空非法值 —— 它们会一路带进 bagCapacity 与页价表。
     s.meta.bagPages = normBagPages(s.meta.bagPages);
     if (!s.meta.uidSeq) s.meta.uidSeq = 0;
+    /*
+     * 彩蛋的成就标记（Task 3）。
+     *
+     * 与 ambient（Task 23）同一手法：**加字段不动 STATE_VERSION**，
+     * 在兜底里补齐。理由：
+     *   - 这三个字段都是"默认 false"的纯增量，没有旧值需要搬运，
+     *     不像 v5→v6 的库存那样要转换结构；
+     *   - STATE_VERSION 不匹配会 **throw**（见下），为一个可无损补齐的
+     *     注释块升版本，只会让所有老档多一次无谓的迁移风险。
+     * 用 `=== undefined` 而不是 `!s.meta.x`：后者会把玩家**已经置位的 false**
+     * 也重新赋一遍 —— 现在无害，但将来若默认值变成 true 就会静默清进度。
+     */
+    if (s.meta.clearedForge === undefined) s.meta.clearedForge = false;
+    if (s.meta.beatHellBoss === undefined) s.meta.beatHellBoss = false;
+    if (s.meta.eggFound === undefined) s.meta.eggFound = false;
     // 注意用 normSettings 而不是 `if (!s.meta.settings)`：v6 的老档**有**
     // settings（只是没有 ambient），简单兜底永远不会触发，滑块会读到 undefined。
     s.meta.settings = normSettings(s.meta.settings);
@@ -2339,6 +2501,10 @@
     // 整理与页签过滤（§4.5）：sortBag 原地排，bagFilter 返回条目数组。
     sortBag, bagFilter,
     playerStats, maturePlots, passiveIncome,
+    // 终极彩蛋（Task 3）：判定、掉落、拾取、范围。
+    // 挂进 API 的理由同 farm 那几行 —— 函数存在但不可达，
+    // 会让调用方拿到 undefined 然后写出错的行为。
+    eggEligible, dropEgg, takeEgg, eggInReach,
     serialize, deserialize,
     nextRandom, buildWave, makeEnemy,
   };

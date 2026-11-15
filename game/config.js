@@ -124,6 +124,69 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
     },
   };
 
+  /**
+   * 终极彩蛋（Task 3 / 设计文档 §5.2-5.3，PM 裁决 D1-D5）。
+   *
+   * 这是什么
+   * --------
+   * PM 的设计：两个成就都达成时掉落一颗七彩蛋 ——
+   * 通关「熔炉」难度 **且** 打赢「地狱」档藤蔓巨像。
+   * 先完成哪个都行，**在第二个达成的那一刻**掉，落在最后一个敌人死亡处。
+   * 按 J 拾取，然后全屏泛光 + 纸条渐现。
+   *
+   * 为什么演出参数要单独成表
+   * ------------------------
+   * 和 FEEL 同一个理由：演出节奏是主观的，必须能反复微调而不碰渲染代码。
+   * 光爆多长、纸条多久浮出来，这些只能靠看，不能靠推理定。
+   */
+  const EGG = {
+    /*
+     * 成就判定用到的两个难度/档位标识。
+     * 写成常量而不是散在逻辑里，是因为 BOSS_TIER_DIFF 把 hell 映射到了
+     * forge（app.js:1129），两者容易混 —— 见 eggEligible 的注释。
+     */
+    forgeDifficulty: 'forge',    // 普通局的"熔炉"难度 id
+    hellTier: 'hell',            // Boss 局的"地狱"档位
+
+    // ---- 演出时长（毫秒）----
+    burstMs: 1400,        // 全屏光爆：涨到峰值再衰减的总时长
+    burstPeakAt: 0.28,    // 峰值出现在整段的哪个位置（0-1）
+    letterFadeMs: 900,    // 纸条从模糊到清晰
+    letterCharMs: 55,     // 逐字浮现的间隔
+    letterHoldMs: 600,    // 最后一行浮完后停留多久再允许关闭
+
+    // ---- 拾取 ----
+    /*
+     * 判定半径比普通掉落物（pickupRadiusX 40 / Z 34）大得多。
+     * 理由：这是彩蛋，不是掉落物。让玩家在最后一只怪死掉的位置
+     * 反复找不到它，会把整个仪式感毁掉。
+     */
+    pickupRadius: 90,
+    needsConfirm: true,   // 必须按 J（PM 指定），不自动吸附
+
+    // ---- 视觉 ----
+    hueCycleMs: 3000,     // 七彩蛋走完一圈色相的时长
+    bobAmp: 6,            // 上下浮动幅度（像素）
+    bobMs: 1600,          // 一次浮动往返
+    glowScale: 1.9,       // 光晕相对蛋体的缩放
+
+    /*
+     * 纸条原文 —— **PM 亲笔，一个字都不许改**。
+     *
+     * 第三行结尾没有句号是 PM 的原文，不要"顺手补上"。
+     * tests/test_egg.js 有断言逐字钉住这段文字。
+     *
+     * 篇幅只有 46 字，是四行短句 —— 排版上当短诗处理（居中、行距舒展、
+     * 字号偏大），不要拉伸成正文段落，也不要加标题或署名（PM 没写这些）。
+     */
+    letterText: [
+      '感谢你游玩我的游戏。',
+      '这是我第一次且独立开发的',
+      '有很多不足之处让您皱了眉头',
+      '我会用下一佳作舒展它们',
+    ].join('\n'),
+  };
+
   // 玩家基础值（强化会在此之上叠加）
   const BASE_HP = 70;
   const BASE_DAMAGE = 12;
@@ -914,6 +977,7 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
     ATTACK_DURATION, ATTACK_COOLDOWN, ATTACK_RANGE, ATTACK_DEPTH, ATTACK_BACK, COMBO,
     INVULN_AFTER_HIT, WAVE_BREAK, WAVE_HEAL,
     FEEL,
+    EGG,
     BASE_HP, BASE_DAMAGE, BASE_ATTACK_SPEED,
     DIFFICULTIES, ENEMIES, UPGRADES, FARM, BAG, LOOT, SKILLS, SKILL_ORDER, SPAWN, BOSS,
     POTIONS, POTION_ORDER,
