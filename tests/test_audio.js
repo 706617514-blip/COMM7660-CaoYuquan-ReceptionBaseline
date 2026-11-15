@@ -186,17 +186,20 @@ if (!A) {
 }
 
 // Task 23：17 -> 21。death 改名 defeat（-1/+1），新增 step1..3（+3）与 victory（+1）。
+// Task 3.2：21 -> 22，新增 eggBurst（终极彩蛋的光爆）。
+//   eggBurst 与其它 21 个**风格必须一致**（都是合成，无采样文件），
+//   所以它只是同一套体系里多一个条目，不是引入第二种音源。
 const NAMES = ['slash', 'hit', 'crit', 'hurt', 'coin', 'seed', 'dropNew', 'dropDup',
   'potion', 'skill', 'special', 'upgrade', 'sell', 'bagOpen', 'wave', 'boss', 'defeat',
-  'victory', 'step1', 'step2', 'step3'];
+  'victory', 'step1', 'step2', 'step3', 'eggBurst'];
 
-group('21 个音效名', function () {
+group('22 个音效名', function () {
   const sfx = C.AUDIO && C.AUDIO.sfx;
   ok(!!sfx, 'config.js 里有 AUDIO.sfx 表');
   const keys = Object.keys(sfx || {});
-  eq(keys.length, 21, 'AUDIO.sfx 恰好 21 个音效');
+  eq(keys.length, 22, 'AUDIO.sfx 恰好 22 个音效');
   const missing = NAMES.filter((n) => !sfx[n]);
-  ok(missing.length === 0, '21 个名字一个不少', JSON.stringify(missing));
+  ok(missing.length === 0, '22 个名字一个不少', JSON.stringify(missing));
   const extra = keys.filter((k) => NAMES.indexOf(k) < 0);
   ok(extra.length === 0, '没有多出来的孤儿音效（避免"配了没人播"）', JSON.stringify(extra));
   // §3.3：旧名字必须彻底消失，否则"改了名但没改调用点"会静默无声

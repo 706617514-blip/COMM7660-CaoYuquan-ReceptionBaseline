@@ -36,3 +36,7 @@ docs/art/composites/
 docs/art/anchor/
 docs/art/anchor_refs/
 docs/art/refs/
+
+# Electron（Task 1）：依赖与打包产物，都不入库
+node_modules/
+dist/

@@ -124,6 +124,123 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
     },
   };
 
+  /**
+   * 终极彩蛋（Task 3 / 设计文档 §5.2-5.3，PM 裁决 D1-D5）。
+   *
+   * 这是什么
+   * --------
+   * PM 的设计：两个成就都达成时掉落一颗七彩蛋 ——
+   * 通关「熔炉」难度 **且** 打赢「地狱」档藤蔓巨像。
+   * 先完成哪个都行，**在第二个达成的那一刻**掉，落在最后一个敌人死亡处。
+   * 按 J 拾取，然后全屏泛光 + 纸条渐现。
+   *
+   * 为什么演出参数要单独成表
+   * ------------------------
+   * 和 FEEL 同一个理由：演出节奏是主观的，必须能反复微调而不碰渲染代码。
+   * 光爆多长、纸条多久浮出来，这些只能靠看，不能靠推理定。
+   */
+  const EGG = {
+    /*
+     * 成就判定用到的两个难度/档位标识。
+     * 写成常量而不是散在逻辑里，是因为 BOSS_TIER_DIFF 把 hell 映射到了
+     * forge（app.js:1129），两者容易混 —— 见 eggEligible 的注释。
+     */
+    forgeDifficulty: 'forge',    // 普通局的"熔炉"难度 id
+    hellTier: 'hell',            // Boss 局的"地狱"档位
+
+    // ---- 演出时长（毫秒）----
+    burstMs: 1400,        // 全屏光爆：涨到峰值再衰减的总时长
+    burstPeakAt: 0.28,    // 峰值出现在整段的哪个位置（0-1）
+    letterFadeMs: 900,    // 纸条从模糊到清晰
+    letterCharMs: 55,     // 逐字浮现的间隔
+    letterHoldMs: 600,    // 最后一行浮完后停留多久再允许关闭
+
+    // ---- 拾取 ----
+    /*
+     * 判定半径比普通掉落物（pickupRadiusX 40 / Z 34）大得多。
+     * 理由：这是彩蛋，不是掉落物。让玩家在最后一只怪死掉的位置
+     * 反复找不到它，会把整个仪式感毁掉。
+     */
+    pickupRadius: 90,
+    needsConfirm: true,   // 必须按 J（PM 指定），不自动吸附
+
+    // ---- 视觉 ----
+    hueCycleMs: 3000,     // 七彩蛋走完一圈色相的时长
+    bobAmp: 6,            // 上下浮动幅度（像素）
+    bobMs: 1600,          // 一次浮动往返
+    glowScale: 1.9,       // 光晕相对蛋体的缩放
+
+    /*
+     * 纸条原文 —— **PM 亲笔，一个字都不许改**。
+     *
+     * 第三行结尾没有句号是 PM 的原文，不要"顺手补上"。
+     * tests/test_egg.js 有断言逐字钉住这段文字。
+     *
+     * 篇幅只有 46 字，是四行短句 —— 排版上当短诗处理（居中、行距舒展、
+     * 字号偏大），不要拉伸成正文段落，也不要加标题或署名（PM 没写这些）。
+     */
+    letterText: [
+      '感谢你游玩我的游戏。',
+      '这是我第一次且独立开发的',
+      '有很多不足之处让您皱了眉头',
+      '我会用下一佳作舒展它们',
+    ].join('\n'),
+  };
+
+  /**
+   * 作物（Task 4 / D6）。
+   *
+   * PM 的设计初衷（原话）：
+   *   「农场存在的意义是，它给玩家提供一个装点小世界的场地……
+   *     收获的东西可以作为补给吃下去加血加体力」
+   *   「**不种还要农场干啥？**」—— 所以远征掉的是**种子**，
+   *   必须种下去、等成熟、收获，才能用。
+   *
+   * 与既有 FARM 的关系（重要）
+   * -------------------------
+   * 这条通道是**新增的**，不是替换：
+   *   meta.seeds        通用种子（整数）—— 语义与行为**完全不变**
+   *   meta.cropSeeds    作物种子 { cropId: n } —— 本次新增
+   * 所以既有的农场经济（19 块田的价格曲线、被动产出、腐烂规则）
+   * 一个字节都没动。tests/test_game_logic 的 650 条断言不需要改，
+   * 那就是"没弄坏东西"的证明。
+   *
+   * 三种效果刻意与现有三种药水对齐（回血 / 伤害 / 减伤）。
+   * 这是有意的：收获物走 POTIONS 那套使用路径（D7 最小版），
+   * 效果类型对齐才能复用，不需要造第二套消耗品系统。
+   */
+  const CROPS = {
+    /*
+     * ⚠️ 作物的**名字与外观属于 PM 的内容**，实施者不得自行发明世界观。
+     * 下面这三个名字是**占位名**，交付说明里已标注"待 PM 命名"。
+     * 改名字只需改这里的 name 与 color，机制不受影响。
+     */
+    emberbloom: {
+      name: '焰花',                       // 占位名，待 PM 定
+      color: 0xe08a5a,
+      desc: '吃下去立刻恢复少量生命',
+      // kind 只能是 instant / buff —— 与 POTIONS 的两种一致（测试守着）
+      effect: { kind: 'instant', heal: 14 },
+      // 单块田一次收获几个
+      yield: 1,
+    },
+    thornfruit: {
+      name: '刺果',                       // 占位名，待 PM 定
+      color: 0xc46b8a,
+      desc: '吃下去短时间内伤害提升',
+      effect: { kind: 'buff', duration: 12.0, damageMul: 1.22 },
+      yield: 1,
+    },
+    barkmelon: {
+      name: '树皮瓜',                     // 占位名，待 PM 定
+      color: 0x7fa86a,
+      desc: '吃下去短时间内受伤减少',
+      effect: { kind: 'buff', duration: 12.0, damageMul: 0.80 },
+      yield: 1,
+    },
+  };
+  const CROP_ORDER = Object.keys(CROPS);
+
   // 玩家基础值（强化会在此之上叠加）
   const BASE_HP = 70;
   const BASE_DAMAGE = 12;
@@ -690,6 +807,12 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
 
   // 战利品：每只小怪的基础掉落，再乘难度 lootMul
   const LOOT = {
+    /*
+     * 作物种子掉率（Task 4 / D6）。比通用种子的 seedChance 低得多 ——
+     * 作物必须种（PM 的 D6），产出要等两局，掉率再高只会堆一堆种不下的种子。
+     * 具体数值在这里，方便和别的掉落一起调。
+     */
+    cropSeedChance: 0.10,
     coinsPerKill: 4,
     seedChance: 0.05,       // 每只小怪掉种子的概率（0.05 = 5%）
     clearBonusCoins: 20,    // 清完一波的额外奖励
@@ -781,6 +904,29 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
         // 一点高通噪声当"金属划痕"，让重击和普通命中区分得开
         { wave: 'noise', dur: 0.09, gain: 0.14,
           filter: { type: 'highpass', f0: 2600, f1: 5200, q: 0.7 } },
+      ] },
+      /*
+       * 终极彩蛋的光爆（Task 3.2）。
+       *
+       * 这是全游戏唯一一个"宏大"的音效，所以刻意与其它都不同：
+       *   - 时长最长（1.5s，其它都在 0.3s 内）
+       *   - 用**上行**音程（523→1568 两个八度）表达"升起来"而不是打击
+       *   - 底下一层低频正弦做"轰"的体感，上面一层三角波泛音做"亮"
+       *   - 最后留一条长的空气噪声，像光扩散出去之后的余韵
+       *
+       * 为什么不用采样文件：全项目 21 个音效都是合成且风格统一
+       * （见 audio.js 的文件头），单独塞一个采样进来会立刻听出来不是一路的。
+       */
+      eggBurst: { voices: [
+        // 上行音程：根音 → 五度 → 高八度，每个晚 90ms 进来，堆成"升腾"
+        { wave: 'triangle', dur: 1.30, gain: 0.26, f0: 523, f1: 784 },
+        { wave: 'triangle', at: 0.09, dur: 1.20, gain: 0.22, f0: 784, f1: 1046 },
+        { wave: 'sine', at: 0.18, dur: 1.10, gain: 0.20, f0: 1046, f1: 1568 },
+        // 低频底：光爆的"体感"。没有它，整段会显得飘、像风铃。
+        { wave: 'sine', dur: 0.70, gain: 0.30, f0: 110, f1: 55 },
+        // 余韵：长噪声慢慢衰减，像光扩散出去之后的空气
+        { wave: 'noise', at: 0.12, dur: 1.50, gain: 0.09,
+          filter: { type: 'lowpass', f0: 6000, f1: 800, q: 0.5 } },
       ] },
       hurt: { voices: [
         // 玩家受伤：方波 220→90Hz 闷哼，低通压住高频（不能比命中还亮）
@@ -914,6 +1060,8 @@ const WAVE_HEAL = 18;         // 清波回血：没有回血机制时长局在�
     ATTACK_DURATION, ATTACK_COOLDOWN, ATTACK_RANGE, ATTACK_DEPTH, ATTACK_BACK, COMBO,
     INVULN_AFTER_HIT, WAVE_BREAK, WAVE_HEAL,
     FEEL,
+    EGG,
+    CROPS, CROP_ORDER,
     BASE_HP, BASE_DAMAGE, BASE_ATTACK_SPEED,
     DIFFICULTIES, ENEMIES, UPGRADES, FARM, BAG, LOOT, SKILLS, SKILL_ORDER, SPAWN, BOSS,
     POTIONS, POTION_ORDER,

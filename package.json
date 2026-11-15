@@ -1,0 +1,47 @@
+{
+  "name": "kill-the-vines",
+  "version": "0.3.0",
+  "description": "Kill the Vines — 2.5D roguelite with a farming economy (COMM7660 Phase 2)",
+  "main": "electron/main.js",
+  "private": true,
+  "scripts": {
+    "start": "sh -c \"unset ELECTRON_RUN_AS_NODE; exec electron .\"",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.caoyuquan.killthevines",
+    "productName": "Kill the Vines",
+    "files": [
+      "electron/**/*",
+      "game/**/*"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "mac": {
+      "category": "public.app-category.games",
+      "target": [
+        "dmg"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ]
+    }
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron"
+    ]
+  }
+}

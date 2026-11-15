@@ -425,6 +425,23 @@
     border-radius:8px;padding:8px 16px;font-family:inherit;font-size:13px;
     cursor:pointer}
   .esc-foot button:hover{background:#2c3a4a;color:#eaf2f9}
+
+  /* ------------------------------------------------------------------
+     终极彩蛋的纸条（Task 3.2 / 设计文档 §5.3 第 3 层）
+     
+     排版说明：纸条文字是 PM 亲笔的**四行短句，正文仅 46 字**，
+     当短诗排 —— 居中、行距舒展、字号偏大。
+     不要拉伸成正文段落，也不要加标题或署名（PM 没写这些）。
+     pre-line 保留原文的换行。
+     ------------------------------------------------------------------ */
+  #eggLetter{position:absolute;inset:0;display:none;z-index:40;
+    align-items:center;justify-content:center;pointer-events:none;
+    background:radial-gradient(ellipse at center, #0a0e13cc 0%, #05080bcc 70%)}
+  #eggLetterInner{max-width:74%;text-align:center;color:#f3e6c8;
+    font-family:Georgia,"Songti SC","STSong",serif;
+    font-size:clamp(16px,2.3vw,26px);line-height:2.1;
+    white-space:pre-line;letter-spacing:.06em;
+    text-shadow:0 0 18px #ffcf7a66, 0 2px 6px #000c}
 </style>
 </head>
 <body>

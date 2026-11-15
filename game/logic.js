@@ -57,6 +57,34 @@
         // 条目的 uid 计数器。必须存档（放在 meta 里），否则读档后
         // 新条目会从 1 重新计数，和旧条目的 uid 撞车。
         uidSeq: 0,
+        /*
+         * 终极彩蛋的两个成就标记（Task 3 / 设计文档 D1）。
+         *
+         * 为什么是两个独立布尔而不是一个"已通关"标记：
+         * PM 要的触发条件是「熔炉通关 **且** 地狱 Boss 打赢，先完成哪个都行，
+         * 在第二个达成的那一刻掉」。两个成就是两个独立事实，各自一个布尔
+         * 最诚实 —— 合成一个字段就再也分不出"只通关了熔炉"和"什么都没做"，
+         * 将来要做成就展示也会缺信息。
+         *
+         * eggFound 与上面两个分开：它记的是"彩蛋已经掉过了"，
+         * 而不是"某个成就达成了"。掉落后置位，防重复触发（D3）。
+         */
+        clearedForge: false,      // 通关过「熔炉」难度（普通局，4 波）
+        beatHellBoss: false,      // 打赢过「地狱」档藤蔓巨像
+        eggFound: false,          // 彩蛋已**被捡起**（只掉一次）
+        // 掉了但没被捡走的蛋会顺延到下一局（C1），坐标存这里
+        pendingEgg: null,
+        /*
+         * 作物通道（Task 4 / D6）。
+         *
+         * 为什么是**新增**而不是替换 meta.seeds：
+         *   seeds 是通用种子（整数），既有农场经济围着它平衡过；
+         *   把它拆成分类表会牵动 plant / 腐烂 / 结算卡 / 田地 UI 四处，
+         *   而 PM 要的是"作物有种类、必须种、种出来能吃"，
+         *   **不是**"把通用种子废掉"。两套并存，各走各的通道。
+         */
+        cropSeeds: {},            // { cropId: 数量 } 可种下的作物种子
+        cropHarvest: {},          // { cropId: 数量 } 已收获、可食用的产物
         // 音效、静音与环境音（Task 12 / Task 23 读写这里）。
         // 老档没有这些字段，迁移与 deserialize 负责补。
         settings: { volume: 0.30, muted: false, ambient: defaultAmbient() },
@@ -203,6 +231,17 @@
       const fxMul = 1 - (1 - shield.hurtMul) * shield.mul;
       mul *= fxMul;
     }
+
+    /*
+     * 作物减伤（Task 4 / D6）：树皮瓜那种 buff。
+     *
+     * 与装备减伤**叠乘**，不是取最小值 —— 取最小会让"有胸铠时吃瓜没用"，
+     * 而玩家的直觉是"我又穿甲又吃了东西，应该更抗打"。
+     *
+     * 放在最后（乘数链的末端）而不是最前：减伤类效果的乘法是可交换的，
+     * 但放末端能保证将来加"最低伤害保底"之类的规则时顺序正确。
+     */
+    mul *= cropBuffMul(p);
 
     // 向上取整，避免 0.5 倍后出现小数血量（血条会显示成 12.5）
     const dealt = Math.max(1, Math.ceil(amount * mul));
@@ -376,9 +415,39 @@
     return { ok: true, id: id };
   }
 
-  /** 药水对伤害的乘数（力量药）。没有 buff 时恒为 1。 */
+  /**
+   * 药水对伤害的乘数（力量药）。没有 buff 时恒为 1。
+   *
+   * 命名保留（调用点有几处，改名会让 diff 变大），但它现在同时算作物 buff ——
+   * 见 cropBuffMul 的注释。
+   */
   function potionDamageMul(p) {
     return (p.potionBuff && p.potionBuff.damageMul) || 1;
+  }
+
+  /**
+   * 作物增益对伤害的乘数（Task 4 / D6）。
+   *
+   * ⚠️ 这个函数是**补上的一个 bug 修复**（2026-11-15，自查时发现）。
+   *
+   * eatCrop 一直在写 run.player.cropBuff，但**没有任何地方读它** ——
+   * 吃刺果或树皮瓜完全没有效果。单元测试也没抓到，
+   * 因为它只断言"eatCrop 返回 ok 且 cropBuff 被写入"，
+   * 而没有断言"写进去的东西真的被用上了"。
+   * 教训：断言"状态被写入"不等于断言"功能生效"。
+   *
+   * 与药水**叠乘**而不是覆盖：药水是局前购买、作物是局外积累，
+   * 两者同时生效时应该都算数。共用一个槽会让先吃的那个静默消失。
+   */
+  function cropBuffMul(p) {
+    const b = p.cropBuff;
+    if (!b || !(b.timer > 0)) return 1;
+    return b.damageMul || 1;
+  }
+
+  /** 伤害乘数：药水 × 作物。所有玩家伤害都该走这里。 */
+  function outgoingDamageMul(p) {
+    return potionDamageMul(p) * cropBuffMul(p);
   }
 
   function upgradeCost(state, key) {
@@ -397,6 +466,102 @@
     plot.state = 'growing';
     plot.growth = 0;
     return { ok: true };
+  }
+
+  /* ---------------------------------------------------------------- 作物（Task 4 / D6）
+   *
+   * 与通用种子的 plant() 分开写，而不是给 plant 加参数：
+   * plant 被既有测试与 Hub 的田地入口调用，加参数会改它的签名与行为。
+   * 两条通道各自完整，互不干扰 —— 这是"不弄坏既有农场"最省的做法。
+   */
+
+  /** 种下一种作物。plotIndex 上的田必须是空的、且手上有该作物的种子。 */
+  function plantCrop(state, plotIndex, cropId) {
+    const def = C.CROPS[cropId];
+    if (!def) return { ok: false, reason: '没有这种作物' };
+    const plot = state.farm.plots[plotIndex];
+    if (!plot || plot.state !== 'empty') return { ok: false, reason: '这块田不是空的' };
+    const have = (state.meta.cropSeeds && state.meta.cropSeeds[cropId]) || 0;
+    if (have < 1) return { ok: false, reason: '没有这种作物的种子' };
+    state.meta.cropSeeds[cropId] = have - 1;
+    plot.state = 'growing';
+    plot.growth = 0;
+    /*
+     * 田地记住种的是什么。
+     * 老田（通用种子种的）没有 crop 字段 —— 收获路径据此分流，
+     * 所以迁移**不需要**给老田补字段：undefined 就是"通用作物"。
+     */
+    plot.crop = cropId;
+    return { ok: true };
+  }
+
+  /** 收获一块成熟的田。返回收到了什么。 */
+  function harvestCrop(state, plotIndex) {
+    const plot = state.farm.plots[plotIndex];
+    if (!plot || plot.state !== 'mature') return { ok: false, reason: '这块田还没成熟' };
+    const cropId = plot.crop;
+    /*
+     * 没有 crop 字段 = 这个版本之前的田，按**通用产出**结算
+     * （铜币，由 passiveIncome 处理）。收获路径只处理作物，
+     * 所以这种情况返回 ok:false 并保持田的状态不变，
+     * 让既有的"清空、回到 empty"逻辑照旧走。
+     */
+    if (!cropId || !C.CROPS[cropId]) {
+      plot.state = 'empty';
+      plot.growth = 0;
+      return { ok: true, generic: true };
+    }
+    const def = C.CROPS[cropId];
+    if (!state.meta.cropHarvest) state.meta.cropHarvest = {};
+    state.meta.cropHarvest[cropId] =
+      (state.meta.cropHarvest[cropId] || 0) + def.yield;
+    plot.state = 'empty';
+    plot.growth = 0;
+    delete plot.crop;
+    return { ok: true, cropId: cropId, amount: def.yield };
+  }
+
+  /**
+   * 吃掉一份收获物。
+   *
+   * 效果走既有的 instant / buff 两条路（与药水同一套语义，D7 最小版）：
+   *   instant → 立刻回血
+   *   buff    → 给一个限时增益，记在 run.player.cropBuff 上
+   *
+   * 为什么用独立的 cropBuff 而不是复用 potionBuff：
+   * 药水是**局前购买**的资源，作物是**局外积累**的资源，
+   * 两者同时生效时（先喝力量药水再吃刺果）应该叠乘而不是互相覆盖。
+   * 共用一个槽会让先吃的那个静默消失。
+   */
+  function eatCrop(state, run, cropId) {
+    const def = C.CROPS[cropId];
+    if (!def) return { ok: false, reason: '没有这种作物' };
+    const have = (state.meta.cropHarvest && state.meta.cropHarvest[cropId]) || 0;
+    if (have < 1) return { ok: false, reason: '没有可吃的收获物' };
+    if (!run || !run.player) return { ok: false, reason: '不在战斗中' };
+
+    state.meta.cropHarvest[cropId] = have - 1;
+    const p = run.player;
+    const e = def.effect;
+
+    if (e.kind === 'instant') {
+      if (e.heal) {
+        p.hp = Math.min(p.maxHp, p.hp + e.heal);
+      }
+    } else if (e.kind === 'buff') {
+      p.cropBuff = {
+        cropId: cropId,
+        timer: e.duration,
+        damageMul: e.damageMul,
+      };
+    }
+    return { ok: true, effect: e };
+  }
+
+  /** 手上的收获物总数（HUD 用）。 */
+  function cropHarvestCount(state) {
+    const h = (state.meta && state.meta.cropHarvest) || {};
+    return Object.keys(h).reduce(function (n, k) { return n + (h[k] || 0); }, 0);
   }
 
   function buyUpgrade(state, key) {
@@ -1094,6 +1259,11 @@
       diff: diff,
     };
     buildWave(state);
+    /*
+     * 上一局没取走的彩蛋原地重放（C1）。
+     * 放在最后：run 的其余部分都已建好，玩家坐标也有了。
+     */
+    restorePendingEgg(state, state.run);
     return state.run;
   }
 
@@ -1230,12 +1400,32 @@
       p.potionBuff.timer -= dt;
       if (p.potionBuff.timer <= 0) p.potionBuff = null;
     }
+    // 作物 buff 的计时（Task 4 / D6）。与药水 buff 分开扣，互不影响。
+    if (p.cropBuff) {
+      p.cropBuff.timer -= dt;
+      if (p.cropBuff.timer <= 0) p.cropBuff = null;
+    }
 
     // 药水（1/2/3）：按下即用。justPressed 语义由渲染层保证，
     // 这里只认 input.potionN，长按不会连续消耗（每瓶都是一次资源）。
     if (input.potion1) usePotion(state, 'heal');
     if (input.potion2) usePotion(state, 'strength');
     if (input.potion3) usePotion(state, 'wall');
+
+    /*
+     * 终极彩蛋：**按 J 拾取**（Task 3 / PM 指定 D1）。
+     *
+     * 为什么必须在 logic 层而不是渲染层记这个事实：
+     * "彩蛋被拾取"是一个**规则状态**（决定了演出开始、以及熔炉通关的
+     * 结算何时补上），不是视觉效果。放渲染层会让状态机与画面两份真相。
+     *
+     * needsConfirm 来自 config：PM 明确要求"按 J 打开"，
+     * 所以蛋**不参与 stepPickups 的自动吸附**（那只看 run.pickups，
+     * 而蛋存在 run.egg，天然隔离 —— 见 dropEgg 的注释）。
+     */
+    if (input.confirm && C.EGG.needsConfirm && eggInReach(state, run)) {
+      takeEgg(state, run);
+    }
 
     // 技能（U/I/O/K/L）：冷却好了就释放
     C.SKILL_ORDER.forEach(function (k) {
@@ -1280,7 +1470,7 @@
   function currentDamage(state, p) {
     let d = playerStats(state).damage;
     if (p.buffTimer > 0) d *= C.SKILLS.cry.buffMult;
-    d *= potionDamageMul(p);
+    d *= outgoingDamageMul(p);
     return d;
   }
 
@@ -1302,7 +1492,7 @@
     const st = skillStats(key, level, state);
     // 直接乘增益倍率。原写法 (1 + current/base - 1) 代数上等价，
     // 但 BASE_DAMAGE 若变成 0 会除出 NaN。
-    const dmg = st.damage * (p.buffTimer > 0 ? C.SKILLS.cry.buffMult : 1) * potionDamageMul(p);
+    const dmg = st.damage * (p.buffTimer > 0 ? C.SKILLS.cry.buffMult : 1) * outgoingDamageMul(p);
     p.cooldowns[key] = st.cooldown;
     p.casting = { key: key, timer: def.fxTime };
 
@@ -1732,6 +1922,18 @@
 
   function killEnemy(state, run, e) {
     e.state = 'dead';
+    /*
+     * 记录"最后一个敌人死在哪"（Task 3 / 设计文档 §4.2）。
+     *
+     * 为什么必须在这里记，而不是在触发彩蛋时现取：
+     *   彩蛋有两个触发点，其中"通关熔炉"走 stepWave → endRun，
+     *   那一刻最后一只怪**已经死过了**，e.x/e.z 不再可达。
+     *   提前记下来，两个触发点就都能拿到同一个坐标。
+     *
+     * 纯增量：只写两个新字段，不读不判断，对既有行为零影响。
+     */
+    run.lastKillX = e.x;
+    run.lastKillZ = e.z;
     // 改成掉在地上等玩家去捡（见 LOOT 注释：这是战斗节奏的一部分）
     // 掉落物是**实体**：从死亡点弹起、抛向一侧，落地后停住。
     // 旧版本只是贴在原地不动的标记，视觉上没有"东西掉出来"的感觉。
@@ -1748,6 +1950,23 @@
     };
     spawn('coin', Math.round(C.LOOT.coinsPerKill * run.diff.lootMul), 90, 55);
     if (nextRandom(state) < C.LOOT.seedChance) spawn('seed', 1, 110, 70);
+    /*
+     * 作物种子（Task 4 / D6）：远征带回来的"花与农作物"。
+     *
+     * 掉率比通用种子低得多，理由：
+     *   - 作物种子是**必须种**的（PM 的 D6），产出需要两局等待，
+     *     本来就慢；掉率再高会让玩家手上堆一堆种不下的种子。
+     *   - 通用种子是"基线资源"，作物种子是"额外收获"，
+     *     稀有度要对得上这个定位。
+     * 只掉一种、按权重随机 —— 具体能不能拿到想要的作物，是远征的运气成分。
+     */
+    if (nextRandom(state) < C.LOOT.cropSeedChance) {
+      const pick = Math.floor(nextRandom(state) * C.CROP_ORDER.length);
+      spawn('cropSeed', 1, 110, 70);
+      // 把作物 id 记在掉落物上：同一种 kind 要能区分是哪一种作物
+      const last = run.pickups[run.pickups.length - 1];
+      if (last) last.cropId = C.CROP_ORDER[pick];
+    }
 
     // 血滴护符：击杀回血
     const kh = hasFx(state, 'killHeal');
@@ -1771,6 +1990,21 @@
           bagFull: !!drop.bagFull,
           overwrote: drop.overwrote || null,
         });
+      }
+    } else {
+      /*
+       * Boss 被击杀（Task 3 / 设计文档 D1）。
+       *
+       * ⚠️ 判定必须同时看 isBossRun 和 bossTier，不能只看 bossTier。
+       * 被击杀的 e.isBoss 只说明"这是个 Boss"，而我们要的是
+       * "**玩家主动挑战的那一局**的地狱档 Boss"。
+       *
+       * 成就置位后立刻尝试掉蛋：若"通关熔炉"这个成就已经达成，
+       * 此刻就是"第二个达成"的瞬间，蛋落在这里（Boss 尸体位置）。
+       */
+      if (run.isBossRun && run.bossTier === C.EGG.hellTier) {
+        state.meta.beatHellBoss = true;
+        dropEgg(state, run, e.x, e.z);
       }
     }
   }
@@ -1808,7 +2042,21 @@
                 && Math.abs(it.z - p.z) < C.LOOT.pickupRadiusZ;
       if (near) {
         if (it.kind === 'coin') run.loot.coins += it.value;
-        else run.loot.seeds += it.value;
+        else if (it.kind === 'cropSeed') {
+          /*
+           * 作物种子直接进 meta（不走 run.loot）。
+           *
+           * 理由：run.loot 是"这一局的战利品"，结算时按胜败折算保留率；
+           * 而作物种子是**具体哪一种作物**的种子，run.loot 是个数字袋子，
+           * 装不下种类。而且它不该被"战败只保留一半"折算 ——
+           * 那会切出半颗种子。所以拾到即入账，与铜币/通用种子的口径不同。
+           */
+          if (!state.meta.cropSeeds) state.meta.cropSeeds = {};
+          const cid = it.cropId || C.CROP_ORDER[0];
+          state.meta.cropSeeds[cid] = (state.meta.cropSeeds[cid] || 0) + 1;
+        } else {
+          run.loot.seeds += it.value;
+        }
         run.pickups.splice(i, 1);
       } else if (it.life <= 0) {
         run.pickups.splice(i, 1);
@@ -1820,7 +2068,12 @@
   function collectAll(state, run) {
     run.pickups.forEach(function (it) {
       if (it.kind === 'coin') run.loot.coins += it.value;
-      else run.loot.seeds += it.value;
+      else if (it.kind === 'cropSeed') {
+        // 与 stepPickups 同一口径：作物种子拾到即入 meta，不进战利品折算。
+        if (!state.meta.cropSeeds) state.meta.cropSeeds = {};
+        const cid = it.cropId || C.CROP_ORDER[0];
+        state.meta.cropSeeds[cid] = (state.meta.cropSeeds[cid] || 0) + 1;
+      } else run.loot.seeds += it.value;
     });
     run.pickups.length = 0;
   }
@@ -2034,12 +2287,161 @@
       if (run.breakTimer <= 0) {
         run.waveIndex += 1;
         if (run.waveIndex >= run.diff.waves) {
-          endRun(state, true);
+          /*
+           * 通关（Task 3 / 设计文档 D5）。
+           *
+           * ⚠️ `!run.isBossRun` 不可省略 —— 这是本项目最容易写错的一处判定。
+           *
+           * app.js:1129 有 `BOSS_TIER_DIFF = { normal:'wood', hard:'deep',
+           * hell:'forge' }`，也就是说**挑战地狱 Boss 时，Boss 局的
+           * run.difficultyId 就是 'forge'**。
+           * 如果这里只写 difficultyId === 'forge'，那么打赢地狱 Boss 会
+           * 同时把"通关熔炉"和"打赢地狱 Boss"两个成就一起置位 ——
+           * PM 要的"两个成就"当场坍缩成一个条件，彩蛋逻辑失效。
+           *
+           * 所以"通关熔炉"只认**普通局**（从远征之门出发的 4 波熔炉）。
+           * 这一条是独立构建者审查发现的，见设计文档 §3.3。
+           */
+          if (!run.isBossRun && run.difficultyId === C.EGG.forgeDifficulty) {
+            state.meta.clearedForge = true;
+            /*
+             * 尝试掉蛋。若"打赢地狱 Boss"已达成，此刻就是第二个达成的瞬间，
+             * 蛋落在**最后一只怪死亡处**（由 killEnemy 记下的 lastKillX/Z）。
+             *
+             * 掉蛋成功则**不立刻结算**（D5）：PM 要求玩家能走过去按 J 捡蛋，
+             * 捡完才进结算界面。见下面的 pendingEggSettlement。
+             */
+            if (dropEgg(state, run, run.lastKillX, run.lastKillZ)) {
+              run.pendingEggSettlement = true;
+            }
+          }
+          /*
+           * 不延后时行为与改动前**完全一致** —— 这是本改动最重要的性质：
+           * 没拿到彩蛋的玩家，熔炉通关的流程一个字节都没变。
+           * tests/test_egg.js 有断言守着这条。
+           */
+          if (!run.pendingEggSettlement) endRun(state, true);
         } else {
           buildWave(state);
         }
       }
     }
+  }
+
+  // ---------------------------------------------------------------- 终极彩蛋
+  /**
+   * 终极彩蛋（Task 3 / 设计文档 D1-D5）。
+   *
+   * 触发条件：**通关熔炉难度 且 打赢地狱 Boss**，先完成哪个都行，
+   * 在第二个达成的那一刻掉落，落在最后一个敌人死亡的位置。
+   *
+   * ⚠️ 判定里两处容易写错的地方，各有注释说明，别"优化"掉。
+   */
+
+  /**
+   * 两个成就是否都达成、且彩蛋还没掉过。
+   *
+   * run 可以为 null（结算之后调用），此时只看 meta。
+   */
+  function eggEligible(state, run) {
+    if (!state || !state.meta) return false;
+    if (state.meta.eggFound) return false;              // 只掉一次（D3）
+    return !!(state.meta.clearedForge && state.meta.beatHellBoss);
+  }
+
+  /**
+   * 在指定坐标放下彩蛋。返回是否真的掉了。
+   *
+   * ⚠️ 彩蛋存进 `run.egg`，**不是 `run.pickups`**。
+   *
+   * 为什么这一条至关重要（设计文档 §4.2 陷阱，独立构建者审查发现）：
+   *   stepWave() 清波时会调 collectAll()，它把 run.pickups **全部**吸进战利品
+   *   （logic.js 的 collectAll）。而"熔炉通关"正是 stepWave 触发的 ——
+   *   蛋若进 pickups，会在最后一只怪死的那一刻被吸走、紧接着 endRun 结算，
+   *   玩家**永远没有机会按 J**。
+   *   表现是"按 J 拾取看起来实现了，实际触发不到"，极难发现。
+   *
+   * 同时 run.egg 也不参与 stepPickups 的自动吸附（那只看 run.pickups），
+   * 所以"必须按 J"这个 PM 指定的动作是真的必须。
+   */
+  function dropEgg(state, run, x, z) {
+    if (!run) return false;
+    if (!eggEligible(state, run)) return false;
+    /*
+     * 坐标防御（C2）：lastKillX/Z 只在 killEnemy 里赋值，
+     * 若这一局的最后一个敌人不是经 killEnemy 消失的（或局面是恢复出来的），
+     * 它们就是 undefined。undefined 传进去会让 run.egg.x 变成 undefined，
+     * 之后 eggInReach 的 NaN 比较恒为 false —— **玩家永远够不到那颗蛋**，
+     * 但界面上看不到任何异常。
+     * 落到玩家身上 / 场地中心都是可接受的兜底：蛋至少能被捡到。
+     */
+    const px = (typeof x === 'number' && isFinite(x)) ? x
+      : (run.player ? run.player.x : C.FIELD_W / 2);
+    const pz = (typeof z === 'number' && isFinite(z)) ? z
+      : (run.player ? run.player.z : C.FIELD_D / 2);
+    run.egg = { x: px, z: pz, taken: false, opened: false };
+    /*
+     * ⚠️ 这里**不置位** state.meta.eggFound。
+     *
+     * 踩过的坑（独立审查发现，Critical）：最初在掉落时就置位，
+     * 于是任何"掉蛋之后、按 J 之前"的结束路径都会**永久烧掉**这个成就 ——
+     * 玩家在两个成就都达成之后被残敌打死一次，那张纸条就再也看不到了，
+     * 而且没有任何提示。这正是"做对了所有事却拿不到"的最坏情况。
+     *
+     * 现在 eggFound 在 **takeEgg（真的捡起来）** 时才置位。
+     * 配合 ensureEggOnRunEnd：局结束时若蛋还在场上没被捡，就把它
+     * 顺延到下一局，玩家的努力不会被一次意外抹掉。
+     */
+    return true;
+  }
+
+  /** 玩家拾取彩蛋（按 J 确认后由渲染层调用）。 */
+  function takeEgg(state, run) {
+    if (!run || !run.egg || run.egg.taken) return { ok: false, reason: '没有彩蛋' };
+    run.egg.taken = true;
+    // ★ 真正的"拿到了"发生在这里，而不是掉落时（见 dropEgg 的注释）
+    state.meta.eggFound = true;
+    return { ok: true, text: C.EGG.letterText };
+  }
+
+  /**
+   * 一局结束时把没被捡走的蛋顺延下来（C1 的第二半）。
+   *
+   * 为什么需要它：掉了蛋但玩家没来得及按 J 就结束，
+   * 若什么都不做，那一局的 run 会被清空，蛋随之消失。
+   * 由于 eggFound 现在只在拾取时置位，成就本身是保住了，
+   * 但玩家的体验不能靠"再打一次两个成就"来补偿 —— 那太苛刻。
+   *
+   * 做法：把蛋的坐标记在 meta.pendingEgg 上，下一局开始时原地重放。
+   * 玩家看到的是"那颗蛋还在那里等着我"。
+   */
+  function stashPendingEgg(state, run) {
+    if (!run || !run.egg || run.egg.taken) return;
+    state.meta.pendingEgg = { x: run.egg.x, z: run.egg.z };
+  }
+
+  /** 开局时若有未取走的蛋，原地重放。 */
+  function restorePendingEgg(state, run) {
+    const p = state.meta.pendingEgg;
+    if (!p || !run) return false;
+    if (state.meta.eggFound) { state.meta.pendingEgg = null; return false; }
+    run.egg = { x: p.x, z: p.z, taken: false, opened: false };
+    return true;
+  }
+
+  /**
+   * 彩蛋是否在玩家可拾取范围内。
+   *
+   * 半径比普通掉落物大得多（见 C.EGG.pickupRadius 的注释）：
+   * 这是彩蛋不是掉落物，让玩家在尸体附近反复找不到它会把仪式感毁掉。
+   */
+  function eggInReach(state, run) {
+    if (!run || !run.egg || run.egg.taken) return false;
+    const p = run.player;
+    if (!p) return false;
+    const dx = run.egg.x - p.x;
+    const dz = run.egg.z - p.z;
+    return Math.sqrt(dx * dx + dz * dz) <= C.EGG.pickupRadius;
   }
 
   // ---------------------------------------------------------------- 结算
@@ -2089,6 +2491,29 @@
     }
     const seedSpoiled = seedsBeforeSpoil - state.meta.seeds;
 
+    /*
+     * 作物种子按**同一条规则**腐烂（Task 4 / D6）。
+     *
+     * 为什么要腐烂而不是无限囤：和通用种子同一个理由 ——
+     * 田地的数量是上限，囤超过上限的种子没有任何用途，只是数字变大。
+     * 不腐烂的话，玩到后期作物种子会堆到几百颗，农场的取舍就消失了。
+     *
+     * 每种作物**分别**套用这条规则，而不是把所有作物加总：
+     * 加总会让"三种各囤 5 颗"和"一种囤 15 颗"受到同样的惩罚，
+     * 而前者是健康的储备、后者才是超额囤积。
+     *
+     * 注意：这条只作用于 cropSeeds，**不碰 meta.seeds** ——
+     * 既有种子的腐烂行为（以及 test_game_logic 的相关断言）完全不变。
+     */
+    if (state.meta.cropSeeds) {
+      Object.keys(state.meta.cropSeeds).forEach(function (id) {
+        const n = state.meta.cropSeeds[id] || 0;
+        if (n > seedGrace) {
+          state.meta.cropSeeds[id] = seedGrace +
+            Math.ceil((n - seedGrace) * (1 - C.FARM.seedSpoilRate));
+        }
+      });
+    }
     // 药水同步：本局喝掉多少，meta 就扣掉多少。
     // 用"剩余量回写"而不是"扣减量"，中途重开也不会重复扣。
     if (run.potions && state.meta.potions) {
@@ -2107,7 +2532,38 @@
       }
     });
     const passive = passiveIncome(state);
+
+    /*
+     * 成熟作物的自动收获（Task 4 / D6）。
+     *
+     * ⚠️ 这段**必须在上面那个成熟推进循环之后**。
+     * 踩过的坑（2026-11-15，真机验证时发现）：最初把它放在成熟推进**之前**，
+     * 于是同一局里先检查收获（那时还是 growing，跳过）、之后才推进成熟 ——
+     * 结果作物永远差一局才收，player 看到的是"熟了但什么都没发生"。
+     * 两个循环的顺序就是这段逻辑的全部正确性，别调换。
+     *
+     * 为什么自动收获而不是等玩家点：
+     * 既有的通用作物就是"成熟后每局结算自动产出"
+     * （见 passiveIncome 与 FarmScene 的 HUD 文案
+     * 「成熟后每局结算自动产出，不需要手动收取」）。
+     * 若要求手动点，同一个农场里就有两套矛盾的规则。
+     * 统一成自动：**种植要手动（那是决策），收获不用（那是结果）**。
+     */
+    state.farm.plots.forEach(function (plot) {
+      if (plot.state === 'mature' && plot.crop && C.CROPS[plot.crop]) {
+        const def = C.CROPS[plot.crop];
+        if (!state.meta.cropHarvest) state.meta.cropHarvest = {};
+        state.meta.cropHarvest[plot.crop] =
+          (state.meta.cropHarvest[plot.crop] || 0) + def.yield;
+        plot.state = 'empty';
+        plot.growth = 0;
+        delete plot.crop;
+      }
+    });
     state.meta.coins += passive;
+
+    // 未取走的彩蛋顺延到下一局（C1），必须在 run 被清空之前做。
+    stashPendingEgg(state, run);
 
     state.lastResult = {
       won: won,
@@ -2279,6 +2735,32 @@
     // 却挡不住这些非空非法值 —— 它们会一路带进 bagCapacity 与页价表。
     s.meta.bagPages = normBagPages(s.meta.bagPages);
     if (!s.meta.uidSeq) s.meta.uidSeq = 0;
+    /*
+     * 彩蛋的成就标记（Task 3）。
+     *
+     * 与 ambient（Task 23）同一手法：**加字段不动 STATE_VERSION**，
+     * 在兜底里补齐。理由：
+     *   - 这三个字段都是"默认 false"的纯增量，没有旧值需要搬运，
+     *     不像 v5→v6 的库存那样要转换结构；
+     *   - STATE_VERSION 不匹配会 **throw**（见下），为一个可无损补齐的
+     *     注释块升版本，只会让所有老档多一次无谓的迁移风险。
+     * 用 `=== undefined` 而不是 `!s.meta.x`：后者会把玩家**已经置位的 false**
+     * 也重新赋一遍 —— 现在无害，但将来若默认值变成 true 就会静默清进度。
+     */
+    if (s.meta.clearedForge === undefined) s.meta.clearedForge = false;
+    if (s.meta.beatHellBoss === undefined) s.meta.beatHellBoss = false;
+    if (s.meta.eggFound === undefined) s.meta.eggFound = false;
+    /*
+     * 作物通道（Task 4 / D6）：同样是"加字段不动 STATE_VERSION"。
+     * 空对象是安全默认值 —— 老玩家不白得作物种子，也不丢档。
+     *
+     * farm.plots 里的老田**故意不补 crop 字段**：
+     * undefined 就表示"通用作物"，收获路径据此分流。
+     * 补一个假 id 反而会让老田被当成本次新增的作物处理。
+     */
+    if (s.meta.pendingEgg === undefined) s.meta.pendingEgg = null;
+    if (!s.meta.cropSeeds) s.meta.cropSeeds = {};
+    if (!s.meta.cropHarvest) s.meta.cropHarvest = {};
     // 注意用 normSettings 而不是 `if (!s.meta.settings)`：v6 的老档**有**
     // settings（只是没有 ambient），简单兜底永远不会触发，滑块会读到 undefined。
     s.meta.settings = normSettings(s.meta.settings);
@@ -2322,7 +2804,7 @@
     stepProjectiles, stepRanged, spawnProjectile, stepPickups, collectAll, killEnemy,
     specialSkillOf, castSpecial, stepZones,
     spawnBoss, bossCast, stepBoss, bossResolve,
-    buyPotion, usePotion, hurtPlayer, potionDamageMul,
+    buyPotion, usePotion, hurtPlayer, potionDamageMul, cropBuffMul, outgoingDamageMul,
     equipBonus, hasFx, equipOwned, buyEquipment, equipItem, unequipSlot,
     equipUpgradeCost, upgradeEquipment, rollEquipDrop, tryEquipDrop,
     // 出售：卖价按「底价 + 升级投入」折半，批量出售每 id 强制留一件。
@@ -2339,6 +2821,13 @@
     // 整理与页签过滤（§4.5）：sortBag 原地排，bagFilter 返回条目数组。
     sortBag, bagFilter,
     playerStats, maturePlots, passiveIncome,
+    // 终极彩蛋（Task 3）：判定、掉落、拾取、范围。
+    // 挂进 API 的理由同 farm 那几行 —— 函数存在但不可达，
+    // 会让调用方拿到 undefined 然后写出错的行为。
+    eggEligible, dropEgg, takeEgg, eggInReach,
+    stashPendingEgg, restorePendingEgg,
+    // 作物通道（Task 4 / D6）：种植、收获、食用、计数。
+    plantCrop, harvestCrop, eatCrop, cropHarvestCount,
     serialize, deserialize,
     nextRandom, buildWave, makeEnemy,
   };

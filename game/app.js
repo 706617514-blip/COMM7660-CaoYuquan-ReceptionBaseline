@@ -1128,6 +1128,27 @@
    */
   const BOSS_TIER_DIFF = { normal: 'wood', hard: 'deep', hell: 'forge' };
 
+  /**
+   * 取得（必要时创建）纸条的 DOM 浮层。**全项目只有这一处创建它。**
+   *
+   * 为什么必须收敛到一处：RunScene（彩蛋演出）与 FarmScene（相框回看）
+   * 都要显示同一张纸条。两处各自 createElement 会产生两个
+   * id="eggLetter" 的元素，而 getElementById 只拿得到第一个 ——
+   * 后创建的那个永远关不掉（关闭逻辑改的是查到的那个）。
+   * 这类 bug 只在"玩家先看了演出、之后又去农场看"时出现，
+   * 单次操作的测试抓不到。
+   */
+  function ensureEggLetterEl() {
+    let el = document.getElementById('eggLetter');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'eggLetter';
+      el.innerHTML = '<div id="eggLetterInner"></div>';
+      document.getElementById('frame').appendChild(el);
+    }
+    return el;
+  }
+
   function createInput(scene) {
     const down = Object.create(null);
 
@@ -2299,6 +2320,31 @@
        */
       this.cameras.main.fadeIn(420, 0, 0, 0);
 
+      /*
+       * 重置彩蛋相关的字段（I1，独立审查发现）。
+       *
+       * Phaser 会**复用场景实例**：scene.start 回到本场景时 create 会再跑一遍，
+       * 但上一轮的 GameObject 已经随 shutdown 销毁了。
+       * 这时 this.eggGfx 等仍是**真值但已死**的引用，
+       * drawEgg 里的 `if (!this.eggGfx)` 惰性创建分支就不会执行，
+       * 接着对死对象调 setTint/setPosition —— 抛的还是那句
+       * `Cannot read properties of undefined (reading 'sys')`，
+       * 堆栈看不出是哪一行业务代码。
+       *
+       * 同一个坑本项目已经踩过一次（见下面 bossSprite 的注释），
+       * 所以这里显式清空，而不是指望"彩蛋只掉一次所以碰不到"。
+       */
+      this.eggGfx = null;
+      this.eggGlow = null;
+      this.eggBurst = null;
+      this.eggBurstCore = null;
+      this.eggBurstHalo = null;
+      this.eggAnim = null;
+      this.eggPrompt = null;
+      // 注意 this.eggLetter 是 DOM 元素，**不随场景销毁**，
+      // 故意不置 null —— 它由 ensureEggLetterEl 统一管理生命周期。
+      if (this.eggLetter) this.eggLetter.style.display = 'none';
+
       this.effectGfx = this.add.graphics().setDepth(1050);
       // 蓄力光点单独一层：它必须盖在 Boss 上面，否则 Boss 身体一挡就看不见。
       // Boss 的 depth 是 1000 - z，z 在 0..210 之间，所以 1000 - z 在 790..1000。
@@ -2713,6 +2759,245 @@
           .setPosition(sp.x, sp.y)
           .setScale(0.5 + Math.random() * 0.7)
           .setAlpha(1);
+      }
+    }
+
+    /* ------------------------------------------------------------------
+     * 终极彩蛋（Task 3.2 / 设计文档 §5.3）
+     *
+     * 三层演出，对应 PM 引用的《头号玩家》那个片段：
+     *   1. 发现  地面上的七彩蛋在脉动发光，吸引玩家走过去
+     *   2. 光爆  按 J 的瞬间，全屏白光 + 七彩泛光
+     *   3. 揭示  光散去，纸条从模糊到清晰，文字逐字浮现
+     *
+     * 彩蛋对象 run.egg 由 logic 层创建，这里只管怎么画。
+     * 三层都用同一个计时器推进（this.eggAnim），避免三套时间互相打架。
+     * ------------------------------------------------------------------ */
+
+    /**
+     * 每帧推进彩蛋状态。发现阶段画蛋，拾取后逐层推进演出。
+     */
+    updateEgg(dt) {
+      const run = this.state.run;
+      if (!run || !run.egg) return;
+      const egg = run.egg;
+      const E = C.EGG;
+
+      // 未拾取：画蛋 + 看着近就提示按 J
+      if (!egg.taken) {
+        this.drawEgg(egg, dt);
+        return;
+      }
+
+      // 已拾取：推进三层演出
+      if (!this.eggAnim) {
+        // 首次进入：记录起始时刻，并触发光爆
+        this.eggAnim = { t: 0, done: false };
+        GameAudio.play('eggBurst');   // 复用合成音体系，不引采样文件
+        // 清掉蛋的绘制对象
+        if (this.eggGfx) this.eggGfx.setVisible(false);
+        if (this.eggGlow) this.eggGlow.setVisible(false);
+      }
+      const a = this.eggAnim;
+      a.t += dt * 1000;
+
+      this.drawEggBurst(a.t);
+      this.drawEggLetter(a.t);
+
+      // 演出走完 → 若这一局的结算是被彩蛋延后的，现在补上（D5）
+      if (!a.done && a.t >= E.burstMs + E.letterFadeMs + E.letterHoldMs) {
+        a.done = true;
+        this.finishEggSettlement();
+      }
+    }
+
+    /** 发现阶段：七彩蛋 + 呼吸光晕 + 浮动。 */
+    drawEgg(egg, dt) {
+      const E = C.EGG;
+      const now = (this.time && this.time.now) || 0;
+
+      if (!this.eggGfx) {
+        // 蛋体用程序化贴图，与既有美术风格一致（全项目都是这个做法）。
+        const g = this.make.graphics({ x: 0, y: 0, add: false });
+        g.fillStyle(0xffffff, 1);
+        g.fillEllipse(11, 15, 16, 20);        // 蛋身
+        g.fillEllipse(11, 8, 11, 13);         // 上半收窄
+        g.generateTexture('eggBody', 22, 26);
+        g.destroy();
+
+        this.eggGfx = this.add.image(0, 0, 'eggBody').setOrigin(0.5, 0.5);
+        /*
+         * 光晕复用既有的 'spark' 贴图 + ADD 混合。
+         * 这里能用 ADD 做出真正的发光，正是切 WebGL 换来的
+         * （Canvas 下 ADD 的表现弱得多，见 Task 2）。
+         */
+        this.eggGlow = this.add.image(0, 0, 'spark')
+          .setOrigin(0.5, 0.5)
+          .setScale(E.glowScale * 6)
+          .setAlpha(0.5)
+          .setBlendMode(Phaser.BlendModes.ADD);
+      }
+
+      /*
+       * 七彩：用色相循环而不是固定彩虹贴图。
+       * 色相按时间走一圈，蛋体和光晕同步 —— 这是"七彩"最省的做法，
+       * 且能保证任何时候截屏都是彩的（固定贴图会有单调的时刻）。
+       */
+      const hue = ((now % E.hueCycleMs) / E.hueCycleMs) * 360;
+      const col = Phaser.Display.Color.HSVToRGB(hue / 360, 0.85, 1).color;
+      this.eggGfx.setTint(col);
+      this.eggGlow.setTint(col);
+
+      // 浮动：上下呼吸
+      const bob = Math.sin((now / E.bobMs) * Math.PI * 2) * E.bobAmp;
+      const sc = toScreen(egg.x, egg.z, 14 + bob);
+      this.eggGfx.setPosition(sc.sx, sc.sy).setDepth(1000 - egg.z + 8);
+      this.eggGlow.setPosition(sc.sx, sc.sy + 2).setDepth(1000 - egg.z + 7);
+      // 光晕同步呼吸，让"活着"的感觉更明确
+      this.eggGlow.setAlpha(0.34 + Math.sin((now / E.bobMs) * Math.PI * 2) * 0.16);
+
+      // 走近了就提示按 J —— 没有提示玩家大概率会直接走过去
+      const near = L.eggInReach(this.state, this.state.run);
+      if (!this.eggPrompt && near) {
+        this.eggPrompt = this.add.text(0, 0, '按 J 打开', {
+          fontFamily: 'system-ui, -apple-system, "PingFang SC", sans-serif',
+          fontSize: '15px', color: '#ffe9a8',
+        }).setOrigin(0.5, 1).setDepth(9000);
+        // 浅底描边：蛋在草地与暗背景上都读得出来
+        this.eggPrompt.setShadow(0, 1, '#000000cc', 3);
+      }
+      if (this.eggPrompt) {
+        this.eggPrompt.setVisible(near);
+        if (near) this.eggPrompt.setPosition(sc.sx, sc.sy - 26);
+      }
+    }
+
+    /** 第 2 层：全屏光爆（拾取瞬间）。 */
+    drawEggBurst(t) {
+      const E = C.EGG;
+      if (t > E.burstMs) {
+        if (this.eggBurst) this.eggBurst.setVisible(false);
+        return;
+      }
+      if (!this.eggBurst) {
+        /*
+         * 全屏白光 + 七彩泛光。
+         *
+         * 用两个盖满画布的椭圆而不是 Graphics 矩形：椭圆边缘天然柔和，
+         * 配 ADD 混合就是"光从中心炸开"而不是"屏幕闪了一下白"。
+         * 这是 Canvas 做不出来的那种柔光，也是切 WebGL 的收益点。
+         */
+        this.eggBurst = this.add.container(0, 0).setDepth(9500);
+        this.eggBurstCore = this.add.ellipse(W / 2, HGT / 2, W * 1.6, HGT * 1.6,
+          0xffffff, 1).setBlendMode(Phaser.BlendModes.ADD);
+        this.eggBurstHalo = this.add.ellipse(W / 2, HGT / 2, W * 1.2, HGT * 1.2)
+          .setBlendMode(Phaser.BlendModes.ADD).setAlpha(0.55);
+        this.eggBurst.add([this.eggBurstCore, this.eggBurstHalo]);
+      }
+      this.eggBurst.setVisible(true);
+
+      // 强度曲线：快速涨到峰值再缓慢衰减 —— 电影里的光爆都是这个形状
+      const k = t / E.burstMs;
+      const peak = E.burstPeakAt;
+      const amp = k < peak ? (k / peak) : Math.pow(1 - (k - peak) / (1 - peak), 1.7);
+      this.eggBurstCore.setAlpha(Math.min(1, amp * 1.25));
+      this.eggBurstHalo.setAlpha(Math.min(1, amp * 0.9));
+
+      // 七彩：光环色相随爆开过程推进
+      const hue = (k * 360 * 2) % 360;
+      const col = Phaser.Display.Color.HSVToRGB(hue / 360, 0.9, 1).color;
+      this.eggBurstHalo.setFillStyle(col, 1);
+
+      // 光爆期间画面轻微脉动，"能量"的感觉来自这里而不是静态白光
+      this.eggBurst.setScale(0.92 + amp * 0.16);
+    }
+
+    /** 第 3 层：纸条渐现 + 文字逐字浮现。 */
+    drawEggLetter(t) {
+      const E = C.EGG;
+      const start = E.burstMs;
+      if (t < start) return;
+
+      if (!this.eggLetter) {
+        /*
+         * 纸条用 DOM 浮层而不是 Phaser 文本（与背包同一做法，见 baghud.js）：
+         * 中文换行、行距、居中排版用 DOM 一次就做对了，
+         * 用 Phaser 的 BitmapText/Text 要把这些重做一遍且效果更差。
+         *
+         * ⚠️ 必须复用已有元素。踩过一次：这里原本无条件 createElement，
+         * 而 FarmScene.openLetter 也在建同一个 id 的元素。
+         * 玩家先在远征里看了一次纸条、之后去农场再看一次，
+         * 页面上就有两个 id="eggLetter" 的 div ——
+         * getElementById 只拿得到第一个，于是**后创建的那个永远关不掉**
+         * （closeLetter 改的是另一个元素的 display）。
+         * 改成先查后建，两处共用同一个元素。
+         */
+        this.eggLetter = ensureEggLetterEl();
+        this.eggLetterText = '';
+        this.eggLetterFade = 0;
+      }
+
+      const el = this.eggLetter;
+      el.style.display = 'flex';
+
+      // 纸条本体渐现
+      const fk = Math.min(1, (t - start) / E.letterFadeMs);
+      el.style.opacity = String(fk);
+
+      /*
+       * 逐字浮现。
+       *
+       * 按"已经过去多少毫秒"算应该显示几个字，而不是每帧 +=1 ——
+       * 后者在掉帧时会明显变慢，而这正是最该稳的一段演出。
+       */
+      const full = C.EGG.letterText;
+      const elapsed = t - start - E.letterFadeMs;
+      const n = Math.max(0, Math.floor(elapsed / E.letterCharMs));
+      const shown = full.slice(0, Math.min(n, full.length));
+      if (shown !== this.eggLetterText) {
+        this.eggLetterText = shown;
+        // 保留换行：CSS 的 white-space: pre-line 负责渲染
+        document.getElementById('eggLetterInner').textContent = shown;
+      }
+    }
+
+    /**
+     * 演出结束后补结算（设计文档 D5）。
+     *
+     * 为什么延后结算：PM 要求"打完最后一只怪 → 蛋掉出来 →
+     * 你走过去按 J"。若按原流程立刻 endRun，玩家会被直接推进结算界面，
+     * 永远没有机会按 J。所以 logic 层用 pendingEggSettlement 标记延后，
+     * 这里在演出真正走完后补上。
+     */
+    finishEggSettlement() {
+      const run = this.state.run;
+      if (this.eggLetter) {
+        this.eggLetter.style.display = 'none';
+      }
+      if (!run || !run.pendingEggSettlement) return;
+      run.pendingEggSettlement = false;
+
+      /*
+       * ⚠️ 这里必须走**和正常通关完全一样的两步**：endRun + showResult。
+       *
+       * 踩过的坑（2026-11-15）：最初只调了 L.endRun，注释还写着"结算界面由
+       * 既有的 result 相位渲染接管，不需要额外切场景" —— **那句话是错的**。
+       *
+       * 事实是：`phase = 'result'` 只是把 RunScene.update 变成空转
+       * （它第一行的 guard 里就 return 了），**结算面板根本不会自己出现**。
+       * 面板由 `EmberfieldUI.showResult(state, onClose)` 显式弹出，
+       * 玩家点「再来一局 / 回基地」时才 scene.start('Hub')。
+       * 所以只调 endRun 的结果是：RunScene 卡死不动，回合永远不结束。
+       * 这正是把彩蛋演出看成"纯视觉"会犯的错 —— 它同时也是一次状态转移。
+       */
+      L.endRun(this.state, true);
+      if (global.EmberfieldUI && global.EmberfieldUI.save) {
+        global.EmberfieldUI.save(this.state);
+      }
+      if (global.EmberfieldUI && typeof global.EmberfieldUI.showResult === 'function') {
+        global.EmberfieldUI.showResult(this.state, () => {
+          this.scene.start('Hub');
+        });
       }
     }
 
@@ -3627,6 +3912,9 @@
       // ---- 命中火花：对象池推进 ----
       this.updateHitSparks(dt);
 
+      // ---- 终极彩蛋：发现阶段的绘制（Task 3.2 / 设计文档 §5.3 第 1 层）----
+      this.updateEgg(dt);
+
       // ---- 冲刺残影：三节逐渐变淡的拖影，让"加速"看得见 ----
       if (p.runTrail) {
         for (let i = 1; i <= 3; i++) {
@@ -3709,6 +3997,18 @@
 
       paintBackdrop(this, 'farm');
       this.cameras.main.fadeIn(420, 0, 0, 0);
+
+      /*
+       * 重置相框相关字段（I1，与 RunScene 同一理由）：
+       * Phaser 复用场景实例，上一轮的 GameObject 已销毁，
+       * 留着真值引用会让惰性创建分支不执行，接着对死对象调 setVisible。
+       */
+      this.frameGfx = null;
+      this.frameHint = null;
+      this.letterOpen = false;
+      // letterOpen 被重置了，但 DOM 元素可能还显示着（上一次没关就切场景）
+      const staleLetter = document.getElementById('eggLetter');
+      if (staleLetter) staleLetter.style.display = 'none';
 
       // 与 Hub/Run 一致的调试钩子（无头探针与排障要用）
       global.EmberfieldApp.__scene = this;
@@ -4009,6 +4309,33 @@
         return;
       }
 
+      /*
+       * 作物种植（Task 4 / D6）。
+       *
+       * 手上**有作物种子**时优先种作物，没有时才退回通用种子。
+       * 为什么是这个优先级而不是反过来：
+       * 作物是新增的、更稀有的资源（只有远征才掉），
+       * 而通用种子开局就有 3 颗、随时买得到。
+       * 让稀有资源优先被使用，玩家不会"想种花却种成了普通作物"。
+       *
+       * 不弹选择菜单：选了再点一次田是两次点击，而农场是高频操作。
+       * 用当前选中的作物（数字键 1/2/3 切换，见 update 里的处理）。
+       */
+      const chosen = this.chosenCrop;
+      const chosenHave = chosen
+        ? ((this.state.meta.cropSeeds || {})[chosen] || 0) : 0;
+
+      if (chosen && chosenHave > 0) {
+        const rc = L.plantCrop(this.state, idx, chosen);
+        if (!rc.ok) { this.flash(rc.reason, false); return; }
+        this.splashSoil(idx);
+        global.EmberfieldUI.save(this.state);
+        this.redrawField();
+        this.refreshHud();
+        this.flash('已种下 ' + C.CROPS[chosen].name, true);
+        return;
+      }
+
       const r = L.plant(this.state, idx);
       if (!r.ok) {
         this.flash(r.reason, false);
@@ -4019,6 +4346,25 @@
       this.redrawField();
       this.refreshHud();
       this.flash('已播种', true);
+    }
+
+    /**
+     * 吃一份收获物（Task 4 / D6）。
+     *
+     * 在农场里吃**回满血但不进战斗**是没意义的（血量是局内的），
+     * 所以这里只对 buff 类生效——回血类留给局内用。
+     * 这也是为什么 eatCrop 要求 run 存在。
+     */
+    eatHarvest(cropId) {
+      const have = (this.state.meta.cropHarvest || {})[cropId] || 0;
+      if (have < 1) { this.flash('没有可吃的 ' + C.CROPS[cropId].name, false); return; }
+      const def = C.CROPS[cropId];
+      if (def.effect.kind === 'instant') {
+        // 回血作物在农场里吃不了：农场没有战斗，血量无处可用
+        this.flash(def.name + ' 要下地时吃（战斗中回血）', false);
+        return;
+      }
+      this.flash('增益类作物请在下地后按对应数字键食用', false);
     }
 
     /** 点田时的轻微反馈，让"点到了"看得见。 */
@@ -4091,6 +4437,85 @@
       });
     }
 
+    /* ------------------------------------------------------------------
+     * 基地相框：彩蛋掉落后，纸条挂在这里可回看（Task 3.3 / D4）
+     *
+     * 为什么放在农场场景而不是基地的交互点列表里
+     * -------------------------------------------
+     * 基地那 6 个 zone 的触发半径**已经互相重叠**（实测：anvil 与 field
+     * 重叠 45px、forgewear 与 anvil 重叠 60px，gate 甚至超出 960 边界 25px）。
+     * 再加一个 zone，无论放哪都会和邻居抢 J 键，让"想出门却点到相框"
+     * 这种事发生 —— 那是把既有体验弄坏，换一个新的可看物，不划算。
+     *
+     * 农场场景是一整屏独立的"装点场地"（PM 的原话：
+     * 「农场存在的意义是，它给玩家提供一个装点小世界的场地」），
+     * 它只有 ESC 与鼠标两个交互，有充足空间。
+     * 纸条挂在这里也**更符合它的性质**：它是纪念物，属于这片自留地。
+     * ------------------------------------------------------------------ */
+
+    /** 相框的几何。null = 还没掉蛋（D8：没掉蛋就不给相框）。 */
+    frameRect() {
+      const got = this.state.meta && this.state.meta.eggFound;
+      if (!got) return null;
+      // 挂在农场上方栅栏的右侧，不遮挡中间的田块
+      // （田区横向 ±300，所以 x 从 +330 起才是空的）
+      return { x: W / 2 + 336, y: 74, w: 58, h: 74 };
+    }
+
+    /** 画相框与里面的纸条。 */
+    drawFrame() {
+      const r = this.frameRect();
+      if (!r) return;
+      if (!this.frameGfx) {
+        this.frameGfx = this.add.graphics().setDepth(700);
+        // 木质画框：与农场栅栏同一族颜色（post 贴图是深棕木）
+        this.frameGfx.fillStyle(0x3b2c1d, 1);
+        this.frameGfx.fillRect(r.x - r.w / 2 - 3, r.y - r.h / 2 - 3, r.w + 6, r.h + 6);
+        this.frameGfx.fillStyle(0x6b5137, 1);
+        this.frameGfx.fillRect(r.x - r.w / 2, r.y - r.h / 2, r.w, r.h);
+        // 纸条：暖白，和彩蛋演出时同一个色系
+        this.frameGfx.fillStyle(0xf3e6c8, 1);
+        this.frameGfx.fillRect(r.x - r.w / 2 + 5, r.y - r.h / 2 + 5, r.w - 10, r.h - 10);
+        // 纸条上的字迹示意：几道横线。真文字缩到这个尺寸读不出来，
+        // 画出行反而能让玩家一眼认出"这是那张纸条"。
+        this.frameGfx.fillStyle(0x9c8a6a, 0.55);
+        for (let i = 0; i < 4; i++) {
+          const ly = r.y - r.h / 2 + 16 + i * 12;
+          // 每行长度不一，像真的手写而不是印刷
+          const lw = (r.w - 20) * (0.55 + (i % 3) * 0.16);
+          this.frameGfx.fillRect(r.x - r.w / 2 + 10, ly, lw, 2);
+        }
+      }
+      // 提示：站在旁边按 J 看
+      if (!this.frameHint) {
+        this.frameHint = this.add.text(r.x, r.y + r.h / 2 + 10, 'J', {
+          fontFamily: 'sans-serif', fontSize: '14px', color: '#ffe9a8',
+          backgroundColor: '#0b1117cc', padding: { x: 8, y: 3 },
+        }).setOrigin(0.5).setDepth(960);
+      }
+      this.frameHint.setVisible(true);
+    }
+
+    /** 打开纸条浮层（与彩蛋演出同一个排版）。 */
+    openLetter() {
+      if (this.letterOpen) return;
+      this.letterOpen = true;
+      const el = ensureEggLetterEl();
+      document.getElementById('eggLetterInner').textContent = C.EGG.letterText;
+      el.style.display = 'flex';
+      el.style.opacity = '1';
+      // 任意键或点击关闭
+      this.letterCloseArmed = false;
+      this.time.delayedCall(120, () => { this.letterCloseArmed = true; });
+    }
+
+    closeLetter() {
+      if (!this.letterOpen) return;
+      this.letterOpen = false;
+      const el = document.getElementById('eggLetter');
+      if (el) el.style.display = 'none';
+    }
+
     refreshHud() {
       const s = this.state;
       const pages = L.farmPageCount(s);
@@ -4098,9 +4523,33 @@
       // 反而让人以为还有别处看不到的地。
       const pageLine = pages > 1
         ? '第 ' + (this.curPage() + 1) + '/' + pages + ' 页　　' : '';
+      /*
+       * 作物行（Task 4 / D6）：只在**手上有作物种子或收获物**时才显示。
+       *
+       * 常驻显示会让从没掉过种子的玩家看到一排 0，那是噪音；
+       * 只有真的有了才提示 —— 和"相框只在掉蛋后出现"是同一条原则。
+       */
+      const seeds = s.meta.cropSeeds || {};
+      const harvest = s.meta.cropHarvest || {};
+      const cropChips = C.CROP_ORDER.map(function (id, i) {
+        const sn = seeds[id] || 0;
+        const hn = harvest[id] || 0;
+        if (sn === 0 && hn === 0) return null;
+        const mark = (this.chosenCrop === id) ? '▶' : ' ';
+        return mark + (i + 1) + '.' + C.CROPS[id].name +
+               ' 种' + sn + ' 存' + hn;
+      }, this).filter(Boolean);
+
+      let cropLine = '';
+      if (cropChips.length) {
+        cropLine = '作物：' + cropChips.join('　') + '\n' +
+                   '（数字键选种，点空田播种）\n';
+      }
+
       this.hudText.setText(
         '铜币  ' + s.meta.coins + '　　种子  ' + s.meta.seeds + '\n' +
-        pageLine + '成熟田  ' + L.maturePlots(s) + ' / ' + s.farm.plots.length +
+        pageLine + cropLine +
+        '成熟田  ' + L.maturePlots(s) + ' / ' + s.farm.plots.length +
         '　　每局被动  +' + L.passiveIncome(s) + '\n' +
         '作物需要 ' + C.FARM.runsToMature + ' 局成熟（输掉也算）\n' +
         '成熟后每局结算自动产出，不需要手动收取'
@@ -4110,6 +4559,12 @@
     leave() {
       if (this.busy) return;
       this.busy = true;
+      /*
+       * 兜底：离开农场时确保纸条不残留（I2）。
+       * 正常情况下留着开纸条是走不到这里的（上面无条件拦截了 ESC），
+       * 但"再来一局"、场景被外部切走等路径绕不过这个显式关闭。
+       */
+      this.closeLetter();
       global.EmberfieldUI.save(this.state);
       // 与 startRun 同款兜底：相机不跑 update 就没有完成事件，
       // 玩家会卡在黑屏（见 HubScene.startRun 里的长注释）。
@@ -4134,6 +4589,55 @@
        * 真正判断按键的是下一行的 this.input2，那行纯属死代码。
        * 删掉即可；键盘仍然走 createInput 自己维护的那套。
        */
+      /*
+       * 基地相框（Task 3.3 / D4）：掉蛋后挂在农场右侧的纪念物。
+       *
+       * 交互：按 J 看纸条；纸条开着时按 J 或 ESC 关闭。
+       *
+       * ⚠️ 关闭逻辑必须**无条件拦截**，不能加"延迟武装"（I2，独立审查发现）。
+       * 原写法是打开后 120ms 才允许关闭（怕同一次按键立刻把它关掉），
+       * 但 justPressed 是**按帧**读的：在那 120ms 内按下的 ESC
+       * 会绕过这个分支、落到下面的 this.leave() ——
+       * 结果是**纸条没关掉，人却被弹出了农场**，纸条还糊在屏幕上。
+       *
+       * 现在：只要 letterOpen 为真，ESC/J 一律只用于关闭，天然不会误触发
+       * "刚打开就被关掉" —— 因为打开它的那一次按键已经被本帧消费掉了
+       * （justPressed 的语义是"本帧刚按下"，同一帧不会再读第二次）。
+       */
+      if (this.letterOpen) {
+        if (this.input2.justPressed('confirm') || this.input2.justPressed('esc')) {
+          this.closeLetter();
+        }
+        return;                  // 纸条开着时不处理别的输入
+      }
+      this.drawFrame();
+      if (this.frameRect() && this.input2.justPressed('confirm')) {
+        this.openLetter();
+        return;
+      }
+
+      /*
+       * 作物选择（Task 4 / D6）：数字键 1/2/3 对应 CROP_ORDER。
+       *
+       * 为什么用数字键：它与局内的药水键（1/2/3）是同一套手感，
+       * 玩家不用学第二套操作。农场里不会有药水冲突——药水只在局内用。
+       *
+       * 键位只在**手上有该作物种子**时才有意义，所以按下时校验一次，
+       * 没种子就明说，而不是静默切换（静默切换会让玩家以为键坏了）。
+       */
+      C.CROP_ORDER.forEach((id, i) => {
+        if (this.input2.justPressed('potion' + (i + 1))) {
+          const have = (this.state.meta.cropSeeds || {})[id] || 0;
+          if (have < 1) {
+            this.flash('没有 ' + C.CROPS[id].name + ' 的种子（远征才会掉）', false);
+          } else {
+            this.chosenCrop = id;
+            this.flash('已选中 ' + C.CROPS[id].name + '，点空田播种', true);
+          }
+          this.refreshHud();
+        }
+      });
+
       if (this.input2.justPressed('esc')) this.leave();
     }
   }
@@ -4203,7 +4707,29 @@
     }
     // 场景数组的第一项会被自动启动 —— BootScene 必须先跑，否则纹理还没生成
     const game = new Phaser.Game({
-      type: Phaser.AUTO,
+      /*
+       * 渲染器由 AUTO 改为 WEBGL（Task 2 / 设计文档 §4.3）。
+       *
+       * 为什么必须显式指定，不能用 AUTO
+       * ------------------------------
+       * 彩蛋的"全屏泛光"（《头号玩家》那种光爆）只有 WebGL 能做：
+       * Canvas 2D 的混合模式很有限，做不出真正的加法泛光。
+       * AUTO 在支持 WebGL 的浏览器上确实会选 WebGL，但它**不可控** ——
+       * 一旦某台机器回退到 Canvas，泛光就静默失效，而且回退路径
+       * 不会被任何测试覆盖，等于假装有保险。
+       *
+       * 已实测的风险与处置（切之前查的，不是猜的）
+       * ------------------------------------------
+       * 全项目 38 处 generateTexture 不是风险点 —— 那是 Phaser 统一 API，
+       * 跨渲染器行为一致。真正的风险是 **8 处 BlendModes.ADD**
+       * （app.js:1723/1751/1753/1755/1769/1789/2696/3964，全是发光效果）：
+       * ADD 在 Canvas 与 WebGL 下渲染不同（WebGL 受预乘 alpha 影响）。
+       * 这 8 处已逐一目视核对，是本任务闸门二的核对对象。
+       *
+       * sprites.js 的 getContext('2d') 与渲染器无关 —— 它用的是独立离屏
+       * canvas（doc.createElement），只做像素测量与 toDataURL，不受影响。
+       */
+      type: Phaser.WEBGL,
       width: W, height: HGT,
       parent: parentId,
       backgroundColor: '#141a22',
